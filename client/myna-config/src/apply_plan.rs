@@ -9,8 +9,8 @@
 //!
 //! The executor trusts nothing about its input: a plan is accepted only when
 //! every operation matches one of the exact shapes the UI can produce. The
-//! polkit dialog shows the full argv, so the plan stays inspectable by the
-//! person authorizing it.
+//! polkit dialog shows the message of `data/com.canonical.Myna.Config.policy`
+//! rather than the plan's argv.
 
 use std::process::{Command, Stdio};
 
@@ -440,5 +440,13 @@ mod tests {
             )]
         );
         assert!(decode_results("not json").is_err());
+    }
+
+    #[test]
+    fn the_polkit_action_matches_the_executor_invocation() {
+        let policy = include_str!("../data/com.canonical.Myna.Config.policy");
+        assert!(policy.contains(&format!(
+            r#"<annotate key="org.freedesktop.policykit.exec.argv1">{APPLY_PLAN_FLAG}</annotate>"#
+        )));
     }
 }

@@ -17,3 +17,6 @@ refused() {
 refused '[]'
 refused '[{"executable":"sh","arguments":["-c","true"]}]'
 gsettings list-keys com.canonical.Myna.Dictation | grep -qx streaming-mode
+# pkexec shows this action's message instead of the whole plan on its argv.
+grep -qF '<annotate key="org.freedesktop.policykit.exec.path">/usr/bin/myna-config</annotate>' \
+    /usr/share/polkit-1/actions/com.canonical.Myna.Config.policy
