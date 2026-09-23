@@ -249,6 +249,7 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
         "backend-edit: staged",
         "backend-apply: read back",
         "diagnostics-report: lists backends",
+        "refresh-accelerator: refreshes the tab",
         "setup: reopens the wizard",
     ] {
         assert!(stdout.contains(line), "backends probe missing: {line}");

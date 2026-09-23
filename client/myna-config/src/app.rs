@@ -140,6 +140,7 @@ fn new_application(application_id: &str) -> adw::Application {
         .build();
     application.add_action_entries([quit, about]);
     application.set_accels_for_action("app.quit", &["<Control>q"]);
+    application.set_accels_for_action("win.refresh", &["<Control>r"]);
     application
 }
 
@@ -1531,6 +1532,40 @@ fn backends_probe() -> glib::ExitCode {
     }
     println!("diagnostics-report: lists backends");
 
+    // Reads already in flight finish on their own; only a read after they
+    // settle is one the step under test started.
+    let quiesce = || {
+        let mut reads = machine.reads();
+        let mut quiet = 0;
+        while quiet < 5 {
+            settle_gtk();
+            let now = machine.reads();
+            quiet = if now == reads { quiet + 1 } else { 0 };
+            reads = now;
+        }
+        reads
+    };
+
+    // Ctrl+R refreshes whichever tab is showing.
+    if !application
+        .actions_for_accel("<Control>r")
+        .iter()
+        .any(|action| action == "win.refresh")
+    {
+        eprintln!("Ctrl+R does not refresh");
+        return glib::ExitCode::FAILURE;
+    }
+    for tab in ["diagnostics", "backend"] {
+        view_stack.set_visible_child_name(tab);
+        let reads = quiesce();
+        ActionGroupExt::activate_action(&window, "refresh", None);
+        if !settles(&|| machine.reads() > reads) {
+            eprintln!("refreshing the {tab} tab read nothing");
+            return glib::ExitCode::FAILURE;
+        }
+    }
+    println!("refresh-accelerator: refreshes the tab");
+
     // Set Up Dictation reopens the wizard over this window, never beside an
     // operation in flight, and closing it re-reads the machine.
     let wizard = || {
@@ -1572,16 +1607,7 @@ fn backends_probe() -> glib::ExitCode {
         eprintln!("Set Up Dictation stayed enabled with the wizard open");
         return glib::ExitCode::FAILURE;
     }
-    // Opening the wizard set reads going that finish on their own; only a
-    // read after they settle is one the close started.
-    let mut reads = machine.reads();
-    let mut quiet = 0;
-    while quiet < 5 {
-        settle_gtk();
-        let now = machine.reads();
-        quiet = if now == reads { quiet + 1 } else { 0 };
-        reads = now;
-    }
+    let reads = quiesce();
     opened.close();
     if !settles(&|| machine.reads() > reads && setup_enabled()) {
         eprintln!("closing the wizard did not re-read the machine");

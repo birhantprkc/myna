@@ -546,8 +546,19 @@ impl BackendUi {
     }
 
     /// The settings window's own actions: `win.setup` reopens the onboarding
-    /// wizard over it.
+    /// wizard over it, and `win.refresh` refreshes the tab on show.
     pub fn install_window_actions(self: &Rc<Self>, window: &ui::MainWindow) {
+        let refresh = gio::SimpleAction::new("refresh", None);
+        refresh.connect_activate({
+            let ui = Rc::downgrade(self);
+            move |_, _| {
+                if let Some(ui) = ui.upgrade() {
+                    ui.refresh_visible_tab();
+                }
+            }
+        });
+        window.add_action(&refresh);
+
         let setup = gio::SimpleAction::new("setup", None);
         setup.connect_activate({
             let ui = Rc::downgrade(self);
@@ -607,6 +618,20 @@ impl BackendUi {
                 glib::Propagation::Proceed
             });
         });
+    }
+
+    /// Through the tab's own refresh, so its gating applies: a backend page
+    /// refuses while it loads or applies, diagnostics debounce.
+    fn refresh_visible_tab(self: &Rc<Self>) {
+        match self.view_stack.visible_child_name().as_deref() {
+            Some("diagnostics") => self.on_diagnostics_requested(),
+            Some("backend") => {
+                if let Some(page) = self.backend_nav.visible_page() {
+                    let _ = WidgetExt::activate_action(&page, "backend.refresh", None);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn rediscover(self: &Rc<Self>) {
