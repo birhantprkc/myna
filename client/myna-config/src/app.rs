@@ -116,9 +116,17 @@ pub fn run() -> glib::ExitCode {
     }
 
     ui::register_resources();
-    let application = adw::Application::builder().application_id(APP_ID).build();
+    let application = new_application(APP_ID);
     application.connect_activate(build_window);
     application.run_with_args::<&str>(&[])
+}
+
+fn new_application(application_id: &str) -> adw::Application {
+    let application = adw::Application::builder()
+        .application_id(application_id)
+        .build();
+    application.set_accels_for_action("window.close", &["<Control>w"]);
+    application
 }
 
 fn smoke_requested(value: Option<&std::ffi::OsStr>) -> bool {
@@ -132,9 +140,7 @@ fn accessibility_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
 
-    let application = adw::Application::builder()
-        .application_id(probe_app_id())
-        .build();
+    let application = new_application(&probe_app_id());
     let _ = application.register(None::<&gio::Cancellable>);
 
     let window = ui::MainWindow::new(&application);
@@ -251,6 +257,16 @@ fn accessibility_probe() -> glib::ExitCode {
     }
     println!("appearance-policy: applied");
 
+    if !application
+        .actions_for_accel("<Control>w")
+        .iter()
+        .any(|action| action == "window.close")
+    {
+        eprintln!("Ctrl+W does not close the window");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("close-accelerator: bound");
+
     window.close();
     glib::ExitCode::SUCCESS
 }
@@ -272,9 +288,7 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("myna-config onboarding probe could not initialize GTK: {error}");
         return glib::ExitCode::FAILURE;
     }
-    let application = adw::Application::builder()
-        .application_id(probe_app_id())
-        .build();
+    let application = new_application(&probe_app_id());
     let _ = application.register(None::<&gio::Cancellable>);
 
     let step = |window: &ui::OnboardingWindow| {
@@ -571,9 +585,7 @@ fn template_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
 
-    let application = adw::Application::builder()
-        .application_id(probe_app_id())
-        .build();
+    let application = new_application(&probe_app_id());
     let _ = application.register(None::<&gio::Cancellable>);
     for resource in [
         "active-backend-dialog.ui",
@@ -1275,9 +1287,7 @@ fn backends_probe() -> glib::ExitCode {
         eprintln!("myna-config backends probe could not initialize GTK: {error}");
         return glib::ExitCode::FAILURE;
     }
-    let application = adw::Application::builder()
-        .application_id(probe_app_id())
-        .build();
+    let application = new_application(&probe_app_id());
     let _ = application.register(None::<&gio::Cancellable>);
 
     let window = ui::MainWindow::new(&application);
