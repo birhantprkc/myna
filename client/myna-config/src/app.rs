@@ -150,6 +150,7 @@ fn present_about(application: &adw::Application) {
         .application_icon(APP_ID)
         .developer_name("Canonical")
         .version(env!("MYNA_VERSION"))
+        .website("https://github.com/canonical/myna")
         .copyright("© 2025-2026 Canonical Ltd.")
         .license_type(gtk::License::Agpl30)
         // Translators: your name, one translator per line.

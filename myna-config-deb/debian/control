@@ -4,6 +4,7 @@ Priority: optional
 Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
 XSBC-Original-Maintainer: Charles <charles05@canonical.com>
 Build-Depends: debhelper-compat (= 13),
+               appstream,
                blueprint-compiler (>= 0.16),
                cargo,
                gir1.2-adw-1,

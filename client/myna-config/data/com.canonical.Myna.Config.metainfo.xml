@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2025-2026 Canonical Ltd. -->
+<component type="desktop-application">
+  <id>com.canonical.Myna.Config</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+
+  <name>Myna Settings</name>
+  <summary>Set up and configure local dictation</summary>
+  <developer id="com.canonical">
+    <name>Canonical</name>
+  </developer>
+  <description>
+    <p>
+      Myna turns speech into text on your computer, with no audio or text
+      leaving it. Myna Settings guides you through installing it and a speech
+      model, then configures dictation and its speech backends.
+    </p>
+  </description>
+
+  <url type="homepage">https://github.com/canonical/myna</url>
+
+  <launchable type="desktop-id">com.canonical.Myna.Config.desktop</launchable>
+  <provides>
+    <binary>myna-config</binary>
+  </provides>
+  <translation type="gettext">myna-config</translation>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+</component>

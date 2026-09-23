@@ -16,7 +16,7 @@ This directory turns `client/myna-core` and `client/myna-config` into the `myna-
 - The unshare sbuild chroot unpacks under `$TMPDIR`. On a tmpfs `/tmp` a debuginfo build fills it; use `TMPDIR=/var/tmp`. Aborted builds leave multi-gigabyte directories there.
 - The binary package is `Architecture: amd64`. Nothing has been tested on another architecture, and resolute's ppc64el build segfaulted in the GTK widget tests. Widen it only after someone runs the application there.
 - Keep the source lintian-clean. Run `lintian` on the staged source before uploading and fix tags rather than overriding them.
-- The GSettings schema and the desktop entry are installed by this package, not by the snap. Changing either in `client/` changes what this deb ships.
+- The GSettings schema, the desktop entry and the AppStream metainfo are installed by this package, not by the snap. Changing any of them in `client/` changes what this deb ships.
 - The effective MSRV is set by gtk4 0.11 and libadwaita 0.9 in `Cargo.lock`, not by the `rustc (>= 1.75)` pin in `debian/control` or the workspace `rust-version`. Both pins understate it; older series fail on the toolchain, not on the packaging.
 - The autopkgtest in `debian/tests/` is the only CI that exercises the installed binary. Extend it when the CLI surface changes.
 
@@ -24,4 +24,4 @@ This directory turns `client/myna-core` and `client/myna-config` into the `myna-
 
 - `build-source.sh` - Stages the orig tarball and debianised tree into `target/deb/`.
 - `vendor-copyright.py` - Generates `debian/copyright` from the vendored crates.
-- `debian/` - Packaging: `rules` builds offline with `--locked`, `install` places the schema and desktop entry, `tests/` is the autopkgtest.
+- `debian/` - Packaging: `rules` builds offline with `--locked`, `install` places the schema, desktop entry and metainfo, `tests/` is the autopkgtest.
