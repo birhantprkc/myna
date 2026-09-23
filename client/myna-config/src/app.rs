@@ -304,36 +304,28 @@ fn accessibility_probe() -> glib::ExitCode {
     let Some(about) = window
         .visible_dialog()
         .and_then(|dialog| dialog.downcast::<adw::AboutDialog>().ok())
+        .filter(|about| {
+            about.version() == env!("MYNA_VERSION") && about.application_icon() == APP_ID
+        })
     else {
-        eprintln!("About did not open its dialog over the window");
+        eprintln!("About did not open over the window with this version and icon");
         return glib::ExitCode::FAILURE;
     };
-    if about.version() != env!("MYNA_VERSION") || about.application_icon() != APP_ID {
-        eprintln!("the About dialog names the wrong version or icon");
-        return glib::ExitCode::FAILURE;
-    }
     about.close();
     settle_gtk();
     println!("main-menu: setup and about");
 
-    if !application
-        .actions_for_accel("<Control>w")
-        .iter()
-        .any(|action| action == "window.close")
-    {
-        eprintln!("Ctrl+W does not close the window");
-        return glib::ExitCode::FAILURE;
+    for (accelerator, action) in [("<Control>w", "window.close"), ("<Control>q", "app.quit")] {
+        if !application
+            .actions_for_accel(accelerator)
+            .iter()
+            .any(|bound| bound == action)
+        {
+            eprintln!("{accelerator} does not activate {action}");
+            return glib::ExitCode::FAILURE;
+        }
     }
     println!("close-accelerator: bound");
-
-    if !application
-        .actions_for_accel("<Control>q")
-        .iter()
-        .any(|action| action == "app.quit")
-    {
-        eprintln!("Ctrl+Q does not quit");
-        return glib::ExitCode::FAILURE;
-    }
     let shut_down = Rc::new(Cell::new(false));
     window.connect_close_request({
         let shut_down = shut_down.clone();
@@ -1552,7 +1544,14 @@ fn backends_probe() -> glib::ExitCode {
         reads
     };
 
-    // Ctrl+R refreshes whichever tab is showing.
+    // Ctrl+R refreshes whichever tab is showing; General reads nothing.
+    view_stack.set_visible_child_name("general");
+    let reads = quiesce();
+    ActionGroupExt::activate_action(&window, "refresh", None);
+    if quiesce() != reads {
+        eprintln!("refreshing the General tab read the machine");
+        return glib::ExitCode::FAILURE;
+    }
     if !application
         .actions_for_accel("<Control>r")
         .iter()
@@ -1605,12 +1604,12 @@ fn backends_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     let opened = wizard().expect("wizard");
-    if !opened.is_modal() || opened.transient_for().as_ref() != Some(window.upcast_ref()) {
-        eprintln!("the wizard is not modal over the settings window");
-        return glib::ExitCode::FAILURE;
-    }
-    if setup_enabled() {
-        eprintln!("Set Up Dictation stayed enabled with the wizard open");
+    // Modal over this window, and not openable twice.
+    if !opened.is_modal()
+        || opened.transient_for().as_ref() != Some(window.upcast_ref())
+        || setup_enabled()
+    {
+        eprintln!("the wizard is not the one modal wizard over the settings window");
         return glib::ExitCode::FAILURE;
     }
     let reads = quiesce();
