@@ -545,6 +545,80 @@ impl BackendUi {
         });
     }
 
+    /// The settings window's own actions: `win.setup` reopens the onboarding
+    /// wizard over it.
+    pub fn install_window_actions(self: &Rc<Self>, window: &ui::MainWindow) {
+        let setup = gio::SimpleAction::new("setup", None);
+        setup.connect_activate({
+            let ui = Rc::downgrade(self);
+            let window = window.downgrade();
+            move |action, _| {
+                if let (Some(ui), Some(window)) = (ui.upgrade(), window.upgrade()) {
+                    ui.open_setup(action, &window);
+                }
+            }
+        });
+        window.add_action(&setup);
+    }
+
+    /// Assess the machine and open the wizard on it. Closing the wizard
+    /// rediscovers, since it may have connected a backend or restarted the
+    /// daemon.
+    fn open_setup(self: &Rc<Self>, action: &gio::SimpleAction, window: &ui::MainWindow) {
+        if self.operation_coordinator.active().is_some() {
+            self.overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
+                "Wait for the current change to finish.",
+            )));
+            return;
+        }
+        let Some(repository) = self.controller.repository().cloned() else {
+            return;
+        };
+        let Some(application) = window
+            .application()
+            .and_then(|application| application.downcast::<adw::Application>().ok())
+        else {
+            return;
+        };
+        action.set_enabled(false);
+        let configurator = self.configurator.clone();
+        let ui = Rc::downgrade(self);
+        let action = action.clone();
+        let window = window.clone();
+        glib::spawn_future_local(async move {
+            let components = crate::onboarding_ui::assess_machine(repository.as_ref()).await;
+            if ui.upgrade().is_none() {
+                action.set_enabled(true);
+                return;
+            }
+            let wizard = crate::onboarding_ui::OnboardingUi::present_with_ports(
+                &application,
+                components,
+                repository,
+                configurator,
+                Some(window.upcast_ref()),
+                Box::new(|| {}),
+            );
+            wizard.window().connect_close_request(move |_| {
+                action.set_enabled(true);
+                if let Some(ui) = ui.upgrade() {
+                    ui.rediscover();
+                }
+                glib::Propagation::Proceed
+            });
+        });
+    }
+
+    fn rediscover(self: &Rc<Self>) {
+        if !self.controller.discovery_loading() {
+            self.trigger_discovery();
+        }
+    }
+
+    pub(crate) fn operation_coordinator(&self) -> &OperationCoordinator {
+        &self.operation_coordinator
+    }
+
     pub fn controller(&self) -> Rc<BackendController> {
         Rc::clone(&self.controller)
     }

@@ -14,6 +14,14 @@ template $MainWindow: Adw.ApplicationWindow {
           stack: view_stack;
           policy: wide;
         };
+
+        [end]
+        Gtk.MenuButton {
+          primary: true;
+          icon-name: "open-menu-symbolic";
+          tooltip-text: _("Main Menu");
+          menu-model: main_menu;
+        }
       }
 
       content: Adw.ViewStack view_stack {
@@ -53,5 +61,15 @@ template $MainWindow: Adw.ApplicationWindow {
       header_bar.title-widget: null;
       view_switcher_bar.reveal: true;
     }
+  }
+}
+
+menu main_menu {
+  section {
+    item (_("_Set Up Dictation…"), "win.setup")
+  }
+
+  section {
+    item (_("_About Myna Settings"), "app.about")
   }
 }

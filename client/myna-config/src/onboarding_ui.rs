@@ -52,18 +52,26 @@ impl OnboardingUi {
             initial,
             Rc::new(SnapBackendRepository::new(runner.clone())),
             Rc::new(PkexecSystemConfigurator::new(runner)),
+            None,
             finished,
         )
     }
 
+    /// With a `parent`, the wizard is modal over it: the parent's own
+    /// operations cannot start while the wizard sets a backend up.
     pub fn present_with_ports(
         application: &adw::Application,
         initial: Vec<Component>,
         repository: Rc<dyn BackendRepository>,
         configurator: Rc<dyn SystemConfigurator>,
+        parent: Option<&gtk::Window>,
         finished: Box<dyn Fn()>,
     ) -> Rc<Self> {
         let window = ui::OnboardingWindow::new(application);
+        if let Some(parent) = parent {
+            window.set_transient_for(Some(parent));
+            window.set_modal(true);
+        }
         let welcome = ui::OnboardingWelcome::new();
         let components_page = ui::OnboardingComponents::new();
         let shortcut_page = ui::OnboardingShortcut::new();
@@ -159,21 +167,11 @@ impl OnboardingUi {
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
         glib::spawn_future_local(async move {
-            let cancellation = CancellationToken::new();
-            let installed = repository
-                .installed_snaps(cancellation.clone())
-                .await
-                .unwrap_or_default();
-            let backends = repository
-                .discover(cancellation)
-                .await
-                .map(|snapshot| snapshot.backends().len())
-                .unwrap_or_default();
+            let components = assess_machine(repository.as_ref()).await;
             let Some(ui) = ui.upgrade() else {
                 return;
             };
-            let machine = Machine::new(&installed, backends, shell_extension_installed());
-            ui.components.replace(assess(machine));
+            ui.components.replace(components);
             ui.render();
         });
     }
@@ -426,6 +424,28 @@ fn open_app_center(window: &ui::OnboardingWindow, snap: StoreSnap) {
             }
         }
     });
+}
+
+/// One assessment of what dictation is missing on this machine: one `snap
+/// list` and one discovery. A surface that cannot be read counts as nothing
+/// found, which opens the wizard: the flow then shows what it could not verify
+/// rather than a settings window with no backends and no explanation.
+pub async fn assess_machine(repository: &dyn BackendRepository) -> Vec<Component> {
+    let cancellation = CancellationToken::new();
+    let installed = repository
+        .installed_snaps(cancellation.clone())
+        .await
+        .unwrap_or_default();
+    let backends = repository
+        .discover(cancellation)
+        .await
+        .map(|snapshot| snapshot.backends().len())
+        .unwrap_or_default();
+    assess(Machine::new(
+        &installed,
+        backends,
+        shell_extension_installed(),
+    ))
 }
 
 /// Whether the HUD's GNOME Shell extension is installed for this user or

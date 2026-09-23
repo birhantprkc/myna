@@ -20,6 +20,11 @@ The wizard opens when a **required** component is missing. "Model" is satisfied
 by discovery rather than by a snap name: which snaps are backends is a property
 of the socket interface they publish, not of their name.
 
+The settings window's main menu reopens the wizard (Set Up Dictation), modal
+over the window. It refuses while a backend operation is in flight: the wizard
+connects a backend and restarts the daemon, and the window's operation gate does
+not cover it. Closing the wizard rediscovers, since it may have changed both.
+
 ## Installing
 
 The application installs nothing itself. Both snaps come from the store, on
@@ -95,4 +100,5 @@ The startup assessment is the same two subprocesses as a `RefreshReason::Startup
 refresh, run before any window exists, and it is handed to the wizard rather
 than repeated there. The shortcut proxy spawns nothing: it is one D-Bus match
 per surface. Regaining focus on the component step costs another `snap list`
-plus a discovery.
+plus a discovery. Reopening the wizard from the menu costs one assessment, and
+closing it one startup-sized refresh of the settings window.

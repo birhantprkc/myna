@@ -14,7 +14,7 @@ use crate::myna_settings::{
     choice_display_label, DebouncedTextCommit, MynaSettingsController, PageState,
     PersistenceRequest, PersistenceWriter, SettingRow, SettingsEvent,
 };
-use crate::onboarding::{assess, needs_onboarding, Machine};
+use crate::onboarding::needs_onboarding;
 use crate::ports::{ClientSettings, ClientSettingsError};
 use crate::ui;
 use crate::APP_ID;
@@ -135,9 +135,26 @@ fn new_application(application_id: &str) -> adw::Application {
             }
         })
         .build();
-    application.add_action_entries([quit]);
+    let about = gio::ActionEntry::builder("about")
+        .activate(|application: &adw::Application, _, _| present_about(application))
+        .build();
+    application.add_action_entries([quit, about]);
     application.set_accels_for_action("app.quit", &["<Control>q"]);
     application
+}
+
+fn present_about(application: &adw::Application) {
+    let dialog = adw::AboutDialog::builder()
+        .application_name(gettextrs::gettext("Myna Settings"))
+        .application_icon(APP_ID)
+        .developer_name("Canonical")
+        .version(env!("MYNA_VERSION"))
+        .copyright("© 2025-2026 Canonical Ltd.")
+        .license_type(gtk::License::Agpl30)
+        // Translators: your name, one translator per line.
+        .translator_credits(gettextrs::gettext("translator-credits"))
+        .build();
+    dialog.present(application.active_window().as_ref());
 }
 
 fn smoke_requested(value: Option<&std::ffi::OsStr>) -> bool {
@@ -268,6 +285,35 @@ fn accessibility_probe() -> glib::ExitCode {
     }
     println!("appearance-policy: applied");
 
+    let menu = find_descendant(window.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::MenuButton>()
+            .is_some_and(|button| button.is_primary())
+    })
+    .and_then(|widget| widget.downcast::<gtk::MenuButton>().ok())
+    .and_then(|button| button.menu_model());
+    let menu_actions: Vec<String> = menu.map(|menu| menu_actions(&menu)).unwrap_or_default();
+    if menu_actions != ["win.setup", "app.about"] {
+        eprintln!("the main menu offers {menu_actions:?}");
+        return glib::ExitCode::FAILURE;
+    }
+    application.activate_action("about", None);
+    settle_gtk();
+    let Some(about) = window
+        .visible_dialog()
+        .and_then(|dialog| dialog.downcast::<adw::AboutDialog>().ok())
+    else {
+        eprintln!("About did not open its dialog over the window");
+        return glib::ExitCode::FAILURE;
+    };
+    if about.version() != env!("MYNA_VERSION") || about.application_icon() != APP_ID {
+        eprintln!("the About dialog names the wrong version or icon");
+        return glib::ExitCode::FAILURE;
+    }
+    about.close();
+    settle_gtk();
+    println!("main-menu: setup and about");
+
     if !application
         .actions_for_accel("<Control>w")
         .iter()
@@ -345,6 +391,7 @@ fn onboarding_probe() -> glib::ExitCode {
                 runner.clone(),
             )),
             Rc::new(ProbeMachine::new()),
+            None,
             Box::new(|| {}),
         );
         (ui.window(), ui.start_button())
@@ -495,6 +542,7 @@ fn onboarding_probe() -> glib::ExitCode {
                 std::sync::Arc::new(crate::command::FakeCommandRunner::default()),
             )),
             Rc::new(ProbeMachine::new()),
+            None,
             Box::new(|| {}),
         );
         (ui.window(), ui.start_button())
@@ -537,6 +585,7 @@ fn onboarding_probe() -> glib::ExitCode {
                 std::sync::Arc::new(machine.clone()),
             )),
             Rc::new(machine.clone()),
+            None,
             Box::new({
                 let application = application.clone();
                 move || build_settings_window(&application)
@@ -756,7 +805,12 @@ fn build_window(application: &adw::Application) {
     // no window and no held use count quits the moment `activate` returns.
     let hold = application.hold();
     glib::spawn_future_local(async move {
-        let components = assess_machine().await;
+        let components = crate::onboarding_ui::assess_machine(
+            &crate::adapters::snap_backend::SnapBackendRepository::new(std::sync::Arc::new(
+                crate::command::GioCommandRunner,
+            )),
+        )
+        .await;
         if needs_onboarding(&components) {
             let settings_application = application.clone();
             crate::onboarding_ui::OnboardingUi::present(
@@ -769,32 +823,6 @@ fn build_window(application: &adw::Application) {
         }
         drop(hold);
     });
-}
-
-/// One assessment of what dictation is missing on this machine. A surface that
-/// cannot be read counts as nothing found, which opens the wizard: the flow
-/// then shows what it could not verify rather than a settings window with no
-/// backends and no explanation.
-async fn assess_machine() -> Vec<crate::onboarding::Component> {
-    use crate::adapters::snap_backend::SnapBackendRepository;
-    use crate::command::{CancellationToken, GioCommandRunner};
-    use crate::ports::BackendRepository;
-
-    let repository = SnapBackendRepository::new(std::sync::Arc::new(GioCommandRunner));
-    let installed = repository
-        .installed_snaps(CancellationToken::new())
-        .await
-        .unwrap_or_default();
-    let backends = repository
-        .discover(CancellationToken::new())
-        .await
-        .map(|snapshot| snapshot.backends().len())
-        .unwrap_or_default();
-    assess(Machine::new(
-        &installed,
-        backends,
-        crate::onboarding_ui::shell_extension_installed(),
-    ))
 }
 
 fn settings_window(application: &adw::Application) -> Option<ui::MainWindow> {
@@ -872,6 +900,7 @@ fn build_settings_window(application: &adw::Application) {
                 myna_page,
                 diagnostics_page,
             );
+            ui.install_window_actions(&window);
             window.connect_close_request(move |_| {
                 ui.shutdown();
                 glib::Propagation::Proceed
@@ -1198,6 +1227,7 @@ fn shortcut_probe() -> glib::ExitCode {
 struct ProbeMachine {
     configuration: std::sync::Arc<std::sync::Mutex<BTreeMap<String, String>>>,
     applied: std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+    reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ProbeMachine {
@@ -1210,7 +1240,12 @@ impl ProbeMachine {
         Self {
             configuration: std::sync::Arc::new(std::sync::Mutex::new(configuration)),
             applied: std::sync::Arc::default(),
+            reads: std::sync::Arc::default(),
         }
+    }
+
+    fn reads(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn applied(&self) -> Vec<Vec<String>> {
@@ -1268,6 +1303,7 @@ impl crate::command::CommandRunner for ProbeMachine {
         request: crate::command::CommandRequest,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<crate::command::CommandOutput, crate::command::CommandError> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let arguments: Vec<&str> = request.arguments().iter().map(String::as_str).collect();
         match (request.executable(), self.snap(&arguments)) {
             ("snap", Some(stdout)) => Ok(crate::command::CommandOutput::new(Some(0), stdout, "")),
@@ -1370,6 +1406,7 @@ fn backends_probe() -> glib::ExitCode {
         myna_page,
         status_page("About and Diagnostics", "", "dialog-information-symbolic"),
     );
+    ui.install_window_actions(&window);
 
     let settles = |done: &dyn Fn() -> bool| {
         for _ in 0..100 {
@@ -1494,9 +1531,83 @@ fn backends_probe() -> glib::ExitCode {
     }
     println!("diagnostics-report: lists backends");
 
+    // Set Up Dictation reopens the wizard over this window, never beside an
+    // operation in flight, and closing it re-reads the machine.
+    let wizard = || {
+        application
+            .windows()
+            .into_iter()
+            .find_map(|window| window.downcast::<ui::OnboardingWindow>().ok())
+    };
+    let setup_enabled = || {
+        window
+            .lookup_action("setup")
+            .is_some_and(|action| action.is_enabled())
+    };
+    let Ok(operation) = ui
+        .operation_coordinator()
+        .begin(crate::operation_gate::OperationKind::BackendApply)
+    else {
+        eprintln!("the probe could not hold an operation open");
+        return glib::ExitCode::FAILURE;
+    };
+    ActionGroupExt::activate_action(&window, "setup", None);
+    settle_gtk();
+    if wizard().is_some() {
+        eprintln!("the wizard opened while an operation was in flight");
+        return glib::ExitCode::FAILURE;
+    }
+    ui.operation_coordinator().complete(operation.token());
+    ActionGroupExt::activate_action(&window, "setup", None);
+    if !settles(&|| wizard().is_some()) {
+        eprintln!("Set Up Dictation did not open the wizard");
+        return glib::ExitCode::FAILURE;
+    }
+    let opened = wizard().expect("wizard");
+    if !opened.is_modal() || opened.transient_for().as_ref() != Some(window.upcast_ref()) {
+        eprintln!("the wizard is not modal over the settings window");
+        return glib::ExitCode::FAILURE;
+    }
+    if setup_enabled() {
+        eprintln!("Set Up Dictation stayed enabled with the wizard open");
+        return glib::ExitCode::FAILURE;
+    }
+    // Opening the wizard set reads going that finish on their own; only a
+    // read after they settle is one the close started.
+    let mut reads = machine.reads();
+    let mut quiet = 0;
+    while quiet < 5 {
+        settle_gtk();
+        let now = machine.reads();
+        quiet = if now == reads { quiet + 1 } else { 0 };
+        reads = now;
+    }
+    opened.close();
+    if !settles(&|| machine.reads() > reads && setup_enabled()) {
+        eprintln!("closing the wizard did not re-read the machine");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("setup: reopens the wizard");
+
     ui.shutdown();
     window.close();
     glib::ExitCode::SUCCESS
+}
+
+/// Every action a menu model reaches, sections included, in order.
+fn menu_actions(menu: &gio::MenuModel) -> Vec<String> {
+    (0..menu.n_items())
+        .flat_map(|index| {
+            let action = menu
+                .item_attribute_value(index, "action", None)
+                .and_then(|value| value.get::<String>());
+            let section = menu
+                .item_link(index, "section")
+                .map(|section| menu_actions(&section))
+                .unwrap_or_default();
+            action.into_iter().chain(section)
+        })
+        .collect()
 }
 
 fn find_descendant(

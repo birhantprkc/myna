@@ -70,6 +70,7 @@ fn application_exposes_accessible_diagnostics_controls_when_enabled() {
     assert!(stdout.contains("high-contrast: verified"));
     assert!(stdout.contains("reduced-motion: verified"));
     assert!(stdout.contains("appearance-policy: applied"));
+    assert!(stdout.contains("main-menu: setup and about"));
     assert!(stdout.contains("close-accelerator: bound"));
     assert!(stdout.contains("quit-accelerator: closes windows"));
 }
@@ -248,6 +249,7 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
         "backend-edit: staged",
         "backend-apply: read back",
         "diagnostics-report: lists backends",
+        "setup: reopens the wizard",
     ] {
         assert!(stdout.contains(line), "backends probe missing: {line}");
     }
