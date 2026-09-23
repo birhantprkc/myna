@@ -132,11 +132,10 @@ stop_hud() {
 notice "scenario 1: fake-adapter dictation, internal dialect"
 SOCK="$WORK/internal.sock"; rm -f "$SOCK"
 start_server internal "$SOCK"
-# myna-testbed is stdin-triggered: Enter starts the utterance; the clip then
-# plays out and EOF quits the CLI.
-( sleep 1; printf '\n'; sleep 6 ) | \
+# Clips play straight through without reading stdin, and finish in well under
+# a second: a feeder writing Enter later dies of SIGPIPE and fails the run.
 (cd "$CLIENT" && cargo llvm-cov run --no-report --bin myna-testbed -- \
-  --socket "$SOCK" --clip "$CLIP") | tee "$WORK/internal.out"
+  --socket "$SOCK" --clip "$CLIP") </dev/null | tee "$WORK/internal.out"
 stop_server
 grep -qF "$EXPECTED" "$WORK/internal.out" \
   || die "internal-dialect session missed expected transcript (see $WORK/internal.out)"
@@ -145,9 +144,8 @@ grep -qF "$EXPECTED" "$WORK/internal.out" \
 notice "scenario 2: fake-adapter dictation, IE115 dialect"
 SOCK="$WORK/ie115.sock"; rm -f "$SOCK"
 start_server ie115 "$SOCK"
-( sleep 1; printf '\n'; sleep 6 ) | \
 (cd "$CLIENT" && cargo llvm-cov run --no-report --bin myna-testbed -- \
-  --socket "$SOCK" --clip "$CLIP" --dialect ie115) | tee "$WORK/ie115.out"
+  --socket "$SOCK" --clip "$CLIP" --dialect ie115) </dev/null | tee "$WORK/ie115.out"
 stop_server
 grep -qF "$EXPECTED" "$WORK/ie115.out" \
   || die "IE115-dialect session missed expected transcript (see $WORK/ie115.out)"
@@ -259,9 +257,8 @@ JSON
   "$CORPUS_DIR/manifest.json")
 SOCK="$WORK/corpus.sock"; rm -f "$SOCK"
 start_server corpus "$SOCK"
-( sleep 1; printf '\n'; sleep 6; printf '\n'; sleep 6 ) | \
 (cd "$CLIENT" && cargo llvm-cov run --no-report --bin myna-testbed -- \
-  --socket "$SOCK" --corpus "$CORPUS_DIR") | tee "$WORK/corpus.out"
+  --socket "$SOCK" --corpus "$CORPUS_DIR") </dev/null | tee "$WORK/corpus.out"
 stop_server
 grep -qF "$EXPECTED" "$WORK/corpus.out" \
   || die "corpus session missed expected transcript (see $WORK/corpus.out)"
