@@ -16,10 +16,10 @@ use crate::performance::{
 };
 
 /// Copy-safe onboarding instructions surfaced when Myna itself is missing.
-pub const NO_MYNA_COMMAND: &str = "sudo snap install myna";
+pub const NO_MYNA_COMMAND: &str = crate::onboarding::MYNA_INSTALL_COMMAND;
 /// Copy-safe onboarding instructions surfaced when Myna is installed but no
 /// backend has been chosen yet.
-pub const NO_BACKEND_COMMAND: &str = "sudo snap install myna-parakeet";
+pub const NO_BACKEND_COMMAND: &str = crate::onboarding::MODEL_INSTALL_COMMAND;
 
 /// Upper bound on subprocess spawns required for a single application-level
 /// refresh: `snap list`, `snap connections` and `snap interface content`.
@@ -878,7 +878,7 @@ mod tests {
         let text = report.copy_text();
         assert!(text.contains("Myna Settings "));
         assert!(text.contains("Onboarding: Myna is not installed"));
-        assert!(text.contains("Suggested command: sudo snap install myna"));
+        assert!(text.contains(&format!("Suggested command: {NO_MYNA_COMMAND}")));
         assert!(text.contains("Backends:\n  (none discovered)"));
         assert!(text.contains("Problems:\n  (none)"));
     }

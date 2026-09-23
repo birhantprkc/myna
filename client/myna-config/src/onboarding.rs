@@ -19,9 +19,6 @@ pub const RECOMMENDED_BACKEND_SNAP: &str = "myna-parakeet";
 /// Snap plus model component as installed, rounded to the nearest 10 MB.
 pub const RECOMMENDED_MODEL_MEGABYTES: u32 = 690;
 
-/// Both snaps are published to edge only.
-pub const STORE_CHANNEL: &str = "edge";
-
 /// The GNOME Shell extension that hosts the HUD.
 pub const SHELL_EXTENSION_UUID: &str = "myna-shell@canonical.com";
 
@@ -69,16 +66,21 @@ impl StoreSnap {
     }
 
     /// The terminal command, one line per step.
-    pub fn install_command(self) -> String {
-        let install = format!("sudo snap install --{STORE_CHANNEL} {}", self.name());
+    pub const fn install_command(self) -> &'static str {
         match self {
-            Self::Myna => {
-                format!("sudo snap set system experimental.user-daemons=true\n{install}")
-            }
-            Self::RecommendedModel => install,
+            Self::Myna => MYNA_INSTALL_COMMAND,
+            Self::RecommendedModel => MODEL_INSTALL_COMMAND,
         }
     }
 }
+
+/// Installs Myna from a terminal. The flag comes first: see
+/// [`StoreSnap::installs_from_app_center`].
+pub const MYNA_INSTALL_COMMAND: &str =
+    "sudo snap set system experimental.user-daemons=true\nsudo snap install --edge myna";
+
+/// Installs the recommended backend from a terminal.
+pub const MODEL_INSTALL_COMMAND: &str = "sudo snap install --edge myna-parakeet";
 
 /// What the user can do about a component that is missing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

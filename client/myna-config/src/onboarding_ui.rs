@@ -327,7 +327,7 @@ impl OnboardingUi {
                 copy.update_property(&[gtk::accessible::Property::Label(&gettextrs::gettext(
                     "Copy install command",
                 ))]);
-                copy.connect_clicked(self.copy_handler(snap.install_command()));
+                copy.connect_clicked(self.copy_handler(snap.install_command().to_owned()));
                 row.add_suffix(&copy);
 
                 let install = gtk::Button::builder()
@@ -346,7 +346,7 @@ impl OnboardingUi {
                     .tooltip_text(snap.install_command())
                     .valign(gtk::Align::Center)
                     .build();
-                copy.connect_clicked(self.copy_handler(snap.install_command()));
+                copy.connect_clicked(self.copy_handler(snap.install_command().to_owned()));
                 copy
             }
             Remedy::Explain => {
@@ -422,7 +422,7 @@ fn open_app_center(window: &ui::OnboardingWindow, snap: StoreSnap) {
         let window = window.clone();
         move |result| {
             if result.is_err() {
-                copy_command(&window, &snap.install_command());
+                copy_command(&window, snap.install_command());
             }
         }
     });

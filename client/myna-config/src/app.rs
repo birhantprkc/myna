@@ -361,7 +361,7 @@ fn onboarding_probe() -> glib::ExitCode {
     for (label, snap) in copies {
         let command = snap.install_command();
         let Some(copy) = button(&|button| {
-            button.tooltip_text().as_deref() == Some(command.as_str())
+            button.tooltip_text().as_deref() == Some(command)
                 && button.label().unwrap_or_default() == label.as_str()
         }) else {
             eprintln!("no copy button offers `{command}`");
@@ -369,7 +369,7 @@ fn onboarding_probe() -> glib::ExitCode {
         };
         copy.emit_clicked();
         settle_gtk();
-        if clipboard().as_deref() != Some(command.as_str()) {
+        if clipboard().as_deref() != Some(command) {
             eprintln!(
                 "copying left {:?} on the clipboard, not `{command}`",
                 clipboard()
