@@ -13,11 +13,7 @@ mod imp {
         #[template_child]
         pub overlay: gtk::TemplateChild<adw::ToastOverlay>,
         #[template_child]
-        pub window_title: gtk::TemplateChild<adw::WindowTitle>,
-        #[template_child]
-        pub stack: gtk::TemplateChild<gtk::Stack>,
-        #[template_child]
-        pub back_button: gtk::TemplateChild<gtk::Button>,
+        pub navigation: gtk::TemplateChild<adw::NavigationView>,
         #[template_child]
         pub forward_button: gtk::TemplateChild<gtk::Button>,
     }
@@ -63,16 +59,8 @@ impl OnboardingWindow {
         self.imp().overlay.get()
     }
 
-    pub fn window_title(&self) -> adw::WindowTitle {
-        self.imp().window_title.get()
-    }
-
-    pub fn stack(&self) -> gtk::Stack {
-        self.imp().stack.get()
-    }
-
-    pub fn back_button(&self) -> gtk::Button {
-        self.imp().back_button.get()
+    pub fn navigation(&self) -> adw::NavigationView {
+        self.imp().navigation.get()
     }
 
     pub fn forward_button(&self) -> gtk::Button {

@@ -374,9 +374,10 @@ fn onboarding_probe() -> glib::ExitCode {
 
     let step = |window: &ui::OnboardingWindow| {
         window
-            .stack()
-            .visible_child_name()
-            .map(|name| name.to_string())
+            .navigation()
+            .visible_page()
+            .and_then(|page| page.tag())
+            .map(|tag| tag.to_string())
             .unwrap_or_default()
     };
 
@@ -612,6 +613,14 @@ fn onboarding_probe() -> glib::ExitCode {
         false
     };
     forward.emit_clicked();
+    if window
+        .navigation()
+        .visible_page()
+        .map_or(true, |page| page.can_pop())
+    {
+        eprintln!("the component step could be left while it set dictation up");
+        return glib::ExitCode::FAILURE;
+    }
     if !reaches("shortcut") {
         eprintln!("the component step did not reach the shortcut step");
         return glib::ExitCode::FAILURE;
@@ -626,15 +635,13 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-setup: restarted the daemon");
-    let back = window.back_button();
-    if !back.is_visible() {
-        eprintln!("the shortcut step offers no way back");
-        return glib::ExitCode::FAILURE;
-    }
-    back.emit_clicked();
+    // The header bar's back button, Escape and Alt+Left all pop.
+    let popped = window.navigation().visible_page().is_some_and(|page| {
+        page.can_pop() && WidgetExt::activate_action(&page, "navigation.pop", None).is_ok()
+    });
     settle_gtk();
-    if step(&window) != "components" {
-        eprintln!("the back button did not return to the component step");
+    if !popped || step(&window) != "components" {
+        eprintln!("going back did not return to the component step");
         return glib::ExitCode::FAILURE;
     }
     forward.emit_clicked();
@@ -765,9 +772,7 @@ fn template_probe() -> glib::ExitCode {
     let onboarding = ui::OnboardingWindow::new(&application);
     let _ = (
         onboarding.overlay(),
-        onboarding.window_title(),
-        onboarding.stack(),
-        onboarding.back_button(),
+        onboarding.navigation(),
         onboarding.forward_button(),
     );
     println!("OnboardingWindow");

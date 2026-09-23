@@ -76,10 +76,22 @@ impl OnboardingUi {
         let components_page = ui::OnboardingComponents::new();
         let shortcut_page = ui::OnboardingShortcut::new();
 
-        let stack = window.stack();
-        stack.add_named(&welcome, Some(step_name(Step::Welcome)));
-        stack.add_named(&components_page, Some(step_name(Step::Components)));
-        stack.add_named(&shortcut_page, Some(step_name(Step::Shortcut)));
+        let navigation = window.navigation();
+        for (step, content) in [
+            (Step::Welcome, welcome.upcast_ref::<gtk::Widget>()),
+            (Step::Components, components_page.upcast_ref()),
+            (Step::Shortcut, shortcut_page.upcast_ref()),
+        ] {
+            let toolbar = adw::ToolbarView::new();
+            // Each page already heads itself with its title.
+            toolbar.add_top_bar(&adw::HeaderBar::builder().show_title(false).build());
+            toolbar.set_content(Some(content));
+            navigation.add(&adw::NavigationPage::with_tag(
+                &toolbar,
+                &step_title(step),
+                step_name(step),
+            ));
+        }
 
         let ui = Rc::new(Self {
             window: window.clone(),
@@ -110,11 +122,18 @@ impl OnboardingUi {
                 }
             }
         });
-        window.back_button().connect_clicked({
+        // The visible page is the step: going back is the navigation view's
+        // own, from the header bar, Escape or Alt+Left.
+        navigation.connect_visible_page_notify({
             let ui = Rc::downgrade(&ui);
-            move |_| {
-                if let Some(ui) = ui.upgrade() {
-                    ui.retreat();
+            move |navigation| {
+                let step = navigation
+                    .visible_page()
+                    .and_then(|page| page.tag())
+                    .and_then(|tag| step_named(&tag));
+                if let (Some(ui), Some(step)) = (ui.upgrade(), step) {
+                    ui.step.set(step);
+                    ui.render();
                 }
             }
         });
@@ -185,10 +204,7 @@ impl OnboardingUi {
         }
         match self.step.get().next() {
             Some(step) if self.step.get() == Step::Components => self.finish_setup(step),
-            Some(step) => {
-                self.step.set(step);
-                self.render();
-            }
+            Some(step) => self.window.navigation().push_by_tag(step_name(step)),
             None => {
                 self.notify_finished();
                 self.window.close();
@@ -218,21 +234,14 @@ impl OnboardingUi {
                 return;
             };
             ui.busy.set(false);
+            ui.render();
             match outcome {
-                Ok(()) => ui.step.set(next),
+                Ok(()) => ui.window.navigation().push_by_tag(step_name(next)),
                 Err(message) => {
                     ui.report_failure(&gettextrs::gettext("Could not set up dictation"), &message)
                 }
             }
-            ui.render();
         });
-    }
-
-    fn retreat(self: &Rc<Self>) {
-        if let Some(step) = self.step.get().previous() {
-            self.step.set(step);
-            self.render();
-        }
     }
 
     /// The widgets the headless probe drives the wizard through. It holds
@@ -259,13 +268,11 @@ impl OnboardingUi {
         let step = self.step.get();
         let components = self.components.borrow().clone();
 
-        self.window.window_title().set_title(&step_title(step));
         self.window.set_title(Some(&step_title(step)));
-        self.window.stack().set_visible_child_name(step_name(step));
-
-        let back = self.window.back_button();
-        back.set_visible(step.previous().is_some());
-        back.set_sensitive(!self.busy.get());
+        // Setting up restarts the daemon; leaving mid-way would strand it.
+        if let Some(page) = self.window.navigation().visible_page() {
+            page.set_can_pop(!self.busy.get());
+        }
 
         let forward = self.window.forward_button();
         // The welcome step has its own button in the middle of the page, so
@@ -464,6 +471,12 @@ fn step_name(step: Step) -> &'static str {
         Step::Components => "components",
         Step::Shortcut => "shortcut",
     }
+}
+
+fn step_named(name: &str) -> Option<Step> {
+    [Step::Welcome, Step::Components, Step::Shortcut]
+        .into_iter()
+        .find(|step| step_name(*step) == name)
 }
 
 fn step_title(step: Step) -> String {

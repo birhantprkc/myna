@@ -190,14 +190,6 @@ impl Step {
             Self::Shortcut => None,
         }
     }
-
-    pub const fn previous(self) -> Option<Self> {
-        match self {
-            Self::Welcome => None,
-            Self::Components => Some(Self::Welcome),
-            Self::Shortcut => Some(Self::Components),
-        }
-    }
 }
 
 /// Whether the step's forward button is sensitive. Only the component step
@@ -299,7 +291,6 @@ mod tests {
         let mut step = Step::first();
         let mut walked = vec![step];
         while let Some(next) = step.next() {
-            assert_eq!(next.previous(), Some(step));
             step = next;
             walked.push(step);
         }
