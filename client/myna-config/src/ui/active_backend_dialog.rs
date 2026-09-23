@@ -1,5 +1,4 @@
 use adw::subclass::prelude::*;
-use glib::subclass::types::ObjectSubclassIsExt;
 use gtk::{glib, CompositeTemplate};
 use gtk4 as gtk;
 use libadwaita as adw;
@@ -10,10 +9,7 @@ mod imp {
 
     #[derive(Default, CompositeTemplate)]
     #[template(resource = "/com/canonical/Myna/Config/ui/active-backend-dialog.ui")]
-    pub struct ActiveBackendDialog {
-        #[template_child]
-        pub switch_confirmation_label: gtk::TemplateChild<gtk::Label>,
-    }
+    pub struct ActiveBackendDialog {}
 
     #[glib::object_subclass]
     impl ObjectSubclass for ActiveBackendDialog {
@@ -46,10 +42,7 @@ impl ActiveBackendDialog {
     pub fn new(confirmation: &str) -> Self {
         super::register_resources();
         let dialog: Self = glib::Object::builder().build();
-        dialog
-            .imp()
-            .switch_confirmation_label
-            .set_label(confirmation);
+        dialog.set_body(confirmation);
         dialog.set_response_appearance("switch", adw::ResponseAppearance::Suggested);
         dialog
     }

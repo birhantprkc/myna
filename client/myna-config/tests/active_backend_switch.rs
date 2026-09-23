@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use async_trait::async_trait;
 use myna_config::active_backend::{
-    execute_switch, ActiveBackendController, BackendHealth, PrepareSwitchError, SwitchOutcome,
-    SwitchPlan,
+    execute_switch, myna_restart_request, ActiveBackendController, BackendHealth,
+    PrepareSwitchError, SwitchOutcome, SwitchPlan,
 };
 use myna_config::command::{CancellationToken, CommandRequest};
 use myna_config::domain::{
@@ -61,7 +61,10 @@ fn plan_connects_from_zero_connections() {
                 "snap",
                 vec!["connect", "myna:backend", "myna-parakeet:provider"]
             ),
-            ("snap", vec!["restart", "myna.myna"])
+            (
+                "systemctl",
+                vec!["--user", "restart", "snap.myna.myna.service"]
+            )
         ]
     );
 }
@@ -84,7 +87,10 @@ fn plan_switches_one_connection_disconnect_first() {
                 "snap",
                 vec!["connect", "myna:backend", "myna-whisper:provider"]
             ),
-            ("snap", vec!["restart", "myna.myna"])
+            (
+                "systemctl",
+                vec!["--user", "restart", "snap.myna.myna.service"]
+            )
         ]
     );
 }
@@ -103,7 +109,7 @@ fn plan_disconnects_every_multiple_connection_before_connecting() {
     assert_eq!(plan.operations()[0].arguments()[0], "disconnect");
     assert_eq!(plan.operations()[1].arguments()[0], "disconnect");
     assert_eq!(plan.operations()[2].arguments()[0], "connect");
-    assert_eq!(plan.operations()[3].arguments(), ["restart", "myna.myna"]);
+    assert_eq!(plan.operations()[3], myna_restart_request());
 }
 
 #[test]
@@ -142,7 +148,10 @@ fn selecting_one_of_multiple_connections_still_converges_to_one() {
                 "snap",
                 vec!["connect", "myna:backend", "myna-parakeet:provider"]
             ),
-            ("snap", vec!["restart", "myna.myna"]),
+            (
+                "systemctl",
+                vec!["--user", "restart", "snap.myna.myna.service"]
+            ),
         ]
     );
 }
@@ -160,35 +169,16 @@ fn missing_selected_backend_is_rejected() {
 }
 
 #[test]
-fn preview_is_exact_shell_free_and_honest_about_snapd_authorization() {
+fn preview_names_the_backend_and_no_commands() {
     let plan = SwitchPlan::new(
-        &connections(&["old$backend", "new;backend"], &["old$backend"]),
-        BackendIdentity::new("new;backend", "provider"),
+        &connections(&["myna-parakeet", "myna-whisper"], &["myna-parakeet"]),
+        BackendIdentity::new("myna-whisper", "provider"),
     )
     .unwrap();
     let text = plan.confirmation_text();
-    assert!(text.contains(r#"["snap", "disconnect", "myna:backend", "old$backend:provider"]"#));
-    assert!(text.contains(r#"["snap", "connect", "myna:backend", "new;backend:provider"]"#));
-    assert!(text.contains(r#"["snap", "restart", "myna.myna"]"#));
-    assert!(
-        text.contains("without a shell") || text.contains("Nothing is executed through a shell")
-    );
-    assert!(
-        text.contains("user service is restarted") && text.contains("new content mount"),
-        "confirmation must explain the daemon restart and mount refresh; got: {text}"
-    );
-    assert!(
-        text.contains("snapd may request administrator authorization"),
-        "confirmation must honestly warn about snapd auth; got: {text}"
-    );
-    assert!(
-        text.contains("possibly more than once"),
-        "confirmation must not promise a single auth; got: {text}"
-    );
-    assert!(!text.contains(
-        "You will give one confirmation in this app and one administrator authorization"
-    ));
-    assert!(!text.contains("prompt for each command"));
+    assert!(text.contains("myna-whisper"));
+    assert!(!text.contains("myna:backend"));
+    assert!(!text.contains("myna-parakeet"));
 }
 
 #[derive(Clone)]

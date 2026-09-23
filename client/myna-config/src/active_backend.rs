@@ -10,7 +10,9 @@ use crate::ports::{
     BackendRepository, SystemConfigurator, SystemConfiguratorError, SystemConfiguratorFailure,
 };
 
-const MYNA_RESTART_SERVICE: &str = "myna.myna";
+/// Myna's user service. Restarting it through the user's own systemd needs
+/// no authorization, where `snap restart` costs a second polkit prompt.
+pub const MYNA_USER_UNIT: &str = "snap.myna.myna.service";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PrepareSwitchError {
@@ -104,7 +106,7 @@ impl SwitchPlan {
             operations.push(myna_restart_request());
             operations
         };
-        let confirmation_text = confirmation_text(&selected, &operations);
+        let confirmation_text = confirmation_text(&selected);
         Ok(Self {
             baseline: snapshot.clone(),
             selected,
@@ -139,7 +141,7 @@ impl SwitchPlan {
         selected: BackendIdentity,
         operations: Vec<CommandRequest>,
     ) -> Self {
-        let confirmation_text = confirmation_text(&selected, &operations);
+        let confirmation_text = confirmation_text(&selected);
         Self {
             baseline,
             selected,
@@ -156,33 +158,20 @@ fn privileged_snap_request(action: &str, slot: String) -> CommandRequest {
     )
 }
 
-fn myna_restart_request() -> CommandRequest {
+pub fn myna_restart_request() -> CommandRequest {
     CommandRequest::new(
-        "snap".to_owned(),
-        vec!["restart".to_owned(), MYNA_RESTART_SERVICE.to_owned()],
+        "systemctl".to_owned(),
+        vec![
+            "--user".to_owned(),
+            "restart".to_owned(),
+            MYNA_USER_UNIT.to_owned(),
+        ],
     )
 }
 
-fn confirmation_text(selected: &BackendIdentity, operations: &[CommandRequest]) -> String {
-    let intro = gettextrs::gettext("Switch the active backend to {backend}.")
-        .replace("{backend}", selected.snap_name());
-    let explanation = gettextrs::gettext(
-        "Myna Settings will send each `snap disconnect`, `snap connect`, and `snap restart myna.myna` directly to snapd over its Unix socket. After the backend mount is switched, Myna’s user service is restarted so it sees the new content mount; dictation may be interrupted briefly while that service comes back. snapd may request administrator authorization (via polkit) — possibly more than once — before it accepts the requests. Nothing is executed through a shell.",
-    );
-    let actions = gettextrs::gettext("Exact snapd interface actions:");
-    let mut text = format!("{intro}\n\n{explanation}\n\n{actions}");
-    for operation in operations {
-        let argv = std::iter::once(operation.executable())
-            .chain(operation.arguments().iter().map(String::as_str))
-            .collect::<Vec<_>>();
-        text.push('\n');
-        text.push_str(
-            &serde_json::to_string(&argv)
-                .expect("argv strings serialize")
-                .replace("\",\"", "\", \""),
-        );
-    }
-    text
+fn confirmation_text(selected: &BackendIdentity) -> String {
+    gettextrs::gettext("Dictation will use {backend}. It pauses briefly while Myna restarts.")
+        .replace("{backend}", selected.snap_name())
 }
 
 fn connected_backends(snapshot: &ConnectionSnapshot) -> Vec<BackendIdentity> {

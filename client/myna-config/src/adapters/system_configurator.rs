@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::active_backend::SwitchPlan;
+use crate::active_backend::{myna_restart_request, SwitchPlan};
 use crate::adapters::snapd_client::{
     is_valid_slot_name, is_valid_snap_name, InterfaceAction, SnapdClient, SnapdError,
     UnixSocketSnapdClient,
@@ -21,7 +21,6 @@ const APPLY_TIMEOUT: Duration = Duration::from_secs(120);
 /// switch step whose typed target does not match these exact allowlists is
 /// rejected without reaching the socket.
 const ALLOWED_PLUG: &str = "myna:backend";
-const ALLOWED_RESTART_SERVICE: &str = "myna.myna";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SwitchStep {
@@ -36,9 +35,10 @@ enum SwitchStep {
 
 /// Adapter that:
 ///
-/// * executes backend switch operations directly against the host snapd REST
-///   API over `/run/snapd.socket` (no `pkexec`, no shell), running blocking
-///   socket I/O off the GTK main loop, and
+/// * executes backend switch interface operations directly against the host
+///   snapd REST API over `/run/snapd.socket` (no `pkexec`, no shell), running
+///   blocking socket I/O off the GTK main loop, then restarts Myna's user
+///   service through `systemctl --user`, and
 /// * runs a backend setting `apply` as one `pkexec` invocation of this same
 ///   binary in [`crate::apply_plan`] executor mode, so the user authorizes
 ///   once per apply rather than once per command.
@@ -116,15 +116,12 @@ impl SystemConfigurator for PkexecSystemConfigurator {
                     .snapd
                     .apply_interface_action(action, cancellation.clone())
                     .await
-                    .map(|_| ()),
-                SwitchStep::Restart { .. } => self
-                    .snapd
-                    .restart_myna_service(cancellation.clone())
-                    .await
-                    .map(|_| ()),
+                    .map(|_| ())
+                    .map_err(|error| snapd_error_to_system_error(request.clone(), error)),
+                SwitchStep::Restart { .. } => self.restart_myna(cancellation.clone()).await,
             };
             match outcome {
-                Ok(_) => {
+                Ok(()) => {
                     completed.push(CommandResult::new(
                         request.executable().to_owned(),
                         request.arguments().to_vec(),
@@ -134,14 +131,23 @@ impl SystemConfigurator for PkexecSystemConfigurator {
                     ));
                 }
                 Err(error) => {
-                    return Err(SystemConfiguratorFailure::new(
-                        completed,
-                        snapd_error_to_system_error(request, error),
-                    ));
+                    return Err(SystemConfiguratorFailure::new(completed, error));
                 }
             }
         }
         Ok(completed)
+    }
+
+    async fn restart_myna(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<(), SystemConfiguratorError> {
+        let request = myna_restart_request();
+        self.runner
+            .run(request.clone(), cancellation)
+            .await
+            .map(|_| ())
+            .map_err(|error| map_command_error(request.executable(), request.arguments(), error))
     }
 
     async fn apply_backend_config(
@@ -156,8 +162,8 @@ impl SystemConfigurator for PkexecSystemConfigurator {
 
 /// Ensure every operation matches the exact allowlist for the direct snapd
 /// adapter: ordered `snap disconnect` calls, exactly one `snap connect`, and a
-/// final exact `snap restart myna.myna`. Anything else is refused before we
-/// open a socket.
+/// final exact restart of Myna's user service. Anything else is refused before
+/// we open a socket.
 #[allow(clippy::result_large_err)]
 fn validate_switch_plan(plan: &SwitchPlan) -> Result<Vec<SwitchStep>, SystemConfiguratorFailure> {
     if plan.operations().is_empty() {
@@ -268,6 +274,14 @@ fn validate_switch_plan(plan: &SwitchPlan) -> Result<Vec<SwitchStep>, SystemConf
 }
 
 fn validate_operation(request: &CommandRequest) -> Result<SwitchStep, String> {
+    if request.executable() == "systemctl" {
+        if request != &myna_restart_request() {
+            return Err("restart must be exactly Myna's user service".to_owned());
+        }
+        return Ok(SwitchStep::Restart {
+            request: request.clone(),
+        });
+    }
     if request.executable() != "snap" {
         return Err(format!(
             "unexpected executable in switch plan: {}",
@@ -276,14 +290,6 @@ fn validate_operation(request: &CommandRequest) -> Result<SwitchStep, String> {
     }
     let args = request.arguments();
     match args.first().map(String::as_str) {
-        Some("restart") => {
-            if args != ["restart", ALLOWED_RESTART_SERVICE] {
-                return Err("restart must be exactly `snap restart myna.myna`".to_owned());
-            }
-            Ok(SwitchStep::Restart {
-                request: request.clone(),
-            })
-        }
         Some("connect" | "disconnect") => {
             if args.len() != 3 {
                 return Err(format!(
@@ -864,15 +870,12 @@ mod tests {
     struct ScriptedSnapd {
         interface_outcomes:
             Mutex<Vec<Result<crate::adapters::snapd_client::SnapdOutcome, SnapdError>>>,
-        restart_outcomes:
-            Mutex<Vec<Result<crate::adapters::snapd_client::ChangeReport, SnapdError>>>,
         calls: Mutex<Vec<SnapdCall>>,
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum SnapdCall {
         Interface(InterfaceAction),
-        RestartMynaService,
     }
 
     #[async_trait(?Send)]
@@ -897,30 +900,6 @@ mod tests {
                 .unwrap_or_else(|| {
                     Err(SnapdError::Protocol {
                         message: "no scripted outcome".into(),
-                        body: String::new(),
-                    })
-                })
-        }
-
-        async fn restart_myna_service(
-            &self,
-            cancellation: CancellationToken,
-        ) -> Result<crate::adapters::snapd_client::ChangeReport, SnapdError> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(SnapdCall::RestartMynaService);
-            if cancellation.is_cancelled() {
-                return Err(SnapdError::Cancelled);
-            }
-            self.restart_outcomes
-                .lock()
-                .unwrap()
-                .drain(..1)
-                .next()
-                .unwrap_or_else(|| {
-                    Err(SnapdError::Protocol {
-                        message: "no scripted restart outcome".into(),
                         body: String::new(),
                     })
                 })
@@ -955,17 +934,17 @@ mod tests {
 
     #[test]
     fn backend_switch_runs_disconnect_then_connect_then_restart_via_snapd_client() {
-        use crate::adapters::snapd_client::{ChangeReport, SnapdOutcome};
+        use crate::adapters::snapd_client::SnapdOutcome;
         let snapd = Arc::new(ScriptedSnapd {
             interface_outcomes: Mutex::new(vec![Ok(SnapdOutcome::Sync), Ok(SnapdOutcome::Sync)]),
-            restart_outcomes: Mutex::new(vec![Ok(ChangeReport {
-                change_id: "7".into(),
-                status: "Done".into(),
-            })]),
             calls: Mutex::new(Vec::new()),
         });
-        let runner = Arc::new(FakeCommandRunner::default());
-        let adapter = PkexecSystemConfigurator::with_snapd_client(runner, snapd.clone());
+        let runner = Arc::new(FakeCommandRunner::scripted([Ok(CommandOutput::new(
+            Some(0),
+            "",
+            "",
+        ))]));
+        let adapter = PkexecSystemConfigurator::with_snapd_client(runner.clone(), snapd.clone());
 
         let completed =
             block_on(adapter.execute_backend_switch(&switch_plan(), CancellationToken::new()))
@@ -978,7 +957,8 @@ mod tests {
         assert!(
             matches!(&calls[1], SnapdCall::Interface(InterfaceAction::Connect { backend_snap, backend_slot }) if backend_snap == "new" && backend_slot == "provider")
         );
-        assert_eq!(calls[2], SnapdCall::RestartMynaService);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(runner.calls(), [myna_restart_request()]);
     }
 
     #[test]
@@ -993,7 +973,6 @@ mod tests {
                     message: "connect failed".into(),
                 }),
             ]),
-            restart_outcomes: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
         });
         let runner = Arc::new(FakeCommandRunner::default());
@@ -1017,7 +996,6 @@ mod tests {
                 kind: Some("auth-cancelled".into()),
                 message: "cancelled".into(),
             })]),
-            restart_outcomes: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
         });
         let runner = Arc::new(FakeCommandRunner::default());
@@ -1037,7 +1015,6 @@ mod tests {
     fn backend_switch_cancellation_stops_after_first_operation() {
         let snapd = Arc::new(ScriptedSnapd {
             interface_outcomes: Mutex::new(Vec::new()),
-            restart_outcomes: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
         });
         let runner = Arc::new(FakeCommandRunner::default());
@@ -1061,17 +1038,14 @@ mod tests {
         use crate::adapters::snapd_client::SnapdOutcome;
         let snapd = Arc::new(ScriptedSnapd {
             interface_outcomes: Mutex::new(vec![Ok(SnapdOutcome::Sync), Ok(SnapdOutcome::Sync)]),
-            restart_outcomes: Mutex::new(vec![Err(SnapdError::Snapd {
-                status_code: 500,
-                kind: None,
-                message: "restart failed".into(),
-            })]),
             calls: Mutex::new(Vec::new()),
         });
-        let adapter = PkexecSystemConfigurator::with_snapd_client(
-            Arc::new(FakeCommandRunner::default()),
-            snapd.clone(),
-        );
+        let runner = Arc::new(FakeCommandRunner::scripted([Err(CommandError::NonZero {
+            exit_status: Some(1),
+            stdout: String::new(),
+            stderr: "restart failed".into(),
+        })]));
+        let adapter = PkexecSystemConfigurator::with_snapd_client(runner.clone(), snapd.clone());
 
         let failure =
             block_on(adapter.execute_backend_switch(&switch_plan(), CancellationToken::new()))
@@ -1081,8 +1055,8 @@ mod tests {
             failure.error(),
             SystemConfiguratorError::Execution { message, .. } if message == "restart failed"
         ));
-        let calls = snapd.calls.lock().unwrap().clone();
-        assert_eq!(calls.last(), Some(&SnapdCall::RestartMynaService));
+        assert_eq!(snapd.calls.lock().unwrap().len(), 2);
+        assert_eq!(runner.calls(), [myna_restart_request()]);
     }
 
     #[test]
@@ -1126,7 +1100,7 @@ mod tests {
         let plans = [
             (
                 invalid_switch_plan(vec![
-                    CommandRequest::new("snap".into(), vec!["restart".into(), "myna.myna".into()]),
+                    myna_restart_request(),
                     CommandRequest::new(
                         "snap".into(),
                         vec![
@@ -1148,8 +1122,8 @@ mod tests {
                             "new:provider".into(),
                         ],
                     ),
-                    CommandRequest::new("snap".into(), vec!["restart".into(), "myna.myna".into()]),
-                    CommandRequest::new("snap".into(), vec!["restart".into(), "myna.myna".into()]),
+                    myna_restart_request(),
+                    myna_restart_request(),
                 ]),
                 "duplicate restart in switch plan",
             ),
@@ -1164,11 +1138,25 @@ mod tests {
                         ],
                     ),
                     CommandRequest::new(
-                        "snap".into(),
-                        vec!["restart".into(), "other.service".into()],
+                        "systemctl".into(),
+                        vec!["--user".into(), "restart".into(), "other.service".into()],
                     ),
                 ]),
-                "restart must be exactly `snap restart myna.myna`",
+                "restart must be exactly Myna's user service",
+            ),
+            (
+                invalid_switch_plan(vec![
+                    CommandRequest::new(
+                        "snap".into(),
+                        vec![
+                            "connect".into(),
+                            "myna:backend".into(),
+                            "new:provider".into(),
+                        ],
+                    ),
+                    CommandRequest::new("snap".into(), vec!["restart".into(), "myna.myna".into()]),
+                ]),
+                "unknown snap action restart",
             ),
         ];
 
@@ -1241,8 +1229,8 @@ mod tests {
                     "new:provider".into(),
                 ],
             ),
-            CommandRequest::new("snap".into(), vec!["restart".into(), "myna.myna".into()]),
-            CommandRequest::new("snap".into(), vec!["restart".into(), "myna.myna".into()]),
+            myna_restart_request(),
+            myna_restart_request(),
         ]);
         let adapter = PkexecSystemConfigurator::with_snapd_client(
             Arc::new(FakeCommandRunner::default()),
@@ -1277,7 +1265,7 @@ mod tests {
                     "old:provider".into(),
                 ],
             ),
-            CommandRequest::new("snap".into(), vec!["restart".into(), "myna.myna".into()]),
+            myna_restart_request(),
         ]);
         let adapter = PkexecSystemConfigurator::with_snapd_client(
             Arc::new(FakeCommandRunner::default()),

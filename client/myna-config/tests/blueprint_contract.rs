@@ -29,7 +29,7 @@ fn active_backend_selector_and_confirmation_are_static_blueprint_shells() {
     assert!(page.contains("sensitive: false;"));
     assert!(apply_controls
         .contains("apply_button {\n      label: _(\"Apply\");\n      sensitive: false;"));
-    assert!(dialog.contains("switch_confirmation_label"));
+    assert!(!dialog.contains("extra-child"));
     assert!(dialog.contains("Cancel"));
     assert!(dialog.contains("Switch Backend"));
 }

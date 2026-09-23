@@ -1,5 +1,4 @@
-//! Direct host snapd REST adapter for backend-switch interface operations and
-//! the fixed `myna.myna` restart.
+//! Direct host snapd REST adapter for backend-switch interface operations.
 //!
 //! This module speaks HTTP/1.1 over the abstract-free Unix domain socket at
 //! `/run/snapd.socket` and only exposes a narrowly typed API for the exact
@@ -10,13 +9,7 @@
 //!    "slots":[{"snap":<backend>,"slot":<slot>}]}` where `<backend>` is a
 //!   validated snap name and `<slot>` the validated slot name discovery
 //!   recorded for it.
-//! * `POST /v2/apps` with the exact body
-//!   `{"action":"restart","names":["myna.myna"],"scope":["user"],"users":"self"}`
-//!   to restart Myna's current-user service after the backend content mount
-//!   changes.
 //! * `GET  /v2/changes/{id}` to poll async changes to completion.
-//! * `GET  /v2/apps?names=myna.myna&select=service&global=false` to confirm the
-//!   restarted user daemon is active again before reporting success.
 //!
 //! There is deliberately no way to send an arbitrary path, method, body, or
 //! header through this module. Snap names are re-validated against the strict
@@ -60,14 +53,11 @@ pub const MAX_CHUNK_BYTES: usize = MAX_RESPONSE_BYTES;
 /// on the myna:backend side of the connection.
 pub const MYNA_PLUG_SNAP: &str = "myna";
 pub const MYNA_PLUG_NAME: &str = "backend";
-pub const MYNA_SERVICE_NAME: &str = "myna.myna";
-const MYNA_SERVICE_READINESS_PATH: &str = "/v2/apps?names=myna.myna&select=service&global=false";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SnapdTimeoutContext {
     Request,
     ChangePolling,
-    ServiceReadiness,
 }
 
 impl SnapdTimeoutContext {
@@ -75,7 +65,6 @@ impl SnapdTimeoutContext {
         match self {
             Self::Request => "snapd request",
             Self::ChangePolling => "snapd change polling",
-            Self::ServiceReadiness => "waiting for myna.myna service readiness",
         }
     }
 }
@@ -427,11 +416,6 @@ pub trait SnapdClient {
         action: InterfaceAction,
         cancellation: CancellationToken,
     ) -> Result<SnapdOutcome, SnapdError>;
-
-    async fn restart_myna_service(
-        &self,
-        cancellation: CancellationToken,
-    ) -> Result<ChangeReport, SnapdError>;
 }
 
 /// Real snapd client. Runs blocking Unix-socket I/O off the GTK main loop via
@@ -732,20 +716,6 @@ impl SnapdClient for UnixSocketSnapdClient {
             message: format!("snapd worker join failed: {error:?}"),
         })?
     }
-
-    async fn restart_myna_service(
-        &self,
-        cancellation: CancellationToken,
-    ) -> Result<ChangeReport, SnapdError> {
-        let socket_path = self.socket_path.clone();
-        let timeouts = self.timeouts;
-        let handle = gio::spawn_blocking(move || {
-            blocking_restart_myna_service(&socket_path, timeouts, cancellation)
-        });
-        handle.await.map_err(|error| SnapdError::Transport {
-            message: format!("snapd worker join failed: {error:?}"),
-        })?
-    }
 }
 
 fn blocking_apply_interface_action(
@@ -797,78 +767,6 @@ fn blocking_apply_interface_action(
             message,
         } => Err(classify_error(status_code, kind, message)),
     }
-}
-
-fn blocking_restart_myna_service(
-    socket_path: &Path,
-    timeouts: SnapdTimeouts,
-    cancellation: CancellationToken,
-) -> Result<ChangeReport, SnapdError> {
-    let start = Instant::now();
-    let deadline = start + timeouts.total;
-    if cancellation.is_cancelled() {
-        return Err(SnapdError::Cancelled);
-    }
-    let body = compact_myna_restart_body()?;
-    let response = do_request(
-        socket_path,
-        "POST",
-        "/v2/apps",
-        Some(&body),
-        SnapdTimeoutContext::Request,
-        &timeouts,
-        &cancellation,
-        start,
-        deadline,
-    )?;
-    let report = match parse_envelope(&response)? {
-        Envelope::Sync { .. } => ChangeReport {
-            change_id: String::new(),
-            status: "Done".to_owned(),
-        },
-        Envelope::Async { change_id } => {
-            if !is_valid_change_id(&change_id) {
-                return Err(SnapdError::Protocol {
-                    message: format!("snapd returned an invalid change id: {change_id:?}"),
-                    body: truncate(&response, 512),
-                });
-            }
-            poll_change(
-                socket_path,
-                &change_id,
-                &timeouts,
-                &cancellation,
-                start,
-                deadline,
-            )?
-        }
-        Envelope::Error {
-            status_code,
-            kind,
-            message,
-        } => return Err(classify_error(status_code, kind, message)),
-    };
-    wait_for_myna_service_readiness(socket_path, &timeouts, &cancellation, start, deadline)?;
-    Ok(report)
-}
-
-fn compact_myna_restart_body() -> Result<String, SnapdError> {
-    #[derive(Serialize)]
-    struct RestartRequest<'a> {
-        action: &'a str,
-        names: [&'a str; 1],
-        scope: [&'a str; 1],
-        users: &'a str,
-    }
-    serde_json::to_string(&RestartRequest {
-        action: "restart",
-        names: [MYNA_SERVICE_NAME],
-        scope: ["user"],
-        users: "self",
-    })
-    .map_err(|error| SnapdError::Transport {
-        message: format!("could not encode snapd request: {error}"),
-    })
 }
 
 fn poll_change(
@@ -954,101 +852,6 @@ fn poll_change(
             std::thread::sleep(Duration::from_millis(25).min(timeouts.poll_interval));
         }
     }
-}
-
-fn wait_for_myna_service_readiness(
-    socket_path: &Path,
-    timeouts: &SnapdTimeouts,
-    cancellation: &CancellationToken,
-    start: Instant,
-    deadline: Instant,
-) -> Result<(), SnapdError> {
-    loop {
-        if cancellation.is_cancelled() {
-            return Err(SnapdError::Cancelled);
-        }
-        if Instant::now() >= deadline {
-            return Err(SnapdError::Timeout {
-                elapsed: start.elapsed(),
-                context: SnapdTimeoutContext::ServiceReadiness,
-            });
-        }
-        let response = do_request(
-            socket_path,
-            "GET",
-            MYNA_SERVICE_READINESS_PATH,
-            None,
-            SnapdTimeoutContext::ServiceReadiness,
-            timeouts,
-            cancellation,
-            start,
-            deadline,
-        )?;
-        match parse_envelope(&response)? {
-            Envelope::Sync { result_json } => {
-                let services: Vec<ServiceStatus> = serde_json::from_value(result_json.clone())
-                    .map_err(|error| SnapdError::Protocol {
-                        message: format!("could not parse app status body: {error}"),
-                        body: result_json.to_string(),
-                    })?;
-                match services.as_slice() {
-                    [service] if service.is_expected_myna_service() => {
-                        if service.active {
-                            return Ok(());
-                        }
-                    }
-                    _ => {
-                        return Err(SnapdError::Protocol {
-                            message: "snapd did not return exactly the expected myna user service"
-                                .to_owned(),
-                            body: result_json.to_string(),
-                        });
-                    }
-                }
-            }
-            Envelope::Async { .. } => {
-                return Err(SnapdError::Protocol {
-                    message: "unexpected async envelope while polling service readiness".to_owned(),
-                    body: response,
-                })
-            }
-            Envelope::Error {
-                status_code,
-                kind,
-                message,
-            } => return Err(classify_error(status_code, kind, message)),
-        }
-        sleep_poll_interval(timeouts, cancellation)?;
-    }
-}
-
-#[derive(Deserialize)]
-struct ServiceStatus {
-    snap: String,
-    name: String,
-    #[serde(default, rename = "daemon-scope")]
-    daemon_scope: String,
-    active: bool,
-}
-
-impl ServiceStatus {
-    fn is_expected_myna_service(&self) -> bool {
-        self.snap == MYNA_PLUG_SNAP && self.name == "myna" && self.daemon_scope == "user"
-    }
-}
-
-fn sleep_poll_interval(
-    timeouts: &SnapdTimeouts,
-    cancellation: &CancellationToken,
-) -> Result<(), SnapdError> {
-    let poll_end = Instant::now() + timeouts.poll_interval;
-    while Instant::now() < poll_end {
-        if cancellation.is_cancelled() {
-            return Err(SnapdError::Cancelled);
-        }
-        std::thread::sleep(Duration::from_millis(25).min(timeouts.poll_interval));
-    }
-    Ok(())
 }
 
 #[derive(Deserialize)]

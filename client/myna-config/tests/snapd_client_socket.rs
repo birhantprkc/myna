@@ -12,12 +12,12 @@ use std::thread;
 use std::time::Duration;
 
 use gtk4::glib::MainContext;
-use myna_config::active_backend::SwitchPlan;
+use myna_config::active_backend::{myna_restart_request, SwitchPlan};
 use myna_config::adapters::snapd_client::{
     InterfaceAction, SnapdClient, SnapdError, SnapdOutcome, SnapdTimeouts, UnixSocketSnapdClient,
 };
 use myna_config::adapters::system_configurator::PkexecSystemConfigurator;
-use myna_config::command::{CancellationToken, FakeCommandRunner};
+use myna_config::command::{CancellationToken, CommandOutput, FakeCommandRunner};
 use myna_config::domain::{parse_connections, BackendIdentity};
 use myna_config::ports::SystemConfigurator;
 
@@ -602,244 +602,7 @@ fn timeout_message_reports_a_positive_elapsed_duration() {
 }
 
 #[test]
-fn restart_service_waits_for_readiness_to_become_active() {
-    let fake = FakeSnapd::start(vec![
-        Step {
-            request_path_contains: "POST /v2/apps".into(),
-            response: http_body(
-                202,
-                "Accepted",
-                r#"{"type":"async","status-code":202,"change":"21"}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/changes/21".into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":{"ready":true,"status":"Done"}}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/apps?names=myna.myna&select=service&global=false"
-                .into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":[{"snap":"myna","name":"myna","daemon":"simple","daemon-scope":"user","active":false}]}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/apps?names=myna.myna&select=service&global=false"
-                .into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":[{"snap":"myna","name":"myna","daemon":"simple","daemon-scope":"user","active":true}]}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-    ]);
-    let client = fake.client();
-
-    let report = block_on(client.restart_myna_service(CancellationToken::new())).unwrap();
-
-    assert_eq!(report.change_id, "21");
-    assert_eq!(report.status, "Done");
-    let calls = fake.calls.lock().unwrap().clone();
-    assert_eq!(calls.len(), 4);
-    assert!(calls[0]
-        .contains(r#"{"action":"restart","names":["myna.myna"],"scope":["user"],"users":"self"}"#));
-}
-
-#[test]
-fn restart_service_authorization_denial_is_mapped() {
-    let fake = FakeSnapd::start(vec![Step {
-        request_path_contains: "POST /v2/apps".into(),
-        response: http_body(
-            403,
-            "Forbidden",
-            r#"{"type":"error","status-code":403,"result":{"message":"nope","kind":"auth-cancelled"}}"#,
-        ),
-        delay: None,
-        close_early: false,
-    }]);
-    let client = fake.client();
-
-    let error = block_on(client.restart_myna_service(CancellationToken::new())).unwrap_err();
-
-    assert!(matches!(
-        error,
-        SnapdError::AuthorizationDenied {
-            status_code: 403,
-            ..
-        }
-    ));
-}
-
-#[test]
-fn restart_service_change_failure_is_reported() {
-    let fake = FakeSnapd::start(vec![
-        Step {
-            request_path_contains: "POST /v2/apps".into(),
-            response: http_body(
-                202,
-                "Accepted",
-                r#"{"type":"async","status-code":202,"change":"24"}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/changes/24".into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":{"ready":true,"status":"Error","err":"restart failed"}}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-    ]);
-    let client = fake.client();
-
-    let error = block_on(client.restart_myna_service(CancellationToken::new())).unwrap_err();
-
-    assert!(matches!(
-        error,
-        SnapdError::Snapd { message, .. } if message == "restart failed"
-    ));
-}
-
-#[test]
-fn restart_service_readiness_timeout_is_reported_truthfully() {
-    let fake = FakeSnapd::start(vec![
-        Step {
-            request_path_contains: "POST /v2/apps".into(),
-            response: http_body(
-                202,
-                "Accepted",
-                r#"{"type":"async","status-code":202,"change":"22"}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/changes/22".into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":{"ready":true,"status":"Done"}}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/apps?names=myna.myna&select=service&global=false"
-                .into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":[{"snap":"myna","name":"myna","daemon":"simple","daemon-scope":"user","active":false}]}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/apps?names=myna.myna&select=service&global=false"
-                .into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":[{"snap":"myna","name":"myna","daemon":"simple","daemon-scope":"user","active":false}]}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-    ]);
-    let client =
-        UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
-            per_request: Duration::from_millis(100),
-            poll_interval: Duration::from_millis(80),
-            total: Duration::from_millis(150),
-        });
-
-    let error = block_on(client.restart_myna_service(CancellationToken::new())).unwrap_err();
-
-    match error {
-        SnapdError::Timeout { context, .. } => {
-            assert_eq!(
-                format!("{context:?}"),
-                "ServiceReadiness",
-                "timeout should report readiness polling, got {context:?}"
-            );
-        }
-        other => panic!("expected timeout, got {other:?}"),
-    }
-}
-
-#[test]
-fn restart_service_cancellation_during_readiness_is_reported() {
-    let fake = FakeSnapd::start(vec![
-        Step {
-            request_path_contains: "POST /v2/apps".into(),
-            response: http_body(
-                202,
-                "Accepted",
-                r#"{"type":"async","status-code":202,"change":"23"}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/changes/23".into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":{"ready":true,"status":"Done"}}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/apps?names=myna.myna&select=service&global=false"
-                .into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":[{"snap":"myna","name":"myna","daemon":"simple","daemon-scope":"user","active":false}]}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-    ]);
-    let client =
-        UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
-            per_request: Duration::from_secs(2),
-            poll_interval: Duration::from_millis(100),
-            total: Duration::from_secs(2),
-        });
-    let cancellation = CancellationToken::new();
-    let cancel = cancellation.clone();
-    let _canceller = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(20));
-        cancel.cancel();
-    });
-
-    let error = block_on(client.restart_myna_service(cancellation)).unwrap_err();
-
-    assert_eq!(error, SnapdError::Cancelled);
-}
-
-#[test]
-fn backend_switch_requests_disconnect_connect_restart_then_service_readiness() {
+fn backend_switch_requests_disconnect_connect_then_restarts_the_user_service() {
     let fake = FakeSnapd::start(vec![
         Step {
             request_path_contains: "POST /v2/interfaces".into(),
@@ -857,37 +620,6 @@ fn backend_switch_requests_disconnect_connect_restart_then_service_readiness() {
                 200,
                 "OK",
                 r#"{"type":"sync","status-code":200,"result":{}}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "POST /v2/apps".into(),
-            response: http_body(
-                202,
-                "Accepted",
-                r#"{"type":"async","status-code":202,"change":"19"}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/changes/19".into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":{"ready":true,"status":"Done"}}"#,
-            ),
-            delay: None,
-            close_early: false,
-        },
-        Step {
-            request_path_contains: "GET /v2/apps?names=myna.myna&select=service&global=false"
-                .into(),
-            response: http_body(
-                200,
-                "OK",
-                r#"{"type":"sync","status-code":200,"result":[{"snap":"myna","name":"myna","daemon":"simple","daemon-scope":"user","active":true}]}"#,
             ),
             delay: None,
             close_early: false,
@@ -900,8 +632,12 @@ fn backend_switch_requests_disconnect_connect_restart_then_service_readiness() {
             total: Duration::from_secs(4),
         }),
     );
-    let adapter =
-        PkexecSystemConfigurator::with_snapd_client(Arc::new(FakeCommandRunner::default()), client);
+    let runner = Arc::new(FakeCommandRunner::scripted([Ok(CommandOutput::new(
+        Some(0),
+        "",
+        "",
+    ))]));
+    let adapter = PkexecSystemConfigurator::with_snapd_client(runner.clone(), client);
     let snapshot = parse_connections(
         "Interface Plug Slot Notes\n\
          content[inference-provider] myna:backend old:provider manual\n\
@@ -916,15 +652,11 @@ fn backend_switch_requests_disconnect_connect_restart_then_service_readiness() {
 
     assert_eq!(completed.len(), 3);
     let calls = fake.calls.lock().unwrap().clone();
-    assert_eq!(calls.len(), 5);
+    assert_eq!(calls.len(), 2);
     assert!(calls[0].contains("POST /v2/interfaces HTTP/1.1"));
     assert!(calls[0].contains(r#"{"action":"disconnect","plugs":[{"snap":"myna","plug":"backend"}],"slots":[{"snap":"old","slot":"provider"}]}"#));
     assert!(calls[1].contains(r#"{"action":"connect","plugs":[{"snap":"myna","plug":"backend"}],"slots":[{"snap":"new","slot":"provider"}]}"#));
-    assert!(calls[2].contains("POST /v2/apps HTTP/1.1"));
-    assert!(calls[2]
-        .contains(r#"{"action":"restart","names":["myna.myna"],"scope":["user"],"users":"self"}"#));
-    assert!(calls[3].contains("GET /v2/changes/19 HTTP/1.1"));
-    assert!(calls[4].contains("GET /v2/apps?names=myna.myna&select=service&global=false HTTP/1.1"));
+    assert_eq!(runner.calls(), [myna_restart_request()]);
 }
 
 #[test]

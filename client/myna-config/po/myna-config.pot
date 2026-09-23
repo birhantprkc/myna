@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-18 10:31+0100\n"
+"POT-Creation-Date: 2026-09-23 18:18+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -21,17 +21,12 @@ msgstr ""
 msgid "Switch active backend?"
 msgstr ""
 
-#: data/active-backend-dialog.blp:6
-msgid ""
-"Review the exact operations and privilege implications before continuing."
-msgstr ""
-
-#: data/active-backend-dialog.blp:11 data/apply-dialog.blp:11
+#: data/active-backend-dialog.blp:10 data/apply-dialog.blp:11
 #: src/backend_ui.rs:1991
 msgid "Cancel"
 msgstr ""
 
-#: data/active-backend-dialog.blp:12
+#: data/active-backend-dialog.blp:11
 msgid "Switch Backend"
 msgstr ""
 
@@ -259,47 +254,32 @@ msgstr ""
 msgid "Could not save the setting"
 msgstr ""
 
-#: src/active_backend.rs:32
+#: src/active_backend.rs:34
 msgid "Healthy"
 msgstr ""
 
-#: src/active_backend.rs:33
+#: src/active_backend.rs:35
 msgid "Degraded"
 msgstr ""
 
-#: src/active_backend.rs:34
+#: src/active_backend.rs:36
 msgid "Health unknown"
 msgstr ""
 
-#: src/active_backend.rs:67
+#: src/active_backend.rs:69
 msgid "Installed"
 msgstr ""
 
-#: src/active_backend.rs:69 src/diagnostics.rs:446
+#: src/active_backend.rs:71 src/diagnostics.rs:446
 msgid "Connected"
 msgstr ""
 
-#: src/active_backend.rs:71 src/diagnostics.rs:448
+#: src/active_backend.rs:73 src/diagnostics.rs:448
 msgid "Not connected"
 msgstr ""
 
-#: src/active_backend.rs:167
-msgid "Switch the active backend to {backend}."
-msgstr ""
-
-#: src/active_backend.rs:170
-msgid ""
-"Myna Settings will send each `snap disconnect`, `snap connect`, and `snap "
-"restart myna.myna` directly to snapd over its Unix socket. After the backend "
-"mount is switched, Myna’s user service is restarted so it sees the new "
-"content mount; dictation may be interrupted briefly while that service comes "
-"back. snapd may request administrator authorization (via polkit) — possibly "
-"more than once — before it accepts the requests. Nothing is executed through "
-"a shell."
-msgstr ""
-
-#: src/active_backend.rs:172
-msgid "Exact snapd interface actions:"
+#: src/active_backend.rs:173
+msgid "Dictation will use {backend}. It pauses briefly while Myna restarts."
 msgstr ""
 
 #: src/backend_ui.rs:304

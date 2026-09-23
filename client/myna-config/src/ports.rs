@@ -95,6 +95,20 @@ pub trait SystemConfigurator {
             .await
     }
 
+    /// Restart Myna's user service so it picks up a changed backend mount.
+    async fn restart_myna(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> Result<(), SystemConfiguratorError> {
+        Err(SystemConfiguratorError::execution(
+            "systemctl",
+            Vec::new(),
+            None,
+            "",
+            "restarting Myna is not supported",
+        ))
+    }
+
     async fn apply_backend_config(
         &self,
         preview: &ApplyPreview,
