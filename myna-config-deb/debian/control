@@ -26,9 +26,9 @@ Depends: ${misc:Depends},
 Description: settings and onboarding for Myna dictation
  Myna Settings is the desktop application that sets up and configures Myna,
  the local speech-to-text dictation service shipped as the myna snap. It
- installs the myna snap and a speech backend snap, connects them, binds the
- dictation shortcut, and exposes the dictation settings (streaming mode,
- language, HUD style) that the daemon reads live.
+ guides installing the myna snap and a speech backend snap from the store,
+ connects them, binds the dictation shortcut, and exposes the dictation
+ settings (streaming mode, language, HUD style) that the daemon reads live.
  .
  It runs unconfined on the host because it drives snapd and runs snap
  commands as root through polkit, which a confined snap cannot do. The
