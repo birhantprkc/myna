@@ -2,8 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $ApplyDialog: Adw.AlertDialog {
-  heading: _("Review backend changes");
-  body: _("Review the requested changes, exact argv, privilege explanation, and restart impact below.");
+  heading: _("Apply backend changes?");
   default-response: "apply";
   close-response: "cancel";
 
@@ -13,12 +12,11 @@ template $ApplyDialog: Adw.AlertDialog {
   ]
 
   extra-child: Gtk.ScrolledWindow {
-    min-content-height: 320;
+    max-content-height: 320;
     propagate-natural-height: true;
 
     child: Gtk.Label confirmation_label {
       wrap: true;
-      selectable: true;
       xalign: 0;
       yalign: 0;
     };

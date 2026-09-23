@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-23 18:18+0100\n"
+"POT-Creation-Date: 2026-09-23 18:22+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -21,7 +21,7 @@ msgstr ""
 msgid "Switch active backend?"
 msgstr ""
 
-#: data/active-backend-dialog.blp:10 data/apply-dialog.blp:11
+#: data/active-backend-dialog.blp:10 data/apply-dialog.blp:10
 #: src/backend_ui.rs:1991
 msgid "Cancel"
 msgstr ""
@@ -31,16 +31,10 @@ msgid "Switch Backend"
 msgstr ""
 
 #: data/apply-dialog.blp:5
-msgid "Review backend changes"
+msgid "Apply backend changes?"
 msgstr ""
 
-#: data/apply-dialog.blp:6
-msgid ""
-"Review the requested changes, exact argv, privilege explanation, and restart "
-"impact below."
-msgstr ""
-
-#: data/apply-dialog.blp:12 data/backend-apply-controls.blp:23
+#: data/apply-dialog.blp:11 data/backend-apply-controls.blp:23
 msgid "Apply"
 msgstr ""
 

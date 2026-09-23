@@ -65,18 +65,12 @@ impl RestartImpact {
         matches!(self, Self::Required | Self::Mixed | Self::Unknown)
     }
 
-    pub fn summary(self) -> &'static str {
+    pub fn summary(self) -> String {
         match self {
-            Self::None => "No restart is expected for these changes.",
-            Self::Required => {
-                "The backend will restart automatically. Myna may be unavailable until readiness is confirmed."
-            }
-            Self::Mixed => {
-                "Some changes require an automatic backend restart. Myna may be unavailable until readiness is confirmed."
-            }
-            Self::Unknown => {
-                "Restart impact is not fully known. The backend may restart and readiness must be confirmed."
-            }
+            Self::None => gettextrs::gettext("No restart needed."),
+            Self::Required => gettextrs::gettext("The backend restarts to apply these changes."),
+            Self::Mixed => gettextrs::gettext("Some of these changes restart the backend."),
+            Self::Unknown => gettextrs::gettext("The backend may restart."),
         }
     }
 }
@@ -179,7 +173,7 @@ impl ApplyPreview {
                 vec!["restart".to_owned(), backend.snap_name().to_owned()],
             ));
         }
-        let confirmation_text = confirmation_text(&backend, &changes, &operations, restart_impact);
+        let confirmation_text = confirmation_text(&changes, restart_impact);
 
         Ok(Self {
             backend,
@@ -671,34 +665,18 @@ fn restart_impact_from_behaviors(behaviors: &[RestartBehavior]) -> RestartImpact
     }
 }
 
-fn confirmation_text(
-    backend: &BackendIdentity,
-    changes: &[StagedChange],
-    operations: &[CommandRequest],
-    restart_impact: RestartImpact,
-) -> String {
-    let mut text = format!("Backend: {}\n\nChanges:\n", backend.snap_name());
+fn confirmation_text(changes: &[StagedChange], restart_impact: RestartImpact) -> String {
+    let mut text = String::new();
     for change in changes {
         let _ = writeln!(
             text,
-            "• {}: {} → {}",
+            "{}: {} → {}",
             change.key(),
             display_value(change.original()),
             display_value(change.proposed())
         );
     }
-    text.push_str("\nExact argv:\n");
-    for (index, operation) in operations.iter().enumerate() {
-        let _ = writeln!(text, "Command {}:", index + 1);
-        let _ = writeln!(text, "• {}", operation.executable());
-        for argument in operation.arguments() {
-            let _ = writeln!(text, "• {argument}");
-        }
-    }
-    text.push_str(
-        "\nPrivilege:\nAll commands run as root in one pkexec invocation, after a single Administrator authorization.\n",
-    );
-    let _ = writeln!(text, "\nRestart impact:\n{}", restart_impact.summary());
+    let _ = write!(text, "\n{}", restart_impact.summary());
     text
 }
 
@@ -1103,9 +1081,9 @@ mod tests {
             &["restart", "myna-whisper"]
         );
         let confirmation = preview.confirmation_text();
-        assert!(confirmation.contains("Administrator authorization"));
-        assert!(confirmation.contains("Restart impact"));
         assert!(confirmation.contains("alpha: old →  spaced ; $(rm -rf /) "));
+        assert!(!confirmation.contains("myna-whisper.whisper"));
+        assert!(confirmation.ends_with(RestartImpact::Mixed.summary().as_str()));
     }
 
     #[test]
@@ -1169,9 +1147,6 @@ mod tests {
                 vec!["restart", "myna-parakeet"],
             ]
         );
-        assert!(preview
-            .confirmation_text()
-            .contains("one pkexec invocation"));
     }
 
     #[test]
