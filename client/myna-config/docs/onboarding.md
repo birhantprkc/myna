@@ -54,10 +54,11 @@ which costs one polkit prompt: snapd's `manage-interfaces` action is
 `auth_admin_keep`, and the restart goes through `systemctl --user`, which needs
 none.
 
-The backend's `hardware-observe` and `system-observe` plugs are left alone.
-Dictation runs without them on the CPU engine, and connecting
-`hardware-observe` re-selects the engine in its connect hook, which on an
-NVIDIA machine downloads the GPU components inside the connect change.
+The store auto-connects the backend's `hardware-observe` and
+`system-observe` plugs (granted 2026-09-23), so the wizard connects neither.
+With `hardware-observe` connected at install, the install hook's
+`use-engine --auto` can pick the GPU engine, and on an NVIDIA machine the
+install downloads the GPU components rather than the int8 model.
 
 ## The keyboard shortcut
 
