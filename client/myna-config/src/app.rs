@@ -126,6 +126,17 @@ fn new_application(application_id: &str) -> adw::Application {
         .application_id(application_id)
         .build();
     application.set_accels_for_action("window.close", &["<Control>w"]);
+    // `Application::quit` destroys windows without their close requests,
+    // which is where an in-flight operation is abandoned.
+    let quit = gio::ActionEntry::builder("quit")
+        .activate(|application: &adw::Application, _, _| {
+            for window in application.windows() {
+                window.close();
+            }
+        })
+        .build();
+    application.add_action_entries([quit]);
+    application.set_accels_for_action("app.quit", &["<Control>q"]);
     application
 }
 
@@ -267,7 +278,30 @@ fn accessibility_probe() -> glib::ExitCode {
     }
     println!("close-accelerator: bound");
 
-    window.close();
+    if !application
+        .actions_for_accel("<Control>q")
+        .iter()
+        .any(|action| action == "app.quit")
+    {
+        eprintln!("Ctrl+Q does not quit");
+        return glib::ExitCode::FAILURE;
+    }
+    let shut_down = Rc::new(Cell::new(false));
+    window.connect_close_request({
+        let shut_down = shut_down.clone();
+        move |_| {
+            shut_down.set(true);
+            glib::Propagation::Proceed
+        }
+    });
+    application.activate_action("quit", None);
+    settle_gtk();
+    if !shut_down.get() || !application.windows().is_empty() {
+        eprintln!("quitting did not close the window through its close request");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("quit-accelerator: closes windows");
+
     glib::ExitCode::SUCCESS
 }
 

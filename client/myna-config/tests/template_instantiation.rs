@@ -71,6 +71,7 @@ fn application_exposes_accessible_diagnostics_controls_when_enabled() {
     assert!(stdout.contains("reduced-motion: verified"));
     assert!(stdout.contains("appearance-policy: applied"));
     assert!(stdout.contains("close-accelerator: bound"));
+    assert!(stdout.contains("quit-accelerator: closes windows"));
 }
 
 #[test]
