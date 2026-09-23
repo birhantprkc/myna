@@ -523,12 +523,11 @@ fn onboarding_probe() -> glib::ExitCode {
     settle_gtk();
 
     // A machine missing only the optional extension walks to the end, and
-    // finishing hands control back to the caller.
+    // finishing opens the settings window, as it does in production.
     let installed = [crate::diagnostics::InstalledSnap {
         name: crate::onboarding::MYNA_SNAP.to_owned(),
         version: "1".to_owned(),
     }];
-    let completed = Rc::new(Cell::new(false));
     let machine = ProbeMachine::new();
     let (window, start_button, shortcut_button) = {
         let ui = OnboardingUi::present_with_ports(
@@ -539,8 +538,8 @@ fn onboarding_probe() -> glib::ExitCode {
             )),
             Rc::new(machine.clone()),
             Box::new({
-                let completed = completed.clone();
-                move || completed.set(true)
+                let application = application.clone();
+                move || build_settings_window(&application)
             }),
         );
         (ui.window(), ui.start_button(), ui.shortcut_button())
@@ -604,11 +603,17 @@ fn onboarding_probe() -> glib::ExitCode {
 
     forward.emit_clicked();
     settle_gtk();
-    if !completed.get() {
-        eprintln!("finishing the wizard did not hand control back");
+    let Some(settings) = settings_window(&application) else {
+        eprintln!("finishing the wizard did not open the settings window");
+        return glib::ExitCode::FAILURE;
+    };
+    if window.is_visible() {
+        eprintln!("finishing the wizard left it open");
         return glib::ExitCode::FAILURE;
     }
-    println!("onboarding-finish: handed back");
+    println!("onboarding-finish: opened settings");
+    settings.close();
+    settle_gtk();
     glib::ExitCode::SUCCESS
 }
 
@@ -792,8 +797,16 @@ async fn assess_machine() -> Vec<crate::onboarding::Component> {
     ))
 }
 
+fn settings_window(application: &adw::Application) -> Option<ui::MainWindow> {
+    application
+        .windows()
+        .into_iter()
+        .find_map(|window| window.downcast::<ui::MainWindow>().ok())
+}
+
 fn build_settings_window(application: &adw::Application) {
-    if let Some(window) = application.active_window() {
+    // Not `active_window`: when the wizard finishes, that is the wizard.
+    if let Some(window) = settings_window(application) {
         window.present();
         return;
     }

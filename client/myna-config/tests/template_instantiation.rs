@@ -175,7 +175,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-setup: restarted the daemon",
         "onboarding-walk: reached the last step",
         "onboarding-shortcut: waits for the daemon",
-        "onboarding-finish: handed back",
+        "onboarding-finish: opened settings",
     ] {
         assert!(stdout.contains(line), "onboarding probe missing: {line}");
     }
