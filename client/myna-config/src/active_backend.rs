@@ -304,6 +304,57 @@ pub async fn execute_switch(
     }
 }
 
+/// Leave dictation running on a backend. With none connected, switch to
+/// `preferred`, or the first discovered backend without it; the switch
+/// restarts Myna. With one connected, only restart, because the daemon may
+/// have started before the backend was installed.
+pub async fn ensure_backend_active(
+    repository: &dyn BackendRepository,
+    configurator: &dyn SystemConfigurator,
+    preferred: &str,
+) -> Result<(), String> {
+    let snapshot = repository
+        .refresh(CancellationToken::new())
+        .await
+        .map_err(|error| error.message().to_owned())?;
+    if let ActiveBackendState::Connected(_) = snapshot.active_state() {
+        return configurator
+            .restart_myna(CancellationToken::new())
+            .await
+            .map_err(|error| error.to_string());
+    }
+    let backends = snapshot.backends();
+    let Some(selected) = backends
+        .iter()
+        .find(|backend| backend.snap_name() == preferred)
+        .or_else(|| backends.first())
+        .cloned()
+    else {
+        return Err(gettextrs::gettext(
+            "No speech-to-text model appeared in snap connections.",
+        ));
+    };
+    let plan = SwitchPlan::new(&snapshot, selected)
+        .map_err(|_| gettextrs::gettext("The model is not available to switch to."))?;
+    match execute_switch(
+        &plan,
+        true,
+        configurator,
+        repository,
+        CancellationToken::new(),
+    )
+    .await
+    {
+        SwitchOutcome::Applied { .. } | SwitchOutcome::Noop { .. } => Ok(()),
+        SwitchOutcome::Failed { error, .. } => Err(error.to_string()),
+        SwitchOutcome::FinalDiscoveryFailed { error, .. } => Err(error.message().to_owned()),
+        SwitchOutcome::Cancelled { .. } => Err(gettextrs::gettext("The change was cancelled.")),
+        SwitchOutcome::Disagreed { .. } | SwitchOutcome::StaleDiscovery { .. } => Err(
+            gettextrs::gettext("The backend changed while it was being enabled."),
+        ),
+    }
+}
+
 async fn cancelled_after_refresh(
     completed: Vec<CommandResult>,
     repository: &dyn BackendRepository,

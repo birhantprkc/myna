@@ -1,8 +1,8 @@
 //! GTK/libadwaita wiring for the onboarding wizard.
 //!
 //! Thin, like [`crate::backend_ui`]: [`crate::onboarding`] decides what is
-//! missing, who can fix it, and when the flow may advance; this module renders
-//! that, runs the one install the application is allowed to run, and hands
+//! missing, how to install it, and when the flow may advance; this module
+//! renders that, connects and restarts what the user installed, and hands
 //! control back to the settings window when the user is done.
 
 use std::cell::{Cell, RefCell};
@@ -14,17 +14,15 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::active_backend::{execute_switch, SwitchOutcome, SwitchPlan};
+use crate::active_backend::ensure_backend_active;
 use crate::adapters::snap_backend::SnapBackendRepository;
-use crate::adapters::snapd_client::{InstallProgress, ProgressSink, UnixSocketSnapdClient};
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
-use crate::domain::ActiveBackendState;
 use crate::onboarding::{
-    assess, can_advance, outstanding, Component, ComponentId, InstallTarget, Machine, Remedy, Step,
-    MYNA_SNAP, RECOMMENDED_BACKEND_SNAP, RECOMMENDED_MODEL_MEGABYTES, SHELL_EXTENSION_UUID,
+    assess, can_advance, outstanding, Component, ComponentId, Machine, Remedy, Step, StoreSnap,
+    RECOMMENDED_BACKEND_SNAP, RECOMMENDED_MODEL_MEGABYTES, SHELL_EXTENSION_UUID,
 };
-use crate::ports::{BackendRepository, SnapInstaller, SystemConfigurator};
+use crate::ports::{BackendRepository, SystemConfigurator};
 use crate::ui;
 
 pub struct OnboardingUi {
@@ -33,7 +31,6 @@ pub struct OnboardingUi {
     components_page: ui::OnboardingComponents,
     shortcut_page: ui::OnboardingShortcut,
     repository: Rc<dyn BackendRepository>,
-    installer: Rc<dyn SnapInstaller>,
     configurator: Rc<dyn SystemConfigurator>,
     step: Cell<Step>,
     components: RefCell<Vec<Component>>,
@@ -54,7 +51,6 @@ impl OnboardingUi {
             application,
             initial,
             Rc::new(SnapBackendRepository::new(runner.clone())),
-            Rc::new(UnixSocketSnapdClient::new()),
             Rc::new(PkexecSystemConfigurator::new(runner)),
             finished,
         )
@@ -64,7 +60,6 @@ impl OnboardingUi {
         application: &adw::Application,
         initial: Vec<Component>,
         repository: Rc<dyn BackendRepository>,
-        installer: Rc<dyn SnapInstaller>,
         configurator: Rc<dyn SystemConfigurator>,
         finished: Box<dyn Fn()>,
     ) -> Rc<Self> {
@@ -84,7 +79,6 @@ impl OnboardingUi {
             components_page,
             shortcut_page: shortcut_page.clone(),
             repository,
-            installer,
             configurator,
             step: Cell::new(Step::first()),
             components: RefCell::new(initial),
@@ -128,6 +122,18 @@ impl OnboardingUi {
                 }
             }),
         );
+        // Installing happens in App Center or a terminal, so coming back to
+        // the window is the moment to look again.
+        window.connect_is_active_notify({
+            let ui = Rc::downgrade(&ui);
+            move |window| {
+                if let Some(ui) = ui.upgrade() {
+                    if window.is_active() && ui.step.get() == Step::Components && !ui.busy.get() {
+                        ui.refresh_assessment();
+                    }
+                }
+            }
+        });
         // The application owns the window, so it outlives this call; without a
         // strong reference living alongside it every button would upgrade a
         // dead weak reference and do nothing. The reference is dropped when
@@ -147,7 +153,8 @@ impl OnboardingUi {
     }
 
     /// Re-read the machine and re-render. Costs one `snap list` and one
-    /// discovery, and runs only at startup and after an install.
+    /// discovery, and runs when the window regains focus on the component
+    /// step.
     fn refresh_assessment(self: &Rc<Self>) {
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
@@ -179,6 +186,7 @@ impl OnboardingUi {
             return;
         }
         match self.step.get().next() {
+            Some(step) if self.step.get() == Step::Components => self.finish_setup(step),
             Some(step) => {
                 self.step.set(step);
                 self.render();
@@ -188,6 +196,38 @@ impl OnboardingUi {
                 self.window.close();
             }
         }
+    }
+
+    /// Connect the backend and restart the daemon against it, so the next
+    /// step finds dictation running. A store install usually auto-connects
+    /// the backend; when it did not, snapd asks polkit once.
+    fn finish_setup(self: &Rc<Self>, next: Step) {
+        if self.busy.replace(true) {
+            return;
+        }
+        self.render();
+        let ui = Rc::downgrade(self);
+        let repository = self.repository.clone();
+        let configurator = self.configurator.clone();
+        glib::spawn_future_local(async move {
+            let outcome = ensure_backend_active(
+                repository.as_ref(),
+                configurator.as_ref(),
+                RECOMMENDED_BACKEND_SNAP,
+            )
+            .await;
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.busy.set(false);
+            match outcome {
+                Ok(()) => ui.step.set(next),
+                Err(message) => {
+                    ui.report_failure(&gettextrs::gettext("Could not set up dictation"), &message)
+                }
+            }
+            ui.render();
+        });
     }
 
     fn retreat(self: &Rc<Self>) {
@@ -276,111 +316,86 @@ impl OnboardingUi {
             .title(component_title(component.id))
             .subtitle(component_detail(component.id))
             .build();
-        let button = gtk::Button::builder().valign(gtk::Align::Center).build();
-        match component.remedy {
-            Remedy::Install(target) => {
-                button.set_label(&gettextrs::gettext("Install"));
-                button.set_sensitive(!self.busy.get());
-                button.connect_clicked({
-                    let ui = Rc::downgrade(self);
-                    let row = row.clone();
-                    move |_| {
-                        if let Some(ui) = ui.upgrade() {
-                            ui.begin_install(target, row.clone());
-                        }
-                    }
+        let primary = match component.remedy {
+            Remedy::Store(snap) if snap.installs_from_app_center() => {
+                let copy = gtk::Button::builder()
+                    .icon_name("edit-copy-symbolic")
+                    .tooltip_text(snap.install_command())
+                    .valign(gtk::Align::Center)
+                    .css_classes(["flat"])
+                    .build();
+                copy.update_property(&[gtk::accessible::Property::Label(&gettextrs::gettext(
+                    "Copy install command",
+                ))]);
+                copy.connect_clicked(self.copy_handler(snap.install_command()));
+                row.add_suffix(&copy);
+
+                let install = gtk::Button::builder()
+                    .label(gettextrs::gettext("Install"))
+                    .valign(gtk::Align::Center)
+                    .build();
+                install.connect_clicked({
+                    let window = self.window.clone();
+                    move |_| open_app_center(&window, snap)
                 });
+                install
+            }
+            Remedy::Store(snap) => {
+                let copy = gtk::Button::builder()
+                    .label(gettextrs::gettext("Copy Command"))
+                    .tooltip_text(snap.install_command())
+                    .valign(gtk::Align::Center)
+                    .build();
+                copy.connect_clicked(self.copy_handler(snap.install_command()));
+                copy
             }
             Remedy::Explain => {
-                button.set_label(&gettextrs::gettext("How to install"));
+                let button = gtk::Button::builder()
+                    .label(gettextrs::gettext("How to install"))
+                    .valign(gtk::Align::Center)
+                    .build();
                 button.connect_clicked({
                     let ui = Rc::downgrade(self);
-                    let id = component.id;
                     move |_| {
                         if let Some(ui) = ui.upgrade() {
-                            ui.show_instructions(id);
+                            ui.show_extension_instructions();
                         }
                     }
                 });
+                button
             }
-        }
-        row.add_suffix(&button);
-        row.set_activatable_widget(Some(&button));
+        };
+        row.add_suffix(&primary);
+        row.set_activatable_widget(Some(&primary));
         row
     }
 
-    /// Install through snapd, then make the new backend the active one, so
-    /// finishing the wizard leaves dictation working rather than installed.
-    fn begin_install(self: &Rc<Self>, target: InstallTarget, row: adw::ActionRow) {
-        if self.busy.replace(true) {
-            return;
-        }
-        self.render();
-        row.set_subtitle(&gettextrs::gettext("Starting…"));
+    fn copy_handler(&self, command: String) -> impl Fn(&gtk::Button) + 'static {
+        let window = self.window.clone();
+        move |_| copy_command(&window, &command)
+    }
 
-        let ui = Rc::downgrade(self);
-        let installer = self.installer.clone();
-        let repository = self.repository.clone();
-        let configurator = self.configurator.clone();
-        let progress: ProgressSink = Rc::new({
-            let row = row.clone();
-            move |progress: InstallProgress| {
-                row.set_subtitle(&install_progress_text(&progress));
-            }
-        });
-        glib::spawn_future_local(async move {
-            let outcome = installer
-                .install(target, Some(progress), CancellationToken::new())
-                .await;
-            let Some(ui) = ui.upgrade() else {
-                return;
-            };
-            match outcome {
-                Ok(()) => {
-                    row.set_subtitle(&gettextrs::gettext("Connecting…"));
-                    if let Err(message) =
-                        activate_backend(repository.as_ref(), configurator.as_ref(), target).await
-                    {
-                        ui.report_failure(
-                            &gettextrs::gettext("Could not enable the backend"),
-                            &message,
-                        );
-                    }
-                }
-                Err(error) => {
-                    ui.report_failure(
-                        &gettextrs::gettext("Could not install the component"),
-                        &error.to_string(),
+    fn show_extension_instructions(self: &Rc<Self>) {
+        let dialog = adw::AlertDialog::new(
+            Some(&gettextrs::gettext("Install the shell extension")),
+            Some(&gettextrs::gettext(
+                "The extension is not published in a store yet. Copy it into the extensions directory and enable it, then log out and back in.",
+            )),
+        );
+        dialog.add_response("close", &gettextrs::gettext("Close"));
+        dialog.add_response("copy", &gettextrs::gettext("Copy command"));
+        dialog.set_response_appearance("copy", adw::ResponseAppearance::Suggested);
+        dialog.connect_response(None, {
+            let window = self.window.clone();
+            move |_, response| {
+                if response == "copy" {
+                    copy_command(
+                        &window,
+                        &format!("gnome-extensions enable {SHELL_EXTENSION_UUID}"),
                     );
                 }
             }
-            ui.busy.set(false);
-            ui.refresh_assessment();
         });
-    }
-
-    fn show_instructions(self: &Rc<Self>, id: ComponentId) {
-        let (heading, body, command) = instructions(id);
-        let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
-        dialog.add_response("close", &gettextrs::gettext("Close"));
-        if let Some(command) = command.clone() {
-            dialog.add_response("copy", &gettextrs::gettext("Copy command"));
-            dialog.set_response_appearance("copy", adw::ResponseAppearance::Suggested);
-            dialog.connect_response(None, {
-                let window = self.window.clone();
-                let overlay = self.window.overlay();
-                move |_, response| {
-                    if response == "copy" {
-                        gtk::prelude::WidgetExt::display(&window)
-                            .clipboard()
-                            .set_text(&command);
-                        overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
-                            "Install command copied to clipboard",
-                        )));
-                    }
-                }
-            });
-        }
         dialog.present(Some(&self.window));
     }
 
@@ -390,50 +405,27 @@ impl OnboardingUi {
     }
 }
 
-/// Connect the freshly installed backend and restart the daemon against it.
-/// A no-op when the backend is already the active one.
-async fn activate_backend(
-    repository: &dyn BackendRepository,
-    configurator: &dyn SystemConfigurator,
-    target: InstallTarget,
-) -> Result<(), String> {
-    let snapshot = repository
-        .refresh(CancellationToken::new())
-        .await
-        .map_err(|error| error.message().to_owned())?;
-    let Some(identity) = snapshot
-        .backends()
-        .iter()
-        .find(|backend| backend.snap_name() == target.snap())
-        .cloned()
-    else {
-        return Err(gettextrs::gettext(
-            "The installed backend did not appear in snap connections.",
-        ));
-    };
-    if matches!(snapshot.active_state(), ActiveBackendState::Connected(ref active) if active == &identity)
-    {
-        return Ok(());
-    }
-    let plan = SwitchPlan::new(&snapshot, identity)
-        .map_err(|_| gettextrs::gettext("The installed backend is not available to switch to."))?;
-    match execute_switch(
-        &plan,
-        true,
-        configurator,
-        repository,
-        CancellationToken::new(),
-    )
-    .await
-    {
-        SwitchOutcome::Applied { .. } | SwitchOutcome::Noop { .. } => Ok(()),
-        SwitchOutcome::Failed { error, .. } => Err(error.to_string()),
-        SwitchOutcome::FinalDiscoveryFailed { error, .. } => Err(error.message().to_owned()),
-        SwitchOutcome::Cancelled { .. } => Err(gettextrs::gettext("The change was cancelled.")),
-        SwitchOutcome::Disagreed { .. } | SwitchOutcome::StaleDiscovery { .. } => Err(
-            gettextrs::gettext("The backend changed while it was being enabled."),
-        ),
-    }
+fn copy_command(window: &ui::OnboardingWindow, command: &str) {
+    gtk::prelude::WidgetExt::display(window)
+        .clipboard()
+        .set_text(command);
+    window
+        .overlay()
+        .add_toast(adw::Toast::new(&gettextrs::gettext(
+            "Command copied. Paste it into a terminal.",
+        )));
+}
+
+fn open_app_center(window: &ui::OnboardingWindow, snap: StoreSnap) {
+    let launcher = gtk::UriLauncher::new(&snap.app_center_uri());
+    launcher.launch(Some(window), None::<&gio::Cancellable>, {
+        let window = window.clone();
+        move |result| {
+            if result.is_err() {
+                copy_command(&window, &snap.install_command());
+            }
+        }
+    });
 }
 
 /// Whether the HUD's GNOME Shell extension is installed for this user or
@@ -481,45 +473,5 @@ fn component_detail(id: ComponentId) -> String {
         ComponentId::ShellExtension => {
             gettextrs::gettext("Needed to show dictation status in the desktop")
         }
-    }
-}
-
-/// Heading, body and copyable command for a component the user has to install
-/// themselves.
-fn instructions(id: ComponentId) -> (String, String, Option<String>) {
-    match id {
-        ComponentId::Myna => (
-            gettextrs::gettext("Install Myna"),
-            gettextrs::gettext(
-                "Myna runs as a user service, which snapd only installs once user daemons are enabled. Run both commands in a terminal.",
-            ),
-            Some(format!(
-                "sudo snap set system experimental.user-daemons=true\nsudo snap install {MYNA_SNAP}"
-            )),
-        ),
-        ComponentId::Model => (
-            gettextrs::gettext("Install the speech-to-text model"),
-            gettextrs::gettext("Run this command in a terminal."),
-            Some(format!("sudo snap install {RECOMMENDED_BACKEND_SNAP}")),
-        ),
-        ComponentId::ShellExtension => (
-            gettextrs::gettext("Install the shell extension"),
-            gettextrs::gettext(
-                "The extension is not published in a store yet. Copy it into the extensions directory and enable it, then log out and back in.",
-            ),
-            Some(format!("gnome-extensions enable {SHELL_EXTENSION_UUID}")),
-        ),
-    }
-}
-
-fn install_progress_text(progress: &InstallProgress) -> String {
-    let label = if progress.label.is_empty() {
-        gettextrs::gettext("Installing…")
-    } else {
-        progress.label.clone()
-    };
-    match progress.fraction() {
-        Some(fraction) => format!("{label} · {}%", (fraction * 100.0).round() as u32),
-        None => label,
     }
 }

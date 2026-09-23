@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use async_trait::async_trait;
 use myna_config::active_backend::{
-    execute_switch, myna_restart_request, ActiveBackendController, BackendHealth,
-    PrepareSwitchError, SwitchOutcome, SwitchPlan,
+    ensure_backend_active, execute_switch, myna_restart_request, ActiveBackendController,
+    BackendHealth, PrepareSwitchError, SwitchOutcome, SwitchPlan,
 };
 use myna_config::command::{CancellationToken, CommandRequest};
 use myna_config::domain::{
@@ -232,6 +232,7 @@ impl BackendRepository for FakeRepository {
 struct FakeConfigurator {
     result: Rc<RefCell<Option<ConfiguratorResult>>>,
     calls: Rc<RefCell<Vec<Vec<CommandRequest>>>>,
+    restarts: Rc<RefCell<usize>>,
 }
 
 type ConfiguratorResult = Result<Vec<CommandResult>, SystemConfiguratorFailure>;
@@ -241,6 +242,7 @@ impl FakeConfigurator {
         Self {
             result: Rc::new(RefCell::new(Some(result))),
             calls: Rc::new(RefCell::new(Vec::new())),
+            restarts: Rc::new(RefCell::new(0)),
         }
     }
 
@@ -258,6 +260,17 @@ impl SystemConfigurator for FakeConfigurator {
     ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure> {
         self.calls.borrow_mut().push(plan.operations().to_vec());
         self.result.borrow_mut().take().unwrap()
+    }
+
+    async fn restart_myna(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> Result<(), SystemConfiguratorError> {
+        *self.restarts.borrow_mut() += 1;
+        match self.result.borrow_mut().take() {
+            Some(Err(failure)) => Err(failure.into_parts().1),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -627,4 +640,154 @@ fn selector_only_marks_a_backend_selected_for_one_actual_connection() {
         &["myna-parakeet", "myna-whisper"],
     ));
     assert_eq!(multiple.selected_index(), None);
+}
+
+/// A store install auto-connects a same-publisher backend, and the daemon may
+/// have started before it existed: only the restart is left to do.
+#[test]
+fn an_auto_connected_backend_is_only_restarted() {
+    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))]);
+    let configurator = FakeConfigurator::returning(Ok(vec![]));
+
+    block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+    ))
+    .unwrap();
+
+    assert!(configurator.calls().is_empty());
+    assert_eq!(*configurator.restarts.borrow(), 1);
+}
+
+#[test]
+fn a_failed_restart_is_reported() {
+    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))]);
+    let configurator = FakeConfigurator::returning(Err(SystemConfiguratorFailure::new(
+        Vec::new(),
+        SystemConfiguratorError::execution("systemctl", vec![], Some(5), "", "unit not found"),
+    )));
+
+    let error = block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+    ))
+    .unwrap_err();
+
+    assert!(error.contains("unit not found"), "{error}");
+}
+
+#[test]
+fn an_unconnected_machine_switches_to_the_preferred_backend() {
+    let initial = connections(&["myna-whisper", "myna-parakeet"], &[]);
+    let connected = connections(&["myna-whisper", "myna-parakeet"], &["myna-parakeet"]);
+    let repository = FakeRepository::new([Ok(initial.clone()), Ok(initial.clone()), Ok(connected)]);
+    let plan =
+        SwitchPlan::new(&initial, BackendIdentity::new("myna-parakeet", "provider")).unwrap();
+    let configurator = FakeConfigurator::returning(Ok(success(&plan)));
+
+    block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+    ))
+    .unwrap();
+
+    assert_eq!(configurator.calls(), [plan.operations()]);
+    assert_eq!(*configurator.restarts.borrow(), 0);
+}
+
+#[test]
+fn without_the_preferred_backend_the_first_discovered_one_is_used() {
+    let initial = connections(&["myna-whisper"], &[]);
+    let connected = connections(&["myna-whisper"], &["myna-whisper"]);
+    let repository = FakeRepository::new([Ok(initial.clone()), Ok(initial.clone()), Ok(connected)]);
+    let plan = SwitchPlan::new(&initial, BackendIdentity::new("myna-whisper", "provider")).unwrap();
+    let configurator = FakeConfigurator::returning(Ok(success(&plan)));
+
+    block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+    ))
+    .unwrap();
+
+    assert_eq!(configurator.calls(), [plan.operations()]);
+}
+
+#[test]
+fn no_backend_and_failed_discovery_are_errors_without_privilege() {
+    for discovery in [Ok(connections(&[], &[])), Err(error("snapd is down"))] {
+        let repository = FakeRepository::new([discovery]);
+        let configurator = FakeConfigurator::returning(Ok(vec![]));
+
+        assert!(block_on(ensure_backend_active(
+            &repository,
+            &configurator,
+            "myna-parakeet"
+        ))
+        .is_err());
+        assert!(configurator.calls().is_empty());
+        assert_eq!(*configurator.restarts.borrow(), 0);
+    }
+}
+
+#[test]
+fn a_failed_or_contradicted_switch_is_reported() {
+    let initial = connections(&["myna-parakeet"], &[]);
+    let plan =
+        SwitchPlan::new(&initial, BackendIdentity::new("myna-parakeet", "provider")).unwrap();
+    let denied = FakeConfigurator::returning(Err(SystemConfiguratorFailure::new(
+        Vec::new(),
+        SystemConfiguratorError::authorization_denied("snapd", vec![], Some(403), "cancelled"),
+    )));
+    let repository = FakeRepository::new([
+        Ok(initial.clone()),
+        Ok(initial.clone()),
+        Ok(initial.clone()),
+    ]);
+    assert!(block_on(ensure_backend_active(&repository, &denied, "myna-parakeet")).is_err());
+
+    // snapd reported success but the backend is still not connected.
+    let contradicted = FakeConfigurator::returning(Ok(success(&plan)));
+    let repository = FakeRepository::new([Ok(initial.clone()), Ok(initial.clone()), Ok(initial)]);
+    let error = block_on(ensure_backend_active(
+        &repository,
+        &contradicted,
+        "myna-parakeet",
+    ))
+    .unwrap_err();
+    assert!(
+        error.contains("changed while it was being enabled"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_switch_lost_to_discovery_or_cancellation_is_reported() {
+    let initial = connections(&["myna-parakeet"], &[]);
+
+    let repository = FakeRepository::new([Ok(initial.clone()), Err(error("snapd went away"))]);
+    let configurator = FakeConfigurator::returning(Ok(vec![]));
+    let lost = block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+    ))
+    .unwrap_err();
+    assert!(lost.contains("snapd went away"), "{lost}");
+
+    let repository = FakeRepository::new([Ok(initial.clone()), Ok(initial.clone()), Ok(initial)]);
+    let configurator = FakeConfigurator::returning(Err(SystemConfiguratorFailure::new(
+        Vec::new(),
+        SystemConfiguratorError::Cancelled,
+    )));
+    let cancelled = block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+    ))
+    .unwrap_err();
+    assert!(cancelled.contains("cancelled"), "{cancelled}");
 }

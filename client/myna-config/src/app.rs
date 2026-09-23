@@ -287,8 +287,18 @@ fn onboarding_probe() -> glib::ExitCode {
 
     // A machine with nothing installed: the flow opens, and its component step
     // refuses to advance.
+    // Every command fails, so a refresh on focus still sees a bare machine.
+    let runner = std::sync::Arc::new(crate::command::FakeCommandRunner::default());
     let (window, start_button) = {
-        let ui = OnboardingUi::present(&application, assess(Machine::default()), Box::new(|| {}));
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine::default()),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                runner.clone(),
+            )),
+            Rc::new(ProbeMachine::new()),
+            Box::new(|| {}),
+        );
         (ui.window(), ui.start_button())
     };
     settle_gtk();
@@ -316,6 +326,151 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-gate: held");
+
+    // Each missing component offers its install path, and a copy puts the
+    // exact command on the clipboard.
+    let button = |matches: &dyn Fn(&gtk::Button) -> bool| {
+        find_descendant(window.upcast_ref(), &|widget| {
+            widget
+                .downcast_ref::<gtk::Button>()
+                .is_some_and(|button| button.is_mapped() && matches(button))
+        })
+        .and_then(|widget| widget.downcast::<gtk::Button>().ok())
+    };
+    let clipboard = || {
+        glib::MainContext::default()
+            .block_on(
+                gtk::prelude::WidgetExt::display(&window)
+                    .clipboard()
+                    .read_text_future(),
+            )
+            .ok()
+            .flatten()
+            .map(|text| text.to_string())
+    };
+    let copies = [
+        (
+            gettextrs::gettext("Copy Command"),
+            crate::onboarding::StoreSnap::Myna,
+        ),
+        (
+            String::new(),
+            crate::onboarding::StoreSnap::RecommendedModel,
+        ),
+    ];
+    for (label, snap) in copies {
+        let command = snap.install_command();
+        let Some(copy) = button(&|button| {
+            button.tooltip_text().as_deref() == Some(command.as_str())
+                && button.label().unwrap_or_default() == label.as_str()
+        }) else {
+            eprintln!("no copy button offers `{command}`");
+            return glib::ExitCode::FAILURE;
+        };
+        copy.emit_clicked();
+        settle_gtk();
+        if clipboard().as_deref() != Some(command.as_str()) {
+            eprintln!(
+                "copying left {:?} on the clipboard, not `{command}`",
+                clipboard()
+            );
+            return glib::ExitCode::FAILURE;
+        }
+    }
+    if button(&|button| button.label().as_deref() == Some(gettextrs::gettext("Install").as_str()))
+        .is_none()
+    {
+        eprintln!("the model offers no App Center install");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-copy: commands on the clipboard");
+
+    let Some(how) = button(&|button| {
+        button.label().as_deref() == Some(gettextrs::gettext("How to install").as_str())
+    }) else {
+        eprintln!("the shell extension offers no instructions");
+        return glib::ExitCode::FAILURE;
+    };
+    how.emit_clicked();
+    settle_gtk();
+    let Some(dialog) = window
+        .visible_dialog()
+        .and_then(|dialog| dialog.downcast::<adw::AlertDialog>().ok())
+    else {
+        eprintln!("the shell extension instructions did not open");
+        return glib::ExitCode::FAILURE;
+    };
+    dialog.emit_by_name::<()>("response", &[&"copy"]);
+    settle_gtk();
+    let enable = format!(
+        "gnome-extensions enable {}",
+        crate::onboarding::SHELL_EXTENSION_UUID
+    );
+    if clipboard().as_deref() != Some(enable.as_str()) {
+        eprintln!("the extension instructions copied {:?}", clipboard());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-extension: instructions copy the command");
+
+    // Installing happens in another window; coming back re-reads the machine.
+    let elsewhere = gtk::Window::new();
+    elsewhere.present();
+    settle_gtk();
+    elsewhere.close();
+    window.present();
+    let refreshed = || !runner.calls().is_empty();
+    for _ in 0..100 {
+        if refreshed() {
+            break;
+        }
+        settle_gtk();
+    }
+    if !refreshed() {
+        eprintln!("regaining focus on the component step did not re-read the machine");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-refresh: re-read on focus");
+    window.close();
+    settle_gtk();
+
+    // A machine whose snaps cannot be read fails to finish setting up, says
+    // so, and stays on the component step.
+    let installed = [crate::diagnostics::InstalledSnap {
+        name: crate::onboarding::MYNA_SNAP.to_owned(),
+        version: "1".to_owned(),
+    }];
+    let (window, start_button) = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine::new(&installed, 1, true)),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(crate::command::FakeCommandRunner::default()),
+            )),
+            Rc::new(ProbeMachine::new()),
+            Box::new(|| {}),
+        );
+        (ui.window(), ui.start_button())
+    };
+    settle_gtk();
+    start_button.emit_clicked();
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    let failed = || {
+        window
+            .visible_dialog()
+            .is_some_and(|dialog| dialog.is::<ui::OperationErrorDialog>())
+    };
+    for _ in 0..100 {
+        if failed() {
+            break;
+        }
+        settle_gtk();
+    }
+    if !failed() || step(&window) != "components" {
+        eprintln!("a failed setup did not report itself on the component step");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-setup-failure: reported");
     window.close();
     settle_gtk();
 
@@ -326,10 +481,15 @@ fn onboarding_probe() -> glib::ExitCode {
         version: "1".to_owned(),
     }];
     let completed = Rc::new(Cell::new(false));
+    let machine = ProbeMachine::new();
     let (window, start_button, shortcut_button) = {
-        let ui = OnboardingUi::present(
+        let ui = OnboardingUi::present_with_ports(
             &application,
             assess(Machine::new(&installed, 1, false)),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
             Box::new({
                 let completed = completed.clone();
                 move || completed.set(true)
@@ -345,12 +505,30 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("the component step refused to advance with only the extension missing");
         return glib::ExitCode::FAILURE;
     }
+    let reaches = |name: &str| {
+        for _ in 0..100 {
+            if step(&window) == name {
+                return true;
+            }
+            settle_gtk();
+        }
+        false
+    };
     forward.emit_clicked();
-    settle_gtk();
-    if step(&window) != "shortcut" {
+    if !reaches("shortcut") {
         eprintln!("the component step did not reach the shortcut step");
         return glib::ExitCode::FAILURE;
     }
+    // The fixture's backend is already connected, so leaving the step only
+    // restarts the daemon.
+    if machine.applied() != [vec!["restart-myna".to_owned()]] {
+        eprintln!(
+            "leaving the component step did not restart the daemon: {:?}",
+            machine.applied()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-setup: restarted the daemon");
     let back = window.back_button();
     if !back.is_visible() {
         eprintln!("the shortcut step offers no way back");
@@ -363,7 +541,10 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     forward.emit_clicked();
-    settle_gtk();
+    if !reaches("shortcut") {
+        eprintln!("returning to the component step stranded the flow there");
+        return glib::ExitCode::FAILURE;
+    }
     println!("onboarding-walk: reached the last step");
 
     // No daemon runs under the probe, and nothing can bind a key without one.
@@ -1042,6 +1223,17 @@ impl crate::command::CommandRunner for ProbeMachine {
 
 #[async_trait::async_trait(?Send)]
 impl crate::ports::SystemConfigurator for ProbeMachine {
+    async fn restart_myna(
+        &self,
+        _cancellation: crate::command::CancellationToken,
+    ) -> Result<(), crate::ports::SystemConfiguratorError> {
+        self.applied
+            .lock()
+            .expect("probe machine lock")
+            .push(vec!["restart-myna".to_owned()]);
+        Ok(())
+    }
+
     async fn execute_privileged(
         &self,
         operations: &[crate::command::CommandRequest],

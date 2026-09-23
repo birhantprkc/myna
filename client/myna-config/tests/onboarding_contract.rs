@@ -1,11 +1,10 @@
-//! The rules the wizard is built on: what opens it, what it is allowed to
-//! install, and what it must not claim.
+//! The rules the wizard is built on: what opens it, how each component is
+//! installed, and what it must not claim.
 
-use myna_config::adapters::snapd_client::InstallAction;
 use myna_config::diagnostics::InstalledSnap;
 use myna_config::onboarding::{
-    assess, can_advance, needs_onboarding, outstanding, ComponentId, InstallTarget, Machine,
-    Remedy, Step, MYNA_SNAP, RECOMMENDED_BACKEND_SNAP, RECOMMENDED_MODEL_COMPONENT,
+    assess, can_advance, needs_onboarding, outstanding, ComponentId, Machine, Remedy, Step,
+    StoreSnap, MYNA_SNAP,
 };
 
 fn snap(name: &str) -> InstalledSnap {
@@ -31,15 +30,22 @@ fn a_ready_machine_never_opens_the_wizard() {
 }
 
 /// snapd refuses to install a snap declaring a user daemon on a stock machine,
-/// so Myna is explained rather than offered behind a button that cannot work.
+/// so Myna is never sent to App Center, whose install would fail, and its
+/// command sets the flag first.
 #[test]
-fn myna_itself_is_never_offered_as_an_in_app_install() {
+fn myna_is_installed_from_a_terminal_with_user_daemons_enabled() {
     let myna = assess(Machine::default())
         .into_iter()
         .find(|component| component.id == ComponentId::Myna)
         .expect("the wizard assesses Myna");
-    assert_eq!(myna.remedy, Remedy::Explain);
+    assert_eq!(myna.remedy, Remedy::Store(StoreSnap::Myna));
     assert!(myna.required);
+    assert!(!StoreSnap::Myna.installs_from_app_center());
+    let command = StoreSnap::Myna.install_command();
+    let flag = command
+        .find("experimental.user-daemons=true")
+        .expect("the command enables user daemons");
+    assert!(flag < command.find("snap install").unwrap());
 }
 
 /// The extension is not published anywhere snapd can reach, and dictation
@@ -65,20 +71,13 @@ fn the_component_step_is_the_only_gate() {
     assert!(can_advance(Step::Shortcut, &bare));
 }
 
-/// The one install the application performs, exactly as snapd receives it: the
-/// model component is not a default component, so an install that omits it
-/// leaves a backend with no weights.
+/// Both snaps are published to edge only; a command without the channel
+/// fails with "no stable revision".
 #[test]
-fn the_only_install_the_application_can_make_is_the_recommended_model() {
-    let action = InstallAction::new(InstallTarget::RecommendedModel);
-    assert_eq!(action.snap(), RECOMMENDED_BACKEND_SNAP);
-    assert_eq!(action.components(), [RECOMMENDED_MODEL_COMPONENT]);
-    assert_eq!(
-        action.path().expect("a valid snap name"),
-        format!("/v2/snaps/{RECOMMENDED_BACKEND_SNAP}")
-    );
-    assert_eq!(
-        action.to_request_body().expect("a valid request body"),
-        format!(r#"{{"action":"install","components":["{RECOMMENDED_MODEL_COMPONENT}"]}}"#)
-    );
+fn every_store_install_command_asks_for_edge() {
+    for snap in [StoreSnap::Myna, StoreSnap::RecommendedModel] {
+        let command = snap.install_command();
+        let install = command.lines().last().unwrap();
+        assert_eq!(install, format!("sudo snap install --edge {}", snap.name()));
+    }
 }

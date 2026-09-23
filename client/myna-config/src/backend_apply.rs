@@ -930,6 +930,13 @@ mod tests {
 
     #[async_trait(?Send)]
     impl SystemConfigurator for FakeConfigurator {
+        async fn restart_myna(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<(), crate::ports::SystemConfiguratorError> {
+            unreachable!("an apply never restarts Myna")
+        }
+
         async fn apply_backend_config(
             &self,
             preview: &ApplyPreview,

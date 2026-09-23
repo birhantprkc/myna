@@ -166,6 +166,11 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
     for line in [
         "onboarding-start: advanced",
         "onboarding-gate: held",
+        "onboarding-copy: commands on the clipboard",
+        "onboarding-extension: instructions copy the command",
+        "onboarding-refresh: re-read on focus",
+        "onboarding-setup-failure: reported",
+        "onboarding-setup: restarted the daemon",
         "onboarding-walk: reached the last step",
         "onboarding-shortcut: waits for the daemon",
         "onboarding-finish: handed back",

@@ -3,7 +3,6 @@ use thiserror::Error;
 use async_trait::async_trait;
 
 use crate::active_backend::SwitchPlan;
-use crate::adapters::snapd_client::ProgressSink;
 use crate::backend_apply::ApplyPreview;
 use crate::command::{CancellationToken, CommandRequest};
 use crate::diagnostics::InstalledSnap;
@@ -11,7 +10,6 @@ use crate::domain::{
     BackendIdentity, BackendSnapshot, BackendSurfaceError, ClientSetting, ClientSettingMetadata,
     ClientSettingValue, CommandResult, ConnectionSnapshot,
 };
-use crate::onboarding::InstallTarget;
 
 pub type ClientSettingsCallback = Box<dyn Fn(ClientSetting) + 'static>;
 
@@ -53,20 +51,6 @@ pub trait BackendRepository {
     ) -> Result<ConnectionSnapshot, BackendSurfaceError>;
 }
 
-/// Installs one of the typed onboarding targets.
-///
-/// Deliberately narrower than "install a snap": the caller names a target the
-/// application knows about, never a string.
-#[async_trait(?Send)]
-pub trait SnapInstaller {
-    async fn install(
-        &self,
-        target: InstallTarget,
-        progress: Option<ProgressSink>,
-        cancellation: CancellationToken,
-    ) -> Result<(), SystemConfiguratorError>;
-}
-
 #[async_trait(?Send)]
 pub trait SystemConfigurator {
     async fn execute_privileged(
@@ -98,16 +82,8 @@ pub trait SystemConfigurator {
     /// Restart Myna's user service so it picks up a changed backend mount.
     async fn restart_myna(
         &self,
-        _cancellation: CancellationToken,
-    ) -> Result<(), SystemConfiguratorError> {
-        Err(SystemConfiguratorError::execution(
-            "systemctl",
-            Vec::new(),
-            None,
-            "",
-            "restarting Myna is not supported",
-        ))
-    }
+        cancellation: CancellationToken,
+    ) -> Result<(), SystemConfiguratorError>;
 
     async fn apply_backend_config(
         &self,

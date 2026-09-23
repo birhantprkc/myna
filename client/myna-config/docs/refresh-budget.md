@@ -14,7 +14,8 @@ during a refresh cycle:
 Startup additionally pays one `Startup`-sized assessment before any window
 exists, to decide between the settings window and the onboarding wizard
 (`docs/onboarding.md`). The result is handed to the wizard rather than
-re-read there.
+re-read there. The wizard re-assesses, at the same cost, each time it regains
+focus on its component step, because the user installs in another window.
 
 Every discovery also runs the CPU clock probe (`docs/performance-warnings.md`)
 on the blocking pool. It is a thread, not a process, so it is outside the

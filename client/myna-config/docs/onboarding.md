@@ -12,39 +12,52 @@ application already makes at startup (`snap list`, `snap connections` and
 
 | Component       | Required | Satisfied when                             | Remedy       |
 | --------------- | -------- | ------------------------------------------ | ------------ |
-| Myna            | yes      | the `myna` snap is installed               | instructions |
-| Model           | yes      | discovery reports at least one backend     | install      |
+| Myna            | yes      | the `myna` snap is installed               | command      |
+| Model           | yes      | discovery reports at least one backend     | App Center   |
 | Shell extension | no       | `myna-shell@canonical.com` is in a data dir | instructions |
 
 The wizard opens when a **required** component is missing. "Model" is satisfied
 by discovery rather than by a snap name: which snaps are backends is a property
 of the socket interface they publish, not of their name.
 
-## What the application installs, and what it does not
+## Installing
 
-Only the recommended model is installed in-app, through snapd's REST API on
-`/run/snapd.socket` (`POST /v2/snaps/myna-parakeet` with the
-`model-parakeet-int8` component, then the change is polled for progress).
-snapd asks polkit for authorization; the wizard reports a denial as a failure
-rather than retrying. The component is `type: standard` rather than a default
-component, so it has to be named explicitly - an install that omits it leaves a
-backend with no weights.
+The application installs nothing itself. Both snaps come from the store, on
+`edge`, the only channel they are published to.
 
-Two components are explained rather than installed:
-
-- **Myna** - snapd refuses to install a snap declaring a user daemon unless
-  `experimental.user-daemons` is set or the snap-id is on the hardcoded
-  allowlist in snapd's `overlord/snapstate/snapstate.go`. A local install has no
-  snap-id at all, so an Install button would fail on every stock machine. The
-  instructions carry both commands.
+- **Model** - Install opens App Center at `snap://myna-parakeet`. The URI
+  carries no channel (App Center reads everything after the scheme as the
+  name), and App Center picks the only published one. A copy button gives the
+  equivalent `sudo snap install --edge myna-parakeet`. A plain install is a
+  working backend: the install hook selects an engine, and selecting one
+  installs its model component.
+- **Myna** - only a copyable command. snapd refuses to install a snap declaring
+  a user daemon unless `experimental.user-daemons` is set or its snap-id is on
+  the hardcoded allowlist in snapd's `overlord/snapstate/snapstate.go`, so an
+  App Center install fails on every stock machine. The command sets the flag
+  first.
 - **Shell extension** - not published anywhere snapd can reach; it is copied
   into `~/.local/share/gnome-shell/extensions` by hand. It is also not required:
   the daemon falls back to desktop notifications without it, and gating the flow
   on a manual copy would strand anyone who cannot perform it.
 
-After a successful install the wizard connects `myna:backend` to the new
-backend's slot and restarts the daemon, reusing the active-backend switch, so
-finishing the flow leaves dictation working rather than merely installed.
+The installs happen in another window, so the component step re-assesses the
+machine whenever the wizard regains focus.
+
+## Finishing setup
+
+Leaving the component step makes a backend active and restarts the daemon, so
+the shortcut step finds dictation running. Both snaps share a publisher, so
+snapd's base declaration auto-connects `myna:backend` to the new backend's
+slot and the step only restarts. Otherwise it runs the active-backend switch,
+which costs one polkit prompt: snapd's `manage-interfaces` action is
+`auth_admin_keep`, and the restart goes through `systemctl --user`, which needs
+none.
+
+The backend's `hardware-observe` and `system-observe` plugs are left alone.
+Dictation runs without them on the CPU engine, and connecting
+`hardware-observe` re-selects the engine in its connect hook, which on an
+NVIDIA machine downloads the GPU components inside the connect change.
 
 ## The keyboard shortcut
 
@@ -80,5 +93,5 @@ no `ConfigureShortcuts`, and the portal has no unbind.
 The startup assessment is the same two subprocesses as a `RefreshReason::Startup`
 refresh, run before any window exists, and it is handed to the wizard rather
 than repeated there. The shortcut proxy spawns nothing: it is one D-Bus match
-per surface. A refresh after an install costs another `snap list` plus
-the discovery the switch already performs.
+per surface. Regaining focus on the component step costs another `snap list`
+plus a discovery.
