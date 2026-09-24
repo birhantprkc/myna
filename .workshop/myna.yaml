@@ -283,7 +283,8 @@ actions:
       tests/spread/lib/*.sh \
       .workshop/*/hooks/* \
       *-snap/scripts/* *-snap/dev/*.sh \
-      *-snap/snap/hooks/*
+      *-snap/snap/hooks/* \
+      client/myna-config/build/*.sh
   workflow-lint: |
     export PATH=/usr/local/cargo-bin:$PATH
     cd /project && actionlint .github/workflows/*.yml

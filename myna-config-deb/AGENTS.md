@@ -24,4 +24,4 @@ This directory turns `client/myna-core` and `client/myna-config` into the `myna-
 
 - `build-source.sh` - Stages the orig tarball and debianised tree into `target/deb/`.
 - `vendor-copyright.py` - Generates `debian/copyright` from the vendored crates.
-- `debian/` - Packaging: `rules` builds offline with `--locked`, `install` places the schema, desktop entry and metainfo, `tests/` is the autopkgtest.
+- `debian/` - Packaging: `rules` builds offline with `--locked`, `install` places the schema and icons, `rules` installs the catalogs and the translated desktop entry and metainfo, `tests/` is the autopkgtest.

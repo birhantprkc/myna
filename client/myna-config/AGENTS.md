@@ -27,7 +27,7 @@ Hexagonal. `ports.rs` declares the traits the application depends on (backend re
 
 # Directory
 
-- `build/` - Build-script logic that `tests/` pulls in with `include!`, such as the minimum `blueprint-compiler` version.
+- `build/` - Build logic outside cargo: the minimum `blueprint-compiler` version that `tests/` pulls in with `include!`, and the translation install the deb build runs.
 - `src/adapters/` - snapd REST client, `snap` CLI repository, pkexec configurator, Gio settings.
 - `src/ui/` - One module per Blueprint template in `data/`.
 - `src/bin/` - Test fixture that stands in for a real command runner.
