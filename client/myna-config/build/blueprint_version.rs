@@ -1,5 +1,7 @@
-// Oldest release measured to compile data/*.blp to output identical to 0.20.4.
-pub const MINIMUM: (u32, u32, u32) = (0, 16, 0);
+// Oldest release measured to compile data/*.blp to output equivalent to
+// 0.20.4's: noble's 0.12.0 differs only in writing translatable="true" for
+// "yes", which GtkBuilder reads alike.
+pub const MINIMUM: (u32, u32, u32) = (0, 12, 0);
 
 pub fn check(version_output: &str) -> Result<(), String> {
     let found = version_output.trim();
