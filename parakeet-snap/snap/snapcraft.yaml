@@ -131,7 +131,7 @@ parts:
       - PIP_RETRIES: "10"
     source: wheels
     python-packages:
-      - ./myna-0.0.1-py3-none-any.whl[parakeet]
+      - ./myna-0.0.0-py3-none-any.whl[parakeet]
     build-packages:
       - python3-venv
     override-build: |
@@ -207,7 +207,7 @@ parts:
       # The wheel with no extra: its parakeet extra is the CPU onnxruntime,
       # which installs the same `onnxruntime` package over the GPU one.
       pip3 install --target="$target" --no-index --find-links=. \
-        ./myna-0.0.1-py3-none-any.whl \
+        ./myna-0.0.0-py3-none-any.whl \
         --requirement "$CRAFT_PROJECT_DIR/runtimes/onnxruntime-cuda/requirements.txt"
       nvidia="$target/nvidia"
       # TensorRT's provider needs libnvinfer, which is not shipped; nvblas is

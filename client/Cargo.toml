@@ -3,7 +3,8 @@ resolver = "2"
 members = ["myna-core", "myna-audio", "myna-orchestrator", "myna-cli", "myna-desktop", "myna-hud", "myna-config"]
 
 [workspace.package]
-version = "0.1.0"
+# Not the release version: the binaries report dev/version.sh's.
+version = "0.0.0"
 edition = "2021"
 rust-version = "1.85"
 license = "AGPL-3.0-or-later"

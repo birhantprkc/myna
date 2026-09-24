@@ -120,7 +120,7 @@ parts:
       - PIP_RETRIES: "10"
     source: wheels
     python-packages:
-      - ./myna-0.0.1-py3-none-any.whl[whisper]
+      - ./myna-0.0.0-py3-none-any.whl[whisper]
     build-packages:
       - python3-venv
     override-build: |
@@ -201,7 +201,7 @@ parts:
       # It carries no DT_NEEDED, no dlopen name and not one "cudnn" string,
       # and the wheel declares no CUDA deps at all. cuBLAS pulls NVRTC itself.
       pip3 install --target="$target" \
-        ./myna-0.0.1-py3-none-any.whl[whisper] \
+        ./myna-0.0.0-py3-none-any.whl[whisper] \
         ctranslate2 \
         nvidia-cublas-cu12
       export PRUNE_DROP="onnxruntime google protobuf flatbuffers"

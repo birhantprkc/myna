@@ -10,6 +10,7 @@ repo_root="$(dirname "$snap_dir")"
 "$repo_root/dev/stage-version.sh" "$snap_dir" server parakeet-snap
 
 cd "$repo_root/server"
+rm -f "$snap_dir"/wheels/myna-*.whl
 uv build --wheel --out-dir "$snap_dir/wheels"
 ls -l "$snap_dir/wheels"
 

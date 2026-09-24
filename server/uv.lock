@@ -1277,7 +1277,7 @@ wheels = [
 
 [[package]]
 name = "myna"
-version = "0.0.1"
+version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
