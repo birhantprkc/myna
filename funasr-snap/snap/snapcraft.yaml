@@ -8,7 +8,7 @@
 #   - CPU only (GPU acceleration out of scope for 009)
 name: myna-funasr
 base: core24
-version: 0.1.0-dev
+adopt-info: version
 assumes:
   - snapd2.68 # components support
 license: AGPL-3.0-or-later
@@ -75,6 +75,12 @@ slots:
       write: [$SNAP_COMMON/share/provider]
 
 parts:
+  # The version dev/stage-version.sh resolved from git, from dev/prepare.sh.
+  version:
+    plugin: nil
+    source: version
+    parse-info: [version.metainfo.xml]
+
   # LICENSE (AGPL-3.0-or-later) and NOTICE (model attribution), staged into
   # licenses/ by dev/stage-licenses.sh from dev/prepare.sh.
   licenses:

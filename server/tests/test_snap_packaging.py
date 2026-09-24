@@ -751,6 +751,24 @@ def test_ships_the_license_text(snap_dir: str) -> None:
     )
 
 
+@pytest.mark.parametrize("snap_dir", ALL_SNAPS)
+def test_adopts_the_git_version(snap_dir: str) -> None:
+    """Every snap carries dev/version.sh's version, never a hardcoded one."""
+    recipe = _recipe(snap_dir)
+    assert "version" not in recipe, f"{snap_dir}: hardcodes version={recipe['version']!r}"
+    assert recipe.get("adopt-info") == "version", f"{snap_dir}: must adopt-info from `version`"
+    part = (recipe.get("parts") or {}).get("version")
+    assert part == {
+        "plugin": "nil",
+        "source": "version",
+        "parse-info": ["version.metainfo.xml"],
+    }, f"{snap_dir}: the version part must parse the staged version/ directory"
+    prepare = (REPO_ROOT / snap_dir / "dev" / "prepare.sh").read_text(encoding="utf-8")
+    assert "dev/stage-version.sh" in prepare, (
+        f"{snap_dir}/dev/prepare.sh does not stage version/ (dev/stage-version.sh)"
+    )
+
+
 def test_every_component_is_attributed_in_the_notice(snap) -> None:
     """Model weights ship under their own licenses (CC-BY-4.0, MIT, ...).
 

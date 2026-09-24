@@ -6,6 +6,7 @@ set -euo pipefail
 snap_dir="$(cd "$(dirname "$0")/.." && pwd)"
 repo_root="$(dirname "$snap_dir")"
 "$repo_root/dev/stage-licenses.sh" "$snap_dir"
+"$repo_root/dev/stage-version.sh" "$snap_dir" server funasr-snap
 
 cd "$repo_root/server"
 uv build --wheel --out-dir "$snap_dir/wheels"

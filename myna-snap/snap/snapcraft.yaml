@@ -1,6 +1,6 @@
 name: myna
 base: core24
-adopt-info: client
+adopt-info: version
 assumes:
   - snapd2.75 # pipewire interface + writable content shares
 license: AGPL-3.0-or-later
@@ -233,6 +233,12 @@ slots:
     name: com.canonical.Myna.Hud
 
 parts:
+  # The version dev/stage-version.sh resolved from git, from dev/prepare.sh.
+  version:
+    plugin: nil
+    source: version
+    parse-info: [version.metainfo.xml]
+
   # LICENSE (AGPL-3.0-or-later) and NOTICE (model attribution), staged into
   # licenses/ by dev/stage-licenses.sh from dev/prepare.sh.
   licenses:
@@ -274,13 +280,7 @@ parts:
       - libegl-dev
       - libgl1-mesa-dev
       - gettext # xgettext for myna-hud po template (build-time only)
-    # Not `craftctl set version`: when craft-parts updates rather than reruns a
-    # step it keeps the step's old project variables, so an incremental pack
-    # ships the previous version. parse-info is re-read on every pack.
-    parse-info: [version.metainfo.xml]
     override-build: |
-      printf '<component><releases><release version="%s"/></releases></component>\n' \
-          "$(cat .version)" >version.metainfo.xml
       toolchain="$HOME/.rustup/toolchains/stable-$(uname -m)-unknown-linux-gnu"
       export PATH="$toolchain/bin:$PATH"
       cargo install -f --locked --path myna-desktop --root "$CRAFT_PART_INSTALL"
