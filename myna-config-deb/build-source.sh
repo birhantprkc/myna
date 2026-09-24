@@ -10,10 +10,9 @@
 #   myna-config-<upstream>/               the unpacked source with debian/ applied,
 #                                         ready for `sbuild` run from inside it
 #
-# <upstream> is the changelog's upstream version when HEAD carries the tag
-# v<upstream>, and <upstream>~git<date>.<sha> otherwise. A snapshot therefore
-# sorts below the release it precedes, and every commit gets its own orig
-# tarball, so Launchpad never sees two different tarballs under one name.
+# <upstream> is dev/version.sh's: X.Y.Z on the tag vX.Y.Z, which must match
+# the changelog, and X.Y.Z+git<n>.<sha> past it. Every commit gets its own
+# orig tarball, so Launchpad never sees two different tarballs under one name.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -25,13 +24,17 @@ if [ -n "$(git -C "$root" status --porcelain -- client myna-config-deb)" ]; then
 fi
 
 changelog_version=$(dpkg-parsechangelog -l "$here/debian/changelog" -S Version)
-upstream=${changelog_version%-*}
 revision=${changelog_version##*-}
-commit=$(git -C "$root" rev-parse --short=7 HEAD)
+upstream=$("$root/dev/version.sh")
+case $upstream in
+*+git*) ;;
+"${changelog_version%-*}") ;;
+*)
+    echo "error: HEAD is tagged v$upstream but debian/changelog releases $changelog_version" >&2
+    exit 1
+    ;;
+esac
 commit_time=$(git -C "$root" log -1 --format=%ct)
-if ! git -C "$root" describe --tags --exact-match --match "v$upstream" >/dev/null 2>&1; then
-    upstream="$upstream~git$(date -u -d "@$commit_time" +%Y%m%d).$commit"
-fi
 # PPA=N appends ~ppaN, which dput requires for a PPA target and which sorts
 # below the archive version. SERIES=<name> retargets a series other than the
 # changelog's, tagged ~<release> before ~ppaN so an older series sorts below
