@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-24 10:25+0100\n"
+"POT-Creation-Date: 2026-09-24 10:30+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -104,6 +104,7 @@ msgstr ""
 
 #: data/main-window.blp:7 src/app.rs:149 src/diagnostics.rs:458
 #: data/com.canonical.Myna.Config.metainfo.xml:8
+#: data/com.canonical.Myna.Config.desktop:3
 msgid "Myna Settings"
 msgstr ""
 
@@ -1242,4 +1243,17 @@ msgid ""
 "Myna turns speech into text on your computer, with no audio or text leaving "
 "it. Myna Settings guides you through installing it and a speech model, then "
 "configures dictation and its speech backends."
+msgstr ""
+
+#: data/com.canonical.Myna.Config.desktop:4
+msgid "Dictation Settings"
+msgstr ""
+
+#: data/com.canonical.Myna.Config.desktop:5
+msgid "Configure Myna dictation and its speech backends"
+msgstr ""
+
+#. TRANSLATORS: Search terms for this application. Keep every semicolon, including the last.
+#: data/com.canonical.Myna.Config.desktop:12
+msgid "dictation;speech;transcription;voice;backend;"
 msgstr ""

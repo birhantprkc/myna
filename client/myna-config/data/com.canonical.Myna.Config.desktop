@@ -8,4 +8,5 @@ Icon=com.canonical.Myna.Config
 Terminal=false
 StartupNotify=true
 Categories=Settings;
+# TRANSLATORS: Search terms for this application. Keep every semicolon, including the last.
 Keywords=dictation;speech;transcription;voice;backend;
