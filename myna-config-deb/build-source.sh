@@ -46,6 +46,11 @@ if [ -n "${SERIES:-}" ] && [ "$SERIES" != "$series" ]; then
     series=$SERIES
 fi
 if [ -n "${PPA:-}" ]; then
+    # <n> in +git<n> rises only along one history: upload nothing main lacks.
+    if ! git -C "$root" merge-base --is-ancestor HEAD origin/main; then
+        echo "error: PPA uploads come from origin/main, and HEAD is not on it" >&2
+        exit 1
+    fi
     revision="$revision~ppa$PPA"
 fi
 version="$upstream-$revision"
