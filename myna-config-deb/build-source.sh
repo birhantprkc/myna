@@ -85,6 +85,16 @@ tar -C "$out" -cJf "$out/myna-config_$upstream.orig.tar.xz" \
     "myna-config-$upstream"
 
 cp -a "$here/debian" "$stage/debian"
+# Noble's default rustc is 1.75, below the vendored closure's 1.85; its
+# versioned toolchain from noble-updates is what debian/rules puts on PATH.
+if [ "$series" = noble ]; then
+    sed -i -e 's/^\( *\)cargo (>= [0-9.]*),/\1cargo-1.91,/' \
+        -e 's/^\( *\)rustc (>= [0-9.]*),/\1rustc-1.91,/' "$stage/debian/control"
+    if ! grep -q '^ *cargo-1.91,' "$stage/debian/control" || ! grep -q '^ *rustc-1.91,' "$stage/debian/control"; then
+        echo "error: could not name the versioned Rust toolchain in debian/control" >&2
+        exit 1
+    fi
+fi
 sed -i "1s/($changelog_version) [a-z-]*;/($version) $series;/" "$stage/debian/changelog"
 python3 "$here/vendor-copyright.py" "$stage/vendor" "$here/debian/copyright.in" > "$stage/debian/copyright"
 rm "$stage/debian/copyright.in"

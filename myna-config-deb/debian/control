@@ -5,8 +5,8 @@ Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
 XSBC-Original-Maintainer: Charles <charles05@canonical.com>
 Build-Depends: debhelper-compat (= 13),
                appstream,
-               blueprint-compiler (>= 0.16),
-               cargo,
+               blueprint-compiler (>= 0.12),
+               cargo (>= 1.85),
                gettext,
                gir1.2-adw-1,
                gir1.2-gtk-4.0,
@@ -14,7 +14,7 @@ Build-Depends: debhelper-compat (= 13),
                libglib2.0-dev,
                libgtk-4-dev (>= 4.14),
                pkgconf,
-               rustc (>= 1.75),
+               rustc (>= 1.85),
 Standards-Version: 4.7.4
 Rules-Requires-Root: no
 

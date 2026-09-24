@@ -11,6 +11,13 @@ export CARGO_INCREMENTAL = 0
 # profile asks for it, so RUSTFLAGS alone leaves the dbgsym empty.
 export CARGO_PROFILE_RELEASE_DEBUG = 2
 
+# A series whose default toolchain is too old builds with a versioned one
+# (build-source.sh names it for noble), which installs under /usr/lib/rust-*.
+RUST_BIN := $(lastword $(sort $(wildcard /usr/lib/rust-1.*/bin)))
+ifneq ($(RUST_BIN),)
+export PATH := $(RUST_BIN):$(PATH)
+endif
+
 CARGO = cargo --offline --locked
 
 %:
