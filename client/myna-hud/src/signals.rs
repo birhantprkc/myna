@@ -6,8 +6,8 @@
 //! skipping `shutdown`, and losing the profile an instrumented run writes on
 //! the way out through `main`.
 
-use gtk::gio;
 use gtk::prelude::*;
+use gtk::{gio, glib};
 use gtk4 as gtk;
 
 /// Route the first `SIGINT`/`SIGTERM` to [`gio::Application::quit`].
@@ -19,7 +19,7 @@ use gtk4 as gtk;
 /// terminates the process, so a shutdown that hangs is still interruptible.
 pub fn quit_on_signal() {
     for signum in [libc::SIGINT, libc::SIGTERM] {
-        glib_unix::unix_signal_add_once(signum, || {
+        glib::unix_signal_add_once(signum, || {
             if let Some(app) = gio::Application::default() {
                 app.quit();
             }

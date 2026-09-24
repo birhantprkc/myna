@@ -301,6 +301,6 @@ impl HudWindow {
             );
             let _ = region.union_rectangle(&r);
         }
-        surface.set_input_region(Some(&region));
+        surface.set_input_region(&region);
     }
 }

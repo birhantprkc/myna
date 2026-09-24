@@ -767,7 +767,7 @@ fn scrub_paths(value: &str) -> String {
         let start = cursor + relative_start;
         out.push_str(&value[cursor..start]);
         let after_slash = &value[start + 1..];
-        if after_slash.chars().next().map_or(true, char::is_whitespace) {
+        if after_slash.chars().next().is_none_or(char::is_whitespace) {
             out.push('/');
             cursor = start + 1;
             continue;

@@ -5,7 +5,7 @@ members = ["myna-core", "myna-audio", "myna-orchestrator", "myna-cli", "myna-des
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.85"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
@@ -32,5 +32,7 @@ pipewire = { version = "0.10", features = ["v0_3_44"] }
 # GSettings, for the client settings store (`myna_core::Settings`). Binds the
 # system glib/gio via pkg-config, which is why libglib2.0-dev is a build
 # dependency everywhere the workspace is built. Kept at the gtk-rs release the
-# optional `ui-gtk` GTK4 stack already pins, so there is one glib in the tree.
-gio = "0.22"
+# GTK4 crates pin, so there is one glib in the tree. That release is 0.21
+# (gtk4 0.10, libadwaita 0.8), not 0.22: 0.22 needs Rust 1.92 and the
+# myna-config deb builds on noble, whose newest toolchain is rustc-1.91.
+gio = "0.21"

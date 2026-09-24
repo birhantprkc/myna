@@ -105,7 +105,7 @@ mod tests {
         s16((0..frames).flat_map(|i| {
             let t = i as f64 / f64::from(rate);
             let v = (16_000.0 * (2.0 * std::f64::consts::PI * hz * t).sin()) as i16;
-            std::iter::repeat(v).take(channels)
+            std::iter::repeat_n(v, channels)
         }))
     }
 

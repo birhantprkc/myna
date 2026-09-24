@@ -609,7 +609,7 @@ fn onboarding_probe() -> glib::ExitCode {
     if window
         .navigation()
         .visible_page()
-        .map_or(true, |page| page.can_pop())
+        .is_none_or(|page| page.can_pop())
     {
         eprintln!("the component step could be left while it set dictation up");
         return glib::ExitCode::FAILURE;

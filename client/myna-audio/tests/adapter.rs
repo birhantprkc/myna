@@ -223,8 +223,7 @@ async fn unopenable_device_is_one_err_then_end() {
 #[tokio::test]
 async fn stats_track_signal_levels() {
     // A full-scale square wave: rms ≈ peak ≈ 1.0, clipped.
-    let loud: Vec<u8> = std::iter::repeat(i16::MAX.to_le_bytes())
-        .take(1_600)
+    let loud: Vec<u8> = std::iter::repeat_n(i16::MAX.to_le_bytes(), 1_600)
         .flatten()
         .collect();
     let backend = ScriptedBackend::new(vec![Step::Bytes(loud)]);
@@ -245,13 +244,11 @@ async fn stats_track_voice_activity() {
     // the tap marks where sustained voice last ended and reports the input's
     // floor and speech level, so a policy can act on either without samples.
     let quiet = |ms: usize| -> Vec<u8> {
-        std::iter::repeat(3i16.to_le_bytes())
-            .take(16 * ms)
+        std::iter::repeat_n(3i16.to_le_bytes(), 16 * ms)
             .flatten()
             .collect()
     };
-    let speech: Vec<u8> = std::iter::repeat(328i16.to_le_bytes())
-        .take(16_000)
+    let speech: Vec<u8> = std::iter::repeat_n(328i16.to_le_bytes(), 16_000)
         .flatten()
         .collect();
     let backend = ScriptedBackend::new(vec![

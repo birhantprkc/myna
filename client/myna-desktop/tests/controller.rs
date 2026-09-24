@@ -1721,8 +1721,7 @@ async fn with_auto_stop_off_only_the_user_ends_the_session() {
 }
 
 fn constant(sample: i16, ms: usize) -> Vec<u8> {
-    std::iter::repeat(sample.to_le_bytes())
-        .take(16 * ms)
+    std::iter::repeat_n(sample.to_le_bytes(), 16 * ms)
         .flatten()
         .collect()
 }

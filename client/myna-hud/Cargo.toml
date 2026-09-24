@@ -52,26 +52,20 @@ path = "src/main.rs"
 # The accent RGBA is still read as a gdk::RGBA and never as AdwAccentColor:
 # Ubuntu's Yaru patches add ADW_ACCENT_COLOR_BROWN = SLATE + 100, outside
 # upstream's enumeration, so the Rust enum cannot represent it.
-gtk4 = { version = "0.11", features = ["v4_14"] }
-libadwaita = { version = "0.9", features = ["v1_6"] }
+gtk4 = { version = "0.10", features = ["v4_14"] }
+libadwaita = { version = "0.8", features = ["v1_6"] }
 # The com.canonical.Myna.Dictation consumer (name watch + PropertiesChanged) and the
 # --serve-dbus simulator's publisher. Same crate family as myna-desktop.
 zbus = "5"
 # The bus worker -> GTK main-thread bridge (T124): glib's own channel is
 # deprecated, and this is executor-agnostic.
 async-channel = "2"
-# SIGINT/SIGTERM -> Application::quit(). The unix bindings are not in the
-# `glib` crate: they are generated from GLib's own `GLibUnix-2.0` GIR and ship
-# as `glib-unix`, on the same 0.22 release train as the glib already in the
-# tree. The default `futures` feature stays because 0.22.8's ungated
-# `signal_future` calls a gated helper.
-glib-unix = "0.22"
-# SIGINT/SIGTERM numbers for the watch above, and nothing else.
+# SIGINT/SIGTERM numbers for glib's unix signal watch, and nothing else.
 libc = "0.2"
 # Raw GL for the GLArea shader wrapper (dual-profile gl120/es300 compile,
 # uniform upload) — loaded via GDK's get_proc_address (R23).
 gl = "0.14"
-gdk4-x11 = "0.11"
+gdk4-x11 = "0.10"
 async-io = "2"
 
 [dev-dependencies]

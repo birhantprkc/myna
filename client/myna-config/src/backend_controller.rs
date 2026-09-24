@@ -609,7 +609,7 @@ fn prune_stale_dirty_edits(entry: &mut PageEntry) {
         return;
     };
     entry.dirty.retain(|key, value| {
-        presented_value(snapshot, key).map_or(true, |current| current != *value)
+        presented_value(snapshot, key).is_none_or(|current| current != *value)
     });
 }
 
