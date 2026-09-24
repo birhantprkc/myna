@@ -280,7 +280,7 @@ parts:
     parse-info: [version.metainfo.xml]
     override-build: |
       printf '<component><releases><release version="%s"/></releases></component>\n' \
-          "$(cat .snap-version)" >version.metainfo.xml
+          "$(cat .version)" >version.metainfo.xml
       toolchain="$HOME/.rustup/toolchains/stable-$(uname -m)-unknown-linux-gnu"
       export PATH="$toolchain/bin:$PATH"
       cargo install -f --locked --path myna-desktop --root "$CRAFT_PART_INSTALL"

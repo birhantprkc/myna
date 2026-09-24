@@ -19,7 +19,7 @@ fn script() -> PathBuf {
     std::env::var_os("MYNA_REPO_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-        .join("dev/snap-version.sh")
+        .join("dev/version.sh")
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -50,7 +50,7 @@ fn git(repo: &Path, args: &[&str]) -> String {
 fn checkout(name: &str) -> (PathBuf, String) {
     let repo = scratch(name);
     fs::create_dir_all(repo.join("dev")).unwrap();
-    fs::copy(script(), repo.join("dev/snap-version.sh")).unwrap();
+    fs::copy(script(), repo.join("dev/version.sh")).unwrap();
     fs::write(repo.join("client/Cargo.toml"), "").unwrap();
     git(&repo, &["init", "-q"]);
     git(&repo, &["add", "-A"]);
@@ -60,9 +60,9 @@ fn checkout(name: &str) -> (PathBuf, String) {
 }
 
 #[test]
-fn a_staged_snap_version_is_reported_verbatim() {
+fn a_staged_version_is_reported_verbatim() {
     let dir = scratch("staged");
-    let staged = dir.join("client/.snap-version");
+    let staged = dir.join("client/.version");
     fs::write(&staged, "0+git.abc1234-dirty\n").unwrap();
 
     let resolved = resolve(&dir.join("client"), "0.1.0");
@@ -74,7 +74,7 @@ fn a_staged_snap_version_is_reported_verbatim() {
 #[test]
 fn the_staged_version_wins_over_the_checkout() {
     let (repo, _) = checkout("staged-over-git");
-    fs::write(repo.join("client/.snap-version"), "0+git.fromsnap\n").unwrap();
+    fs::write(repo.join("client/.version"), "0+git.fromsnap\n").unwrap();
 
     assert_eq!(
         resolve(&repo.join("client"), "0.1.0").version,
@@ -83,7 +83,7 @@ fn the_staged_version_wins_over_the_checkout() {
 }
 
 #[test]
-fn a_checkout_reports_the_snap_version_of_head() {
+fn a_checkout_reports_the_version_of_head() {
     let (repo, sha) = checkout("git");
 
     let resolved = resolve(&repo.join("client"), "0.1.0");

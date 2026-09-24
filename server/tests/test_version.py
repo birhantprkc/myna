@@ -1,10 +1,8 @@
-"""``dev/snap-version.sh``: the version a snap built from a checkout adopts.
+"""``dev/version.sh``: the version of everything built from a checkout.
 
-Snap build instances mount only the snap directory, so snapcraft's
-``version: git`` has no repository to describe. The script resolves the same
-string on the host: ``0+git.<sha>`` with no annotated tag behind HEAD,
-``<tag>+git<n>.<sha>`` past one, the bare tag on it, and ``-dirty`` when the
-paths the snap packs differ from HEAD (never, given no paths).
+``0+git.<sha>`` with no annotated tag behind HEAD, ``<X.Y.Z>+git<n>.<sha>``
+past a ``v<X.Y.Z>`` tag, the bare ``X.Y.Z`` on it, and ``-dirty`` when the
+paths a build packs differ from HEAD (never, given no paths).
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ import pytest
 
 pytestmark = pytest.mark.repo_tree
 
-SCRIPT = Path(__file__).resolve().parents[2] / "dev" / "snap-version.sh"
+SCRIPT = Path(__file__).resolve().parents[2] / "dev" / "version.sh"
 
 GIT_ENV = {
     **os.environ,
@@ -48,14 +46,14 @@ def _commit(repo: Path, path: str, content: str) -> str:
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     (tmp_path / "dev").mkdir()
-    shutil.copy2(SCRIPT, tmp_path / "dev" / "snap-version.sh")
+    shutil.copy2(SCRIPT, tmp_path / "dev" / "version.sh")
     _git(tmp_path, "init", "-q")
     return tmp_path
 
 
 def _version(repo: Path, *paths: str) -> str:
     return subprocess.run(
-        [str(repo / "dev" / "snap-version.sh"), *paths],
+        [str(repo / "dev" / "version.sh"), *paths],
         cwd="/",
         env=GIT_ENV,
         check=True,
@@ -78,7 +76,7 @@ def test_lightweight_tags_are_ignored(repo: Path) -> None:
 def test_on_an_annotated_tag_is_the_tag(repo: Path) -> None:
     _commit(repo, "client/a", "1")
     _git(repo, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
-    assert _version(repo, "client") == "v0.1.0"
+    assert _version(repo, "client") == "0.1.0"
 
 
 def test_past_an_annotated_tag_counts_commits(repo: Path) -> None:
@@ -86,7 +84,7 @@ def test_past_an_annotated_tag_counts_commits(repo: Path) -> None:
     _git(repo, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
     _commit(repo, "client/a", "2")
     sha = _commit(repo, "client/a", "3")
-    assert _version(repo, "client") == f"v0.1.0+git2.{sha}"
+    assert _version(repo, "client") == f"0.1.0+git2.{sha}"
 
 
 def test_dirty_only_for_the_packed_paths(repo: Path) -> None:

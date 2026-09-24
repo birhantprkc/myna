@@ -13,6 +13,6 @@ rsync -a --delete \
     --exclude target \
     "$repo_root/client/" "$snap_dir/client/"
 
-"$repo_root/dev/snap-version.sh" client myna-snap >"$snap_dir/client/.snap-version"
+"$repo_root/dev/version.sh" client myna-snap >"$snap_dir/client/.version"
 
-echo "staged $repo_root/client → $snap_dir/client ($(cat "$snap_dir/client/.snap-version"))"
+echo "staged $repo_root/client → $snap_dir/client ($(cat "$snap_dir/client/.version"))"

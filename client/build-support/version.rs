@@ -1,5 +1,5 @@
-// The version the client binaries report: the one the snap they ship in
-// carries (dev/snap-version.sh). Included by the build scripts that emit it as
+// The version the client binaries report: the one the package they ship in
+// carries (dev/version.sh). Included by the build scripts that emit it as
 // MYNA_VERSION.
 
 use std::path::{Path, PathBuf};
@@ -14,8 +14,8 @@ pub struct Resolved {
 
 // `workspace` is the Cargo workspace root, `fallback` the Cargo version.
 pub fn resolve(workspace: &Path, fallback: &str) -> Resolved {
-    // A snap build instance has no .git, so dev/prepare.sh stages the version.
-    let staged = workspace.join(".snap-version");
+    // A snap build instance has no .git, so the packaging stages the version.
+    let staged = workspace.join(".version");
     if let Ok(version) = std::fs::read_to_string(&staged) {
         return Resolved {
             version: version.trim().to_owned(),
@@ -31,7 +31,7 @@ pub fn resolve(workspace: &Path, fallback: &str) -> Resolved {
 // Only HEAD and the refs are watched, so -dirty is never reported: watching
 // the working tree would rebuild on every edit.
 fn from_checkout(workspace: &Path) -> Option<Resolved> {
-    let script = workspace.join("../dev/snap-version.sh");
+    let script = workspace.join("../dev/version.sh");
     let version = stdout(&mut Command::new(&script))?;
     let mut watch = vec![script];
     for name in ["HEAD", "packed-refs", "refs/heads", "refs/tags"] {

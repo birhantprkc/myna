@@ -22,8 +22,8 @@ snap logs -n5 myna-whisper.server
 sudo snap set system experimental.user-daemons=true
 
 # 2. Build + install this snap. The version comes from git, as snapcraft's
-#    `version: git` would give it: 0+git.<sha>, -dirty for uncommitted changes
-#    (dev/snap-version.sh).
+#    `version: git` would give it, less the tag's v: 0+git.<sha>, -dirty for
+#    uncommitted changes (dev/version.sh).
 ./dev/prepare.sh && snapcraft pack
 sudo snap install --dangerous ./myna_*.snap
 
