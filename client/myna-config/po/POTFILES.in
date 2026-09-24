@@ -19,3 +19,4 @@ src/onboarding_ui.rs
 src/diagnostics.rs
 src/myna_settings.rs
 ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml
+data/com.canonical.Myna.Config.metainfo.xml

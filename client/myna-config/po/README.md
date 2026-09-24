@@ -1,8 +1,8 @@
 # myna-config translations
 
 User-visible strings use the `myna-config` gettext domain: `gettext()` in
-Rust, `_()` in Blueprint, and the `<summary>` elements of the shared GSettings
-schema. Regenerate the template with `make i18n` from the repository root
+Rust, `_()` in Blueprint, the `<summary>` elements of the shared GSettings
+schema, and the AppStream metainfo's name, summary and description. Regenerate the template with `make i18n` from the repository root
 (`dev/i18n.sh` lists the crate); `make check` fails while the committed
 template is stale.
 

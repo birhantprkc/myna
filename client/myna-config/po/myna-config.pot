@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-23 23:25+0100\n"
+"POT-Creation-Date: 2026-09-24 10:25+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,7 +46,7 @@ msgstr ""
 msgid "Revert"
 msgstr ""
 
-#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:866
+#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:859
 msgid "About and Diagnostics"
 msgstr ""
 
@@ -103,6 +103,7 @@ msgid "Read-only privacy-safe diagnostic text."
 msgstr ""
 
 #: data/main-window.blp:7 src/app.rs:149 src/diagnostics.rs:458
+#: data/com.canonical.Myna.Config.metainfo.xml:8
 msgid "Myna Settings"
 msgstr ""
 
@@ -114,7 +115,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:37 data/myna-page.blp:16 src/app.rs:861
+#: data/main-window.blp:37 data/myna-page.blp:16 src/app.rs:854
 msgid "Backend"
 msgstr ""
 
@@ -127,7 +128,7 @@ msgid "_About Myna Settings"
 msgstr ""
 
 #: data/myna-page.blp:5 data/myna-page.blp:8 data/status-page.blp:5
-#: src/onboarding_ui.rs:491
+#: src/onboarding_ui.rs:492
 msgid "Myna"
 msgstr ""
 
@@ -152,7 +153,7 @@ msgid "Keyboard Shortcut"
 msgstr ""
 
 #: data/myna-page.blp:36 data/myna-page.blp:54 data/onboarding-window.blp:7
-#: src/onboarding_ui.rs:483
+#: src/onboarding_ui.rs:484
 msgid "Dictation"
 msgstr ""
 
@@ -160,11 +161,11 @@ msgstr ""
 msgid "Set Up Shortcut"
 msgstr ""
 
-#: data/onboarding-components.blp:16 src/onboarding_ui.rs:484
+#: data/onboarding-components.blp:16 src/onboarding_ui.rs:485
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:26 src/onboarding_ui.rs:310
+#: data/onboarding-components.blp:26 src/onboarding_ui.rs:311
 msgid "You need to install some components for Dictation to work."
 msgstr ""
 
@@ -172,7 +173,7 @@ msgstr ""
 msgid "Components to install"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:16 src/onboarding_ui.rs:485
+#: data/onboarding-shortcut.blp:16 src/onboarding_ui.rs:486
 msgid "How to dictate"
 msgstr ""
 
@@ -192,7 +193,7 @@ msgstr ""
 msgid "Begin setting dictation up on this computer."
 msgstr ""
 
-#: data/onboarding-window.blp:21 src/onboarding_ui.rs:281
+#: data/onboarding-window.blp:21 src/onboarding_ui.rs:282
 msgid "Next"
 msgstr ""
 
@@ -208,7 +209,7 @@ msgstr ""
 msgid "Full details are shown below. You can copy them to share with support."
 msgstr ""
 
-#: data/operation-error-dialog.blp:11 src/onboarding_ui.rs:389
+#: data/operation-error-dialog.blp:11 src/onboarding_ui.rs:390
 msgid "Close"
 msgstr ""
 
@@ -220,35 +221,35 @@ msgstr ""
 msgid "Copy the full failure details to the clipboard"
 msgstr ""
 
-#: data/status-page.blp:12 src/app.rs:856 src/app.rs:1683
+#: data/status-page.blp:12 src/app.rs:849 src/app.rs:1683
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:13 src/app.rs:857 src/app.rs:1684
+#: data/status-page.blp:13 src/app.rs:850 src/app.rs:1684
 msgid "Reading the installed settings schema…"
 msgstr ""
 
-#: src/app.rs:156
+#: src/app.rs:157
 msgid "translator-credits"
 msgstr ""
 
-#: src/app.rs:450 src/onboarding_ui.rs:349
+#: src/app.rs:443 src/onboarding_ui.rs:350
 msgid "Copy Command"
 msgstr ""
 
-#: src/app.rs:477 src/onboarding_ui.rs:338
+#: src/app.rs:470 src/onboarding_ui.rs:339
 msgid "Install"
 msgstr ""
 
-#: src/app.rs:486 src/onboarding_ui.rs:358
+#: src/app.rs:479 src/onboarding_ui.rs:359
 msgid "How to install"
 msgstr ""
 
-#: src/app.rs:862
+#: src/app.rs:855
 msgid "Backend details will appear after discovery."
 msgstr ""
 
-#: src/app.rs:867
+#: src/app.rs:860
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
@@ -553,7 +554,7 @@ msgstr ""
 msgid "Copy and run in a terminal"
 msgstr ""
 
-#: src/backend_ui.rs:1353 src/backend_ui.rs:1356 src/onboarding_ui.rs:332
+#: src/backend_ui.rs:1353 src/backend_ui.rs:1356 src/onboarding_ui.rs:333
 msgid "Copy install command"
 msgstr ""
 
@@ -879,53 +880,53 @@ msgstr ""
 msgid "previous switch is unresolved"
 msgstr ""
 
-#: src/onboarding_ui.rs:240
+#: src/onboarding_ui.rs:241
 msgid "Could not set up dictation"
 msgstr ""
 
-#: src/onboarding_ui.rs:283
+#: src/onboarding_ui.rs:284
 msgid "Done"
 msgstr ""
 
-#: src/onboarding_ui.rs:303
+#: src/onboarding_ui.rs:304
 msgid "Everything Dictation needs is installed."
 msgstr ""
 
-#: src/onboarding_ui.rs:384
+#: src/onboarding_ui.rs:385
 msgid "Install the shell extension"
 msgstr ""
 
-#: src/onboarding_ui.rs:386
+#: src/onboarding_ui.rs:387
 msgid ""
 "The extension is not published in a store yet. Copy it into the extensions "
 "directory and enable it, then log out and back in."
 msgstr ""
 
-#: src/onboarding_ui.rs:390
+#: src/onboarding_ui.rs:391
 msgid "Copy command"
 msgstr ""
 
-#: src/onboarding_ui.rs:419
+#: src/onboarding_ui.rs:420
 msgid "Command copied. Paste it into a terminal."
 msgstr ""
 
-#: src/onboarding_ui.rs:492
+#: src/onboarding_ui.rs:493
 msgid "Recommended speech-to-text model"
 msgstr ""
 
-#: src/onboarding_ui.rs:493
+#: src/onboarding_ui.rs:494
 msgid "Shell extension"
 msgstr ""
 
-#: src/onboarding_ui.rs:499
+#: src/onboarding_ui.rs:500
 msgid "The dictation client itself"
 msgstr ""
 
-#: src/onboarding_ui.rs:502
+#: src/onboarding_ui.rs:503
 msgid "Parakeet · {size} MB"
 msgstr ""
 
-#: src/onboarding_ui.rs:506
+#: src/onboarding_ui.rs:507
 msgid "Needed to show dictation status in the desktop"
 msgstr ""
 
@@ -1230,4 +1231,15 @@ msgid ""
 "With tap-to-start activation, end the dictation session on its own after "
 "this many seconds without speech. 0 keeps it running until the next tap. "
 "Hold-to-talk always ends with the key."
+msgstr ""
+
+#: data/com.canonical.Myna.Config.metainfo.xml:9
+msgid "Set up and configure local dictation"
+msgstr ""
+
+#: data/com.canonical.Myna.Config.metainfo.xml:14
+msgid ""
+"Myna turns speech into text on your computer, with no audio or text leaving "
+"it. Myna Settings guides you through installing it and a speech model, then "
+"configures dictation and its speech backends."
 msgstr ""
