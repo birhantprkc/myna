@@ -22,14 +22,11 @@
 //! unpackaged build on a box where `make install-schema` was never run) reads
 //! defaults, exactly as a missing file did.
 //!
-//! Two layers, deliberately separated:
-//!
-//! - [`resolve_mode`] is pure - table, model, hardware in, mode out - and is
-//!   where the gate semantics are pinned by unit tests.
-//! - [`effective_mode`] is the host-side wrapper every *binary* should call:
-//!   it finds the shipped baseline ([`tier_table`]), fingerprints the machine
-//!   ([`hardware_tier`]), and resolves without needing a server connection.
-//!   One implementation, so the CLI and the desktop daemon cannot drift.
+//! [`effective_mode`] is the resolver every binary calls: it finds the
+//! shipped baseline ([`tier_table`]), fingerprints the machine
+//! ([`hardware_tier`]), and resolves without needing a server connection.
+//! One implementation, so the CLI and the desktop daemon cannot drift. The
+//! gate semantics are pinned by the unit tests in [`crate::tier`].
 
 use std::path::PathBuf;
 
@@ -321,29 +318,6 @@ fn mode_from_nick(nick: &str) -> Option<StreamingMode> {
     }
 }
 
-/// Resolve the user's mode preference against the tier gate (FR-002/FR-003):
-/// - `Streaming` → always streaming (user accepted potential latency)
-/// - `Batch` → always batch
-/// - `Auto` → streaming iff [`crate::streaming_viable`] says the model×hardware
-///   tier sustains it; otherwise batch (and unmeasured tiers → batch, T044)
-pub fn resolve_mode(
-    preference: StreamingMode,
-    table: &crate::TierTable,
-    model: &str,
-    hardware: &str,
-) -> StreamingMode {
-    match preference {
-        StreamingMode::Streaming | StreamingMode::Batch => preference,
-        StreamingMode::Auto => {
-            if crate::streaming_viable(table, model, hardware, crate::DEFAULT_RTF_THRESHOLD) {
-                StreamingMode::Streaming
-            } else {
-                StreamingMode::Batch
-            }
-        }
-    }
-}
-
 /// Coarse hardware fingerprint used as the tier table's `hardware` key.
 ///
 /// Deliberately coarse: the lab pins a machine with `MYNA_HARDWARE_TIER` when
@@ -410,7 +384,6 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::{TierAssessment, TierTable};
 
     /// The enum nicks in the schema. Kept next to their parser so the two
     /// cannot drift, and deliberately not derived from the serde names: the
@@ -424,66 +397,14 @@ mod tests {
         }
     }
 
-    fn table() -> TierTable {
-        TierTable {
-            assessments: vec![TierAssessment {
-                model: "whisper-tiny".into(),
-                hardware: "x86_64-cpu-generic".into(),
-                rtf: 1.08,
-                strategy: "batch".into(),
-                measured_at: "2026-07-27T00:00:00Z".into(),
-            }],
-        }
-    }
-
-    /// T045: the user override beats the tier gate, in both directions.
+    /// T045: an explicit choice bypasses the tier gate, in both directions.
     #[test]
-    fn forced_streaming_overrides_a_failing_gate() {
-        // RTF 1.08 would gate to batch under Auto, but the user forced it.
+    fn explicit_modes_bypass_the_gate() {
         assert_eq!(
-            resolve_mode(
-                StreamingMode::Streaming,
-                &table(),
-                "whisper-tiny",
-                "x86_64-cpu-generic"
-            ),
+            effective_mode(StreamingMode::Streaming),
             StreamingMode::Streaming
         );
-    }
-
-    #[test]
-    fn forced_batch_overrides_a_passing_gate() {
-        let t = TierTable {
-            assessments: vec![TierAssessment {
-                model: "parakeet-tdt".into(),
-                hardware: "gpu".into(),
-                rtf: 0.2,
-                strategy: "streaming".into(),
-                measured_at: "2026-07-27T00:00:00Z".into(),
-            }],
-        };
-        assert_eq!(
-            resolve_mode(StreamingMode::Batch, &t, "parakeet-tdt", "gpu"),
-            StreamingMode::Batch
-        );
-    }
-
-    #[test]
-    fn auto_resolves_through_the_gate() {
-        let t = table();
-        assert_eq!(
-            resolve_mode(
-                StreamingMode::Auto,
-                &t,
-                "whisper-tiny",
-                "x86_64-cpu-generic"
-            ),
-            StreamingMode::Batch
-        );
-        assert_eq!(
-            resolve_mode(StreamingMode::Auto, &t, "whisper-tiny", "unmeasured-hw"),
-            StreamingMode::Batch
-        );
+        assert_eq!(effective_mode(StreamingMode::Batch), StreamingMode::Batch);
     }
 
     fn test_schema() -> gio::SettingsSchema {
