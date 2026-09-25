@@ -4,12 +4,16 @@ using Adw 1;
 template $ShortcutDialog: Adw.Dialog {
   title: _("Set Shortcut");
   content-width: 400;
+  // libadwaita 1.5 focuses nothing in a dialog without a focusable child,
+  // and key events only reach the focused widget's ancestors.
+  focus-widget: capture;
 
   child: Adw.ToolbarView {
     [top]
     Adw.HeaderBar {}
 
-    content: Gtk.Box {
+    content: Gtk.Box capture {
+      focusable: true;
       orientation: vertical;
       spacing: 12;
       margin-start: 24;

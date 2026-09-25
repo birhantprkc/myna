@@ -1273,6 +1273,14 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             eprintln!("Change Shortcut opened no capture dialog");
             return glib::ExitCode::FAILURE;
         };
+        // Key events travel only to the focused widget and its ancestors.
+        if !settles(&|| {
+            gtk::prelude::GtkWindowExt::focus(&window)
+                .is_some_and(|focus| focus.is_ancestor(&dialog))
+        }) {
+            eprintln!("the capture dialog does not hold keyboard focus");
+            return glib::ExitCode::FAILURE;
+        }
         dialog.press(
             gtk::gdk::Key::d,
             gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK,
