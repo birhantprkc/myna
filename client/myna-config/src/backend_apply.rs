@@ -15,26 +15,16 @@ const READINESS_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidationIssue {
-    key: String,
     title: String,
     message: String,
 }
 
 impl ValidationIssue {
-    pub fn new(
-        key: impl Into<String>,
-        title: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn new(title: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            key: key.into(),
             title: title.into(),
             message: message.into(),
         }
-    }
-
-    pub fn key(&self) -> &str {
-        &self.key
     }
 
     pub fn title(&self) -> &str {
@@ -113,15 +103,12 @@ impl ApplyPreview {
                     }
                     _ => issues.push(ValidationIssue::new(
                         change.key(),
-                        change.key(),
                         "selector value must be text",
                     )),
                 },
                 _ => match serialize_assignment(change.key(), change.proposed()) {
                     Ok(argument) => assignments.push(argument),
-                    Err(message) => {
-                        issues.push(ValidationIssue::new(change.key(), change.key(), message))
-                    }
+                    Err(message) => issues.push(ValidationIssue::new(change.key(), message)),
                 },
             }
         }
@@ -129,7 +116,6 @@ impl ApplyPreview {
         if modelctl_app.is_none() {
             for change in &changes {
                 issues.push(ValidationIssue::new(
-                    change.key(),
                     change.key(),
                     "the backend modelctl app could not be resolved",
                 ));
@@ -283,15 +269,10 @@ pub enum ApplyFailure {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ApplySuccess {
-    commands: Vec<CommandResult>,
     snapshot: BackendSnapshot,
 }
 
 impl ApplySuccess {
-    pub fn commands(&self) -> &[CommandResult] {
-        &self.commands
-    }
-
     pub fn snapshot(&self) -> &BackendSnapshot {
         &self.snapshot
     }
@@ -305,11 +286,7 @@ pub fn prepare_backend_apply(page: &BackendPage) -> Result<ApplyPreview, Prepare
     for row in page.rows().iter().filter(|row| row.dirty()) {
         let metadata = row.presentation().metadata();
         if let Err(message) = metadata.validation().validate(row.effective_value()) {
-            issues.push(ValidationIssue::new(
-                row.presentation().key(),
-                metadata.title(),
-                message,
-            ));
+            issues.push(ValidationIssue::new(metadata.title(), message));
             continue;
         }
 
@@ -320,11 +297,7 @@ pub fn prepare_backend_apply(page: &BackendPage) -> Result<ApplyPreview, Prepare
             row.effective_value().clone(),
         ) {
             Ok(change) => changes.push(change),
-            Err(error) => issues.push(ValidationIssue::new(
-                row.presentation().key(),
-                metadata.title(),
-                error.message(),
-            )),
+            Err(error) => issues.push(ValidationIssue::new(metadata.title(), error.message())),
         }
     }
 
@@ -475,7 +448,7 @@ pub async fn execute_backend_apply(
         });
     }
 
-    Ok(ApplySuccess { commands, snapshot })
+    Ok(ApplySuccess { snapshot })
 }
 
 fn validate_backend_identity(
@@ -484,7 +457,6 @@ fn validate_backend_identity(
 ) -> Vec<ValidationIssue> {
     if restart_impact.requires_readiness() && backend.snap_name().trim().is_empty() {
         vec![ValidationIssue::new(
-            "_backend",
             "Backend",
             "an explicit backend restart command could not be built",
         )]
@@ -1249,7 +1221,6 @@ mod tests {
         match error {
             PrepareApplyError::Invalid(issues) => {
                 assert_eq!(issues.len(), 1);
-                assert_eq!(issues[0].key(), "sleep-idle-seconds");
             }
             other => panic!("expected validation error, got {other:?}"),
         }
