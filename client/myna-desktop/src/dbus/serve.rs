@@ -128,13 +128,8 @@ impl ClientRegistry {
         self.has_clients.load(Ordering::SeqCst)
     }
 
-    // Whether no clients are currently registered.
-    pub fn is_empty(&self) -> bool {
-        !self.has_clients()
-    }
-
     /// Number of registered clients.
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.clients.lock().expect("client registry poisoned").len()
     }
 }
@@ -331,12 +326,6 @@ pub struct ZbusBus {
     lost: tokio::sync::watch::Sender<bool>,
 }
 
-impl std::fmt::Debug for ZbusBus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ZbusBus").field("name", &BUS_NAME).finish()
-    }
-}
-
 impl ZbusBus {
     /// Connect to the session bus, serve `/com/canonical/Myna/Dictation`, and take the
     /// well-known name (C1). [`ServeError::Bus`] means the bus is unreachable
@@ -478,20 +467,9 @@ impl ZbusBus {
         }
     }
 
-    /// Whether any HUD client is currently registered.
-    pub fn has_clients(&self) -> bool {
-        self.clients.has_clients()
-    }
-
     /// The shared client registry, for the dynamic notification fallback.
     pub fn client_registry(&self) -> Arc<ClientRegistry> {
         Arc::clone(&self.clients)
-    }
-
-    /// The connection, for components that need it (the method-serving
-    /// `DbusTrigger` wiring in US4).
-    pub fn connection(&self) -> &Connection {
-        &self.conn
     }
 }
 
