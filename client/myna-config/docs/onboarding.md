@@ -94,6 +94,13 @@ is shown verbatim. Change Shortcut opens `gnome-control-center applications
 myna_myna`, where GNOME rebinds portal shortcuts: GlobalShortcuts version 1 has
 no `ConfigureShortcuts`, and the portal has no unbind.
 
+Where the portal has no GlobalShortcuts (Noble), the daemon publishes
+`Activation` as `control` and listens on its control socket. The key is then a
+GNOME custom shortcut to `/snap/bin/myna.toggle`, the entry
+`myna.install-shortcut` writes. Set Up Shortcut installs it with Super+J, the
+application being unconfined, and Change Shortcut opens Settings' Keyboard
+panel.
+
 ## Cost
 
 The startup assessment is the same two subprocesses as a `RefreshReason::Startup`

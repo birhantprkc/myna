@@ -106,6 +106,11 @@ fn scratch_store(tag: &str) -> (PathBuf, PathBuf) {
         schemas.join("com.canonical.Myna.Dictation.gschema.xml"),
     )
     .expect("stage schema");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/media-keys.gschema.xml"),
+        schemas.join("media-keys.gschema.xml"),
+    )
+    .expect("stage media-keys schema");
     assert!(Command::new("glib-compile-schemas")
         .arg(&schemas)
         .status()
@@ -213,6 +218,44 @@ fn the_shortcut_row_binds_through_the_daemon_and_shows_the_key() {
         "shortcut-bound: Super+J",
     ] {
         assert!(stdout.contains(line), "shortcut probe missing: {line}");
+    }
+}
+
+/// Where the portal has no GlobalShortcuts, set-up installs the desktop shortcut
+/// itself rather than asking the daemon, and renders it.
+#[test]
+fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
+    if std::env::var_os("MYNA_CONFIG_GTK_TESTS").is_none() {
+        eprintln!("skipped: set MYNA_CONFIG_GTK_TESTS=1 under Xvfb");
+        return;
+    }
+
+    let (store, schemas) = scratch_store("shortcut-control");
+    let output = Command::new("dbus-run-session")
+        .arg("--")
+        .arg(env!("CARGO_BIN_EXE_myna-config"))
+        .env("GSETTINGS_BACKEND", "memory")
+        .env("GSETTINGS_SCHEMA_DIR", &schemas)
+        .env("XDG_CONFIG_HOME", &store)
+        .env("GDK_DEBUG", "no-portals")
+        .env("MYNA_CONFIG_SHORTCUT_CONTROL_TEST", "1")
+        .output()
+        .expect("run the control shortcut probe under dbus-run-session");
+    std::fs::remove_dir_all(&store).ok();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "control shortcut probe failed: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in [
+        "shortcut-unbound: offered set-up",
+        "shortcut-bound: Super+J",
+    ] {
+        assert!(
+            stdout.contains(line),
+            "control shortcut probe missing: {line}"
+        );
     }
 }
 

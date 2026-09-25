@@ -3,7 +3,8 @@
 //!
 //! State comes from a live proxy on `com.canonical.Myna.Dictation`, so a daemon
 //! starting, a key bound, or a rebind in the desktop's settings shows up
-//! without a refresh.
+//! without a refresh. Under control activation the key is the desktop custom
+//! shortcut, watched the same way.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -13,21 +14,27 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
+use crate::adapters::desktop_shortcut::DesktopShortcut;
 use crate::onboarding::MYNA_SNAP;
-use crate::shortcut::{accelerators, ShortcutState};
+use crate::shortcut::{accelerators, ShortcutPath, ShortcutState, DEFAULT_ACCELERATOR};
 
 const DICTATION_BUS: &str = "com.canonical.Myna.Dictation";
 const DICTATION_PATH: &str = "/com/canonical/Myna/Dictation";
 /// The daemon waits up to 120 s for the portal's dialog; the call outlives it.
 const BIND_TIMEOUT_MS: i32 = 150_000;
 
+/// Sets a surface's own text for a state.
+type Describe = Box<dyn Fn(&ShortcutState, ShortcutPath)>;
+
 pub struct ShortcutControl {
     keys: gtk::Box,
     button: gtk::Button,
     overlay: adw::ToastOverlay,
     compact: bool,
-    describe: Box<dyn Fn(&ShortcutState)>,
+    describe: Describe,
     proxy: RefCell<Option<gio::DBusProxy>>,
+    desktop: Option<DesktopShortcut>,
+    path: Cell<ShortcutPath>,
     state: RefCell<ShortcutState>,
     busy: Cell<bool>,
 }
@@ -41,7 +48,7 @@ impl ShortcutControl {
         button: gtk::Button,
         overlay: adw::ToastOverlay,
         compact: bool,
-        describe: Box<dyn Fn(&ShortcutState)>,
+        describe: Describe,
     ) {
         let control = Rc::new(Self {
             keys,
@@ -50,10 +57,20 @@ impl ShortcutControl {
             compact,
             describe,
             proxy: RefCell::new(None),
+            desktop: DesktopShortcut::open(),
+            path: Cell::new(ShortcutPath::Portal),
             state: RefCell::new(ShortcutState::NotRunning),
             busy: Cell::new(false),
         });
         control.render();
+        if let Some(desktop) = &control.desktop {
+            let weak = Rc::downgrade(&control);
+            desktop.connect_changed(move || {
+                if let Some(control) = weak.upgrade() {
+                    control.refresh();
+                }
+            });
+        }
         button.connect_clicked({
             let control = control.clone();
             move |_| control.activate()
@@ -93,22 +110,38 @@ impl ShortcutControl {
     }
 
     fn refresh(&self) {
-        let state = match self.proxy.borrow().as_ref() {
-            None => ShortcutState::NotRunning,
-            Some(proxy) => {
-                let shortcut = proxy
-                    .cached_property("Shortcut")
-                    .and_then(|value| value.get::<String>());
-                ShortcutState::observe(proxy.name_owner().is_some(), shortcut.as_deref())
-            }
+        let property = |name: &str| {
+            self.proxy
+                .borrow()
+                .as_ref()
+                .and_then(|proxy| proxy.cached_property(name))
+                .and_then(|value| value.get::<String>())
         };
+        let owned = self
+            .proxy
+            .borrow()
+            .as_ref()
+            .is_some_and(|proxy| proxy.name_owner().is_some());
+        let path = ShortcutPath::from_activation(property("Activation").as_deref());
+        let state = match path {
+            ShortcutPath::Portal => ShortcutState::observe(owned, property("Shortcut").as_deref()),
+            ShortcutPath::Control => ShortcutState::observe_control(
+                owned,
+                self.desktop
+                    .as_ref()
+                    .and_then(DesktopShortcut::binding)
+                    .as_deref(),
+            ),
+        };
+        self.path.set(path);
         self.state.replace(state);
         self.render();
     }
 
     fn render(&self) {
         let state = self.state.borrow().clone();
-        (self.describe)(&state);
+        let path = self.path.get();
+        (self.describe)(&state, path);
 
         while let Some(child) = self.keys.first_child() {
             self.keys.remove(&child);
@@ -121,14 +154,24 @@ impl ShortcutControl {
             _ => self.keys.set_visible(false),
         }
 
-        let (label, help) = match state {
-            ShortcutState::Bound(_) | ShortcutState::Unpublished => (
+        let (label, help) = match (path, &state) {
+            (ShortcutPath::Control, ShortcutState::Bound(_)) => (
+                gettextrs::gettext("Change Shortcut"),
+                gettextrs::gettext(
+                    "Open the desktop's keyboard settings, where the dictation shortcut is changed.",
+                ),
+            ),
+            (ShortcutPath::Control, ShortcutState::Unbound | ShortcutState::NotRunning) => (
+                gettextrs::gettext("Set Up Shortcut"),
+                gettextrs::gettext("Add a keyboard shortcut for dictation to the desktop."),
+            ),
+            (_, ShortcutState::Bound(_) | ShortcutState::Unpublished) => (
                 gettextrs::gettext("Change Shortcut"),
                 gettextrs::gettext(
                     "Open Myna in the desktop's Apps settings, where the dictation shortcut is changed.",
                 ),
             ),
-            ShortcutState::Unbound | ShortcutState::NotRunning => (
+            (_, ShortcutState::Unbound | ShortcutState::NotRunning) => (
                 gettextrs::gettext("Set Up Shortcut"),
                 gettextrs::gettext(
                     "Open the desktop's dialog to confirm a keyboard shortcut for dictation.",
@@ -144,11 +187,35 @@ impl ShortcutControl {
 
     fn activate(self: &Rc<Self>) {
         let state = self.state.borrow().clone();
-        match state {
-            ShortcutState::NotRunning => {}
-            ShortcutState::Unbound => self.bind(),
-            ShortcutState::Bound(_) | ShortcutState::Unpublished => self.open_app_settings(),
+        match (self.path.get(), state) {
+            (_, ShortcutState::NotRunning) => {}
+            (ShortcutPath::Control, ShortcutState::Unbound) => self.install(),
+            (ShortcutPath::Control, _) => self.open_settings("keyboard"),
+            (ShortcutPath::Portal, ShortcutState::Unbound) => self.bind(),
+            (ShortcutPath::Portal, _) => {
+                self.open_settings(&format!("applications {MYNA_SNAP}_{MYNA_SNAP}"))
+            }
         }
+    }
+
+    /// Bind the default key to the snap's toggle app, which pokes the
+    /// daemon's control socket.
+    fn install(&self) {
+        let installed = self.desktop.as_ref().is_some_and(|desktop| {
+            desktop
+                .install(
+                    &gettextrs::gettext("Dictation"),
+                    &format!("/snap/bin/{MYNA_SNAP}.toggle"),
+                    DEFAULT_ACCELERATOR,
+                )
+                .is_ok()
+        });
+        if !installed {
+            self.overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
+                "Could not set up the shortcut",
+            )));
+        }
+        self.refresh();
     }
 
     /// Ask the daemon to bind. The portal keys a binding by the caller's app
@@ -194,9 +261,10 @@ impl ShortcutControl {
         });
     }
 
-    /// GNOME lists and rebinds portal shortcuts on the app's page under Apps.
-    fn open_app_settings(&self) {
-        let command = format!("gnome-control-center applications {MYNA_SNAP}_{MYNA_SNAP}");
+    /// GNOME rebinds portal shortcuts on the app's page under Apps, and
+    /// custom shortcuts under Keyboard.
+    fn open_settings(&self, panel: &str) {
+        let command = format!("gnome-control-center {panel}");
         let launched =
             gio::AppInfo::create_from_commandline(&command, None, gio::AppInfoCreateFlags::NONE)
                 .and_then(|app| app.launch(&[], gio::AppLaunchContext::NONE));
@@ -209,8 +277,11 @@ impl ShortcutControl {
 }
 
 /// The onboarding step's sentence for `state`.
-pub fn onboarding_description(state: &ShortcutState) -> String {
+pub fn onboarding_description(state: &ShortcutState, path: ShortcutPath) -> String {
     match state {
+        ShortcutState::Unbound if path == ShortcutPath::Control => {
+            gettextrs::gettext("Set up a keyboard shortcut to trigger Dictation.")
+        }
         ShortcutState::Bound(_) => {
             gettextrs::gettext("You can trigger Dictation anytime by using the keyboard shortcut:")
         }

@@ -27,6 +27,7 @@ const ACCESSIBILITY_ENV: &str = "MYNA_CONFIG_ACCESSIBILITY_TEST";
 const TYPING_ENV: &str = "MYNA_CONFIG_TYPING_TEST";
 const ONBOARDING_ENV: &str = "MYNA_CONFIG_ONBOARDING_TEST";
 const SHORTCUT_ENV: &str = "MYNA_CONFIG_SHORTCUT_TEST";
+const SHORTCUT_CONTROL_ENV: &str = "MYNA_CONFIG_SHORTCUT_CONTROL_TEST";
 const BACKENDS_ENV: &str = "MYNA_CONFIG_BACKENDS_TEST";
 /// The probes must never claim the real application id: registering it while a
 /// Myna Settings is already running takes the remote-instance path, and
@@ -91,7 +92,11 @@ pub fn run() -> glib::ExitCode {
     }
 
     if smoke_requested(std::env::var_os(SHORTCUT_ENV).as_deref()) {
-        return shortcut_probe();
+        return shortcut_probe(false);
+    }
+
+    if smoke_requested(std::env::var_os(SHORTCUT_CONTROL_ENV).as_deref()) {
+        return shortcut_probe(true);
     }
 
     if smoke_requested(std::env::var_os(BACKENDS_ENV).as_deref()) {
@@ -1060,12 +1065,14 @@ const PROBE_DICTATION_XML: &str = "<node>\
       <arg name='message' type='s' direction='out'/>\
     </method>\
     <property name='Shortcut' type='s' access='read'/>\
+    <property name='Activation' type='s' access='read'/>\
   </interface>\
 </node>";
 
 /// Drive the Myna page's shortcut row against a stand-in daemon on the session
-/// bus, which the caller makes private.
-fn shortcut_probe() -> glib::ExitCode {
+/// bus, which the caller makes private. Under `control` activation the daemon
+/// is never asked to bind: the row installs the desktop shortcut itself.
+fn shortcut_probe(control: bool) -> glib::ExitCode {
     use std::collections::HashMap;
 
     ui::register_resources();
@@ -1113,7 +1120,11 @@ fn shortcut_probe() -> glib::ExitCode {
         })
         .property({
             let shortcut = shortcut.clone();
-            move |_, _, _, _, _| shortcut.borrow().to_variant()
+            move |_, _, _, _, property| match property {
+                "Activation" if control => "control".to_variant(),
+                "Activation" => "portal".to_variant(),
+                _ => shortcut.borrow().to_variant(),
+            }
         })
         .build();
     let owned = connection.call_sync(
@@ -1203,9 +1214,10 @@ fn shortcut_probe() -> glib::ExitCode {
         eprintln!("expected Super+J key caps, got {:?}", caps());
         return glib::ExitCode::FAILURE;
     }
-    if asked.borrow().as_deref() != Some("") {
+    let expected_ask = if control { None } else { Some("") };
+    if asked.borrow().as_deref() != expected_ask {
         eprintln!(
-            "set-up asked for {:?}, not the daemon's default",
+            "set-up asked the daemon for {:?}, expected {expected_ask:?}",
             asked.borrow()
         );
         return glib::ExitCode::FAILURE;
@@ -1835,7 +1847,7 @@ fn ready_page(
         true,
         Box::new({
             let row = page.shortcut_row();
-            move |state| row.set_subtitle(&crate::shortcut_ui::row_subtitle(state))
+            move |state, _| row.set_subtitle(&crate::shortcut_ui::row_subtitle(state))
         }),
     );
     let group = page.settings_group();

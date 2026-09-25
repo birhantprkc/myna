@@ -144,8 +144,8 @@ impl OnboardingUi {
             false,
             Box::new({
                 let description = shortcut_page.description();
-                move |state| {
-                    description.set_label(&crate::shortcut_ui::onboarding_description(state))
+                move |state, path| {
+                    description.set_label(&crate::shortcut_ui::onboarding_description(state, path))
                 }
             }),
         );

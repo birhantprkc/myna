@@ -5,6 +5,9 @@
 //! portal has no GlobalShortcuts the daemon says `Activation` is `control`, and
 //! the key is a desktop custom shortcut instead.
 
+/// The key a desktop shortcut is installed with, the daemon's portal default.
+pub const DEFAULT_ACCELERATOR: &str = "<Super>j";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShortcutState {
     /// Nothing owns the daemon's bus name.
