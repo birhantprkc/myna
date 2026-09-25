@@ -34,11 +34,7 @@ pub struct NotifyIndicator {
 
 impl Default for NotifyIndicator {
     fn default() -> Self {
-        Self {
-            app_name: "Myna".to_string(),
-            id: None,
-            pending_hide: None,
-        }
+        Self::new()
     }
 }
 
