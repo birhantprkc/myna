@@ -332,7 +332,7 @@ fn read_only_rows_never_attempt_a_write() {
 }
 
 #[test]
-fn headless_smoke_build_maps_schema_metadata_to_widget_kinds() {
+fn widget_plans_map_schema_metadata_to_widget_kinds() {
     let unrestricted = ClientSettingMetadata::new(
         ClientSettingKey::new("unrelated").unwrap(),
         Some("Unrelated".into()),
