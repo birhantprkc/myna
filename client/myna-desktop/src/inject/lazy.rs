@@ -45,11 +45,6 @@ impl LazyInjector {
         }
     }
 
-    /// Whether a connection is currently held (tests / diagnostics).
-    pub fn is_connected(&self) -> bool {
-        self.inner.is_some()
-    }
-
     /// Drop the connection when the backend reported itself unreachable, so
     /// the next `acquire` reconnects. Other errors (a secure field, no
     /// target, a protocol failure) say nothing about the connection's health
@@ -167,7 +162,7 @@ mod tests {
     #[tokio::test]
     async fn construction_does_not_connect() {
         let (injector, attempts) = flaky(0);
-        assert!(!injector.is_connected());
+        assert!(!injector.inner.is_some());
         assert_eq!(attempts.load(Ordering::SeqCst), 0);
     }
 
@@ -182,10 +177,10 @@ mod tests {
             injector.acquire().await,
             Err(InjectError::Unavailable(_))
         ));
-        assert!(!injector.is_connected());
+        assert!(!injector.inner.is_some());
 
         injector.acquire().await.expect("second press connects");
-        assert!(injector.is_connected());
+        assert!(injector.inner.is_some());
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
@@ -248,7 +243,7 @@ mod tests {
             .acquire()
             .await
             .expect("reconnected and acquired in one press");
-        assert!(injector.is_connected());
+        assert!(injector.inner.is_some());
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
@@ -268,7 +263,10 @@ mod tests {
             Err(InjectError::Unavailable(_))
         ));
         assert_eq!(attempts.load(Ordering::SeqCst), 1, "reconnected once");
-        assert!(!injector.is_connected(), "and dropped the dead replacement");
+        assert!(
+            !injector.inner.is_some(),
+            "and dropped the dead replacement"
+        );
     }
 
     /// Without a held connection there is nothing stale to replace: a fresh
@@ -285,7 +283,7 @@ mod tests {
             Err(InjectError::Unavailable(_))
         ));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
-        assert!(!injector.is_connected());
+        assert!(!injector.inner.is_some());
     }
 
     /// A connection held across utterances is reused: re-registering the IBus
@@ -304,6 +302,6 @@ mod tests {
     async fn preedit_support_is_known_before_connecting() {
         let (injector, _) = flaky(0);
         assert!(injector.supports_preedit());
-        assert!(!injector.is_connected());
+        assert!(!injector.inner.is_some());
     }
 }
