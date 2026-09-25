@@ -118,3 +118,72 @@ fn a_desktop_without_the_schema_has_no_shortcut_to_manage() {
     let source = gio::SettingsSchemaSource::from_directory(&dir, None, false).unwrap();
     assert!(DesktopShortcut::open_with(&source, None).is_none());
 }
+
+#[test]
+fn a_key_the_desktop_uses_is_a_conflict_named_by_its_action() {
+    let (_dir, source) = schemas("conflict");
+    let backend = gio::functions::memory_settings_backend_new();
+    let shortcut = DesktopShortcut::open_with(&source, Some(&backend)).unwrap();
+    assert_eq!(
+        shortcut.conflict("<Mod4>L").map(|conflict| conflict.action),
+        Some("Lock screen".to_owned())
+    );
+    assert_eq!(
+        shortcut
+            .conflict("<Control><Alt>w")
+            .map(|conflict| conflict.action),
+        Some("Close window".to_owned())
+    );
+    assert!(shortcut.conflict("<Super>j").is_none());
+}
+
+#[test]
+fn another_custom_shortcut_is_a_conflict_but_ours_is_not() {
+    let (_dir, source) = schemas("custom-conflict");
+    let backend = gio::functions::memory_settings_backend_new();
+    let theirs = gio::Settings::new_full(
+        &source
+            .lookup(&format!("{MEDIA_KEYS}.custom-keybinding"), false)
+            .unwrap(),
+        Some(&backend),
+        Some(THEIRS),
+    );
+    theirs.set_string("name", "Terminal").unwrap();
+    theirs.set_string("binding", "<Super>t").unwrap();
+    list(&source, &backend)
+        .set_strv("custom-keybindings", [THEIRS])
+        .unwrap();
+    let shortcut = DesktopShortcut::open_with(&source, Some(&backend)).unwrap();
+    shortcut
+        .install("Dictation", "/snap/bin/myna.toggle", "<Super>j")
+        .unwrap();
+
+    assert_eq!(
+        shortcut
+            .conflict("<Super>t")
+            .map(|conflict| conflict.action),
+        Some("Terminal".to_owned())
+    );
+    assert!(shortcut.conflict("<Super>j").is_none());
+}
+
+#[test]
+fn releasing_a_conflict_removes_only_that_key() {
+    let (_dir, source) = schemas("release");
+    let backend = gio::functions::memory_settings_backend_new();
+    let shortcut = DesktopShortcut::open_with(&source, Some(&backend)).unwrap();
+    let conflict = shortcut.conflict("<Control><Alt>w").unwrap();
+
+    shortcut.release(&conflict).unwrap();
+
+    let wm = gio::Settings::new_full(
+        &source
+            .lookup("org.gnome.desktop.wm.keybindings", false)
+            .unwrap(),
+        Some(&backend),
+        None,
+    );
+    let close: Vec<String> = wm.strv("close").iter().map(|a| a.to_string()).collect();
+    assert_eq!(close, ["<Alt>F4"]);
+    assert!(shortcut.conflict("<Control><Alt>w").is_none());
+}

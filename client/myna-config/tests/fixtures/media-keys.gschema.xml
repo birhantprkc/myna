@@ -1,9 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- The keys Myna Settings touches, from gnome-settings-daemon's schema. -->
+<!-- The keys Myna Settings touches, from the desktop's keybinding schemas. -->
 <schemalist>
   <schema id="org.gnome.settings-daemon.plugins.media-keys" path="/org/gnome/settings-daemon/plugins/media-keys/">
     <key name="custom-keybindings" type="as">
       <default>[]</default>
+    </key>
+    <key name="screensaver" type="as">
+      <default>['&lt;Super&gt;l']</default>
+      <summary>Lock screen</summary>
+    </key>
+  </schema>
+  <schema id="org.gnome.desktop.wm.keybindings" path="/org/gnome/desktop/wm/keybindings/">
+    <key name="close" type="as">
+      <default>['&lt;Alt&gt;F4', '&lt;Primary&gt;&lt;Alt&gt;w']</default>
+      <summary>Close window</summary>
     </key>
   </schema>
   <schema id="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding">

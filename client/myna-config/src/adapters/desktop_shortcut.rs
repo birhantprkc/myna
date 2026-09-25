@@ -5,14 +5,37 @@
 use gio::glib;
 use gio::prelude::*;
 
+use crate::shortcut::same_accelerator;
+
 const MEDIA_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
 const CUSTOM_KEYBINDING: &str = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
 const LIST_KEY: &str = "custom-keybindings";
 const PATH: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/myna/";
+/// Where the desktop keeps the shortcuts it handles itself, as GNOME
+/// Settings' Keyboard panel lists them.
+const KEYBINDING_SCHEMAS: [&str; 5] = [
+    "org.gnome.desktop.wm.keybindings",
+    "org.gnome.mutter.keybindings",
+    "org.gnome.mutter.wayland.keybindings",
+    "org.gnome.shell.keybindings",
+    MEDIA_KEYS,
+];
 
 pub struct DesktopShortcut {
+    source: gio::SettingsSchemaSource,
+    backend: Option<gio::SettingsBackend>,
     list: gio::Settings,
     entry: gio::Settings,
+}
+
+/// A desktop shortcut already bound to the key being set.
+#[derive(Clone, Debug)]
+pub struct Conflict {
+    /// What the key does now, as the desktop describes it.
+    pub action: String,
+    settings: gio::Settings,
+    key: String,
+    binding: String,
 }
 
 impl DesktopShortcut {
@@ -28,6 +51,8 @@ impl DesktopShortcut {
         let list = source.lookup(MEDIA_KEYS, true)?;
         let entry = source.lookup(CUSTOM_KEYBINDING, true)?;
         Some(Self {
+            source: source.clone(),
+            backend: backend.cloned(),
             list: gio::Settings::new_full(&list, backend, None),
             entry: gio::Settings::new_full(&entry, backend, Some(PATH)),
         })
@@ -64,6 +89,70 @@ impl DesktopShortcut {
             let changed = changed.clone();
             settings.connect_changed(None, move |_, _| changed());
         }
+    }
+
+    /// The desktop shortcut, other than ours, that `binding` would clash with.
+    pub fn conflict(&self, binding: &str) -> Option<Conflict> {
+        self.desktop_conflict(binding)
+            .or_else(|| self.custom_conflict(binding))
+    }
+
+    /// Take `conflict`'s key away from the action that holds it.
+    pub fn release(&self, conflict: &Conflict) -> Result<(), glib::BoolError> {
+        let settings = &conflict.settings;
+        let key = conflict.key.as_str();
+        if key == "binding" {
+            return settings.set_string("binding", "");
+        }
+        let kept: Vec<String> = settings
+            .strv(key)
+            .iter()
+            .filter(|held| !same_accelerator(held, &conflict.binding))
+            .map(|held| held.to_string())
+            .collect();
+        settings.set_strv(key, kept)
+    }
+
+    fn desktop_conflict(&self, binding: &str) -> Option<Conflict> {
+        KEYBINDING_SCHEMAS.iter().find_map(|id| {
+            let schema = self.source.lookup(id, true)?;
+            let settings = gio::Settings::new_full(&schema, self.backend.as_ref(), None);
+            schema.list_keys().iter().find_map(|name| {
+                let key = schema.key(name);
+                if name == LIST_KEY || key.value_type().as_str() != "as" {
+                    return None;
+                }
+                settings
+                    .strv(name.as_str())
+                    .iter()
+                    .any(|held| same_accelerator(held, binding))
+                    .then(|| Conflict {
+                        action: key
+                            .summary()
+                            .map_or_else(|| name.to_string(), |summary| summary.to_string()),
+                        settings: settings.clone(),
+                        key: name.to_string(),
+                        binding: binding.to_owned(),
+                    })
+            })
+        })
+    }
+
+    fn custom_conflict(&self, binding: &str) -> Option<Conflict> {
+        let schema = self.source.lookup(CUSTOM_KEYBINDING, true)?;
+        self.list
+            .strv(LIST_KEY)
+            .iter()
+            .filter(|path| *path != PATH)
+            .find_map(|path| {
+                let entry = gio::Settings::new_full(&schema, self.backend.as_ref(), Some(path));
+                same_accelerator(&entry.string("binding"), binding).then(|| Conflict {
+                    action: entry.string("name").to_string(),
+                    settings: entry.clone(),
+                    key: "binding".to_owned(),
+                    binding: binding.to_owned(),
+                })
+            })
     }
 
     fn listed(&self) -> bool {
