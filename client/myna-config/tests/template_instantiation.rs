@@ -216,6 +216,7 @@ fn the_shortcut_row_binds_through_the_daemon_and_shows_the_key() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in [
         "shortcut-unbound: offered set-up",
+        "shortcut-refused: error dialog",
         "shortcut-bound: Super+J",
     ] {
         assert!(stdout.contains(line), "shortcut probe missing: {line}");

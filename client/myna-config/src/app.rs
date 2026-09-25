@@ -1106,12 +1106,21 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
     };
     let shortcut = Rc::new(RefCell::new(String::new()));
     let asked = Rc::new(RefCell::new(None::<String>));
+    // The first bind is refused, the way a portal without GlobalShortcuts does.
+    let refused = Rc::new(Cell::new(false));
     let registered = connection
         .register_object("/com/canonical/Myna/Dictation", &interface)
         .method_call({
             let shortcut = shortcut.clone();
             let asked = asked.clone();
+            let refused = refused.clone();
             move |connection, _, path, interface, _, parameters, invocation| {
+                if !refused.replace(true) {
+                    invocation.return_value(Some(
+                        &(false, "the portal offers no GlobalShortcuts").to_variant(),
+                    ));
+                    return;
+                }
                 asked.replace(parameters.get::<(String,)>().map(|(preferred,)| preferred));
                 shortcut.replace("Press <Super>j".to_owned());
                 let changed =
@@ -1215,6 +1224,18 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("shortcut-unbound: offered set-up");
+
+    if !control {
+        button.emit_clicked();
+        if !settles(&|| window.visible_dialog().is_some()) {
+            eprintln!("a refused bind showed no error dialog");
+            return glib::ExitCode::FAILURE;
+        }
+        if let Some(dialog) = window.visible_dialog() {
+            dialog.force_close();
+        }
+        println!("shortcut-refused: error dialog");
+    }
 
     button.emit_clicked();
     if !settles(&|| !caps().is_empty()) {

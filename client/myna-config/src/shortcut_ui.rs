@@ -252,10 +252,9 @@ impl ShortcutControl {
                 Err(error) => Some(error.message().to_owned()),
             };
             if let Some(detail) = failure {
-                control.overlay.add_toast(adw::Toast::new(&format!(
-                    "{}: {detail}",
-                    gettextrs::gettext("Could not set up the shortcut")
-                )));
+                let heading = gettextrs::gettext("Could not set up the shortcut");
+                crate::ui::OperationErrorDialog::new(&heading, &heading, &detail)
+                    .present(control.overlay.root().as_ref());
             }
             control.refresh();
         });
