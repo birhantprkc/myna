@@ -53,11 +53,6 @@ from myna.testbed.corpus import stamp_corpus
 
 RATE = 16_000
 BASE_URL = "https://www.openslr.org/resources/12"
-# The LibriSpeech splits worth sweeping. "clean" is well-recorded read speech;
-# "other" is the deliberately harder half (accented, noisier, lower-fidelity
-# recordings) - the pair papers report WER on, so numbers here are comparable
-# to published figures.
-SUBSETS = ("dev-clean", "dev-other", "test-clean", "test-other")
 LICENSE = "CC-BY-4.0"
 N_NOISE = 2
 
