@@ -187,7 +187,7 @@ impl ShortcutControl {
         let state = self.state.borrow().clone();
         match (self.path.get(), state) {
             (_, ShortcutState::NotRunning) => {}
-            (ShortcutPath::Control, ShortcutState::Unbound) => self.install(DEFAULT_ACCELERATOR),
+            (ShortcutPath::Control, ShortcutState::Unbound) => self.claim(DEFAULT_ACCELERATOR),
             (ShortcutPath::Control, _) => self.change(),
             (ShortcutPath::Portal, ShortcutState::Unbound) => self.bind(),
             (ShortcutPath::Portal, _) => {
@@ -202,10 +202,55 @@ impl ShortcutControl {
         let control = Rc::downgrade(self);
         dialog.connect_captured(move |accelerator| {
             if let Some(control) = control.upgrade() {
-                control.install(accelerator);
+                control.claim(accelerator);
             }
         });
         dialog.present(self.overlay.root().as_ref());
+    }
+
+    /// Install `accelerator`, first asking to take it from whatever desktop
+    /// shortcut holds it.
+    fn claim(self: &Rc<Self>, accelerator: &str) {
+        let Some(conflict) = self
+            .desktop
+            .as_ref()
+            .and_then(|desktop| desktop.conflict(accelerator))
+        else {
+            self.install(accelerator);
+            return;
+        };
+        let body = gettextrs::gettext(
+            "{keys} is already used for “{action}”. Replacing it removes it from there.",
+        )
+        .replace("{keys}", &key_label(accelerator))
+        .replace("{action}", &conflict.action);
+        let alert =
+            adw::AlertDialog::new(Some(&gettextrs::gettext("Replace Shortcut?")), Some(&body));
+        alert.add_response("cancel", &gettextrs::gettext("Cancel"));
+        alert.add_response("replace", &gettextrs::gettext("Replace"));
+        alert.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
+        alert.set_close_response("cancel");
+        let control = Rc::downgrade(self);
+        let accelerator = accelerator.to_owned();
+        alert.connect_response(None, move |_, response| {
+            let Some(control) = control.upgrade().filter(|_| response == "replace") else {
+                return;
+            };
+            let released = control
+                .desktop
+                .as_ref()
+                .is_some_and(|desktop| desktop.release(&conflict).is_ok());
+            if released {
+                control.install(&accelerator);
+            } else {
+                control
+                    .overlay
+                    .add_toast(adw::Toast::new(&gettextrs::gettext(
+                        "Could not set up the shortcut",
+                    )));
+            }
+        });
+        alert.present(self.overlay.root().as_ref());
     }
 
     /// Bind `accelerator` to the snap's toggle app, which pokes the daemon's
@@ -338,6 +383,11 @@ fn fill_keys(keys: &gtk::Box, description: &str, compact: bool) {
         }
         keys.append(&label);
     }
+}
+
+/// `accelerator` the way the key caps read, such as `Super+L`.
+fn key_label(accelerator: &str) -> String {
+    key_caps(accelerator).map_or_else(|| accelerator.to_owned(), |caps| caps.join("+"))
 }
 
 /// GTK's localized names for the modifiers and key of `accelerator`. The key's

@@ -1315,6 +1315,41 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             return glib::ExitCode::FAILURE;
         }
         println!("shortcut-special-key: Calculator");
+
+        // Super+L locks the screen: taking it asks first, then moves it.
+        button.emit_clicked();
+        settles(&|| window.visible_dialog().is_some());
+        let Some(dialog) = window
+            .visible_dialog()
+            .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
+        else {
+            eprintln!("Change Shortcut opened no capture dialog the third time");
+            return glib::ExitCode::FAILURE;
+        };
+        dialog.press(gtk::gdk::Key::l, gtk::gdk::ModifierType::SUPER_MASK);
+        settles(&|| {
+            window
+                .visible_dialog()
+                .is_some_and(|dialog| dialog.is::<adw::AlertDialog>())
+        });
+        let Some(alert) = window
+            .visible_dialog()
+            .and_then(|dialog| dialog.downcast::<adw::AlertDialog>().ok())
+        else {
+            eprintln!("taking Lock screen's key asked nothing");
+            return glib::ExitCode::FAILURE;
+        };
+        alert.emit_by_name::<()>("response", &[&"replace"]);
+        let desktop = crate::adapters::desktop_shortcut::DesktopShortcut::open();
+        let binding = desktop.as_ref().and_then(|desktop| desktop.binding());
+        let still_held = desktop
+            .as_ref()
+            .and_then(|desktop| desktop.conflict("<Super>l"));
+        if binding.as_deref() != Some("<Super>l") || still_held.is_some() {
+            eprintln!("replacing left binding {binding:?}, conflict {still_held:?}");
+            return glib::ExitCode::FAILURE;
+        }
+        println!("shortcut-replaced: Super+L");
     }
     glib::ExitCode::SUCCESS
 }

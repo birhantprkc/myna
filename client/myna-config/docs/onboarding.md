@@ -100,7 +100,11 @@ GNOME custom shortcut to `/snap/bin/myna.toggle`, the entry
 `myna.install-shortcut` writes. Set Up Shortcut installs it with Super+J, the
 application being unconfined, and Change Shortcut captures a new combination
 in a dialog. It must include Ctrl, Alt or Super, so a bare key cannot take over
-typing.
+typing, unless it is a function or media key. While the dialog is open it
+inhibits the desktop's shortcuts, as GNOME Settings does, so keys GNOME already
+uses reach it; GNOME asks once whether to allow that. A key already bound to a
+desktop action or another custom shortcut is taken only after the user agrees to
+replace it, which removes it from there.
 
 ## Cost
 
