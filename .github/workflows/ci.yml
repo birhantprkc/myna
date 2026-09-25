@@ -66,9 +66,8 @@ jobs:
 
   # The GNOME Shell extension, in its own workshop and so its own job: the
   # Shell version a test can reach comes from the workshop's base, and the
-  # extension targets a newer one than the core24 snap does. The pure GJS
-  # contract suites run first, then the HUD's presentation against a real
-  # headless Shell. See .workshop/myna-shell.yaml.
+  # extension targets a newer one than the core24 snap does. See
+  # .workshop/myna-shell.yaml.
   extension:
     runs-on: ubuntu-latest
     steps:
@@ -80,7 +79,7 @@ jobs:
         with:
           workshop: myna-shell
 
-      - name: Extension tests (gjs + headless Shell)
+      - name: Extension tests (gjs)
         run: make test-extension
 
   # Static GNOME extension review with shexli. This deliberately does not use

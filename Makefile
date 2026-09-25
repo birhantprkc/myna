@@ -164,7 +164,7 @@ test-noble: ## Myna Settings suites on Noble's GTK and libadwaita (workshop myna
 	$(WS_NOBLE) config-check
 
 .PHONY: test-extension
-test-extension: ## GNOME Shell extension suites, incl. the headless-Shell presentation check (workshop myna-shell: gjs-test)
+test-extension: ## GNOME Shell extension GJS contract suites (workshop myna-shell: gjs-test)
 	$(WS_SHELL) gjs-test
 
 .PHONY: test-extension-next

@@ -6,8 +6,7 @@
 // host's *composed logic* — the pure decisions the host wires together —
 // exactly as the host calls them, guarding against a resolve/place/respawn
 // contract drifting out from under host.js. The live Meta.WaylandClient path
-// is covered by the headless-Shell integration test (T125), which runs
-// inside a nested Shell.
+// is verified on hardware (T125/R28).
 //
 //     gjs -m test/host.test.js        (from extensions/myna-shell/)
 
