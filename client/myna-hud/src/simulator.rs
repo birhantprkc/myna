@@ -12,7 +12,6 @@
 //! `specs/004-gnome-shell-indicator/contracts/dbus-interface.md`, and that
 //! mapping is the whole content of this file.
 
-use crate::ribbon::RibbonPhase;
 use crate::states::{wire, Severity};
 use crate::vumeter::{DB_CEILING, DB_FLOOR};
 
@@ -79,34 +78,6 @@ pub fn wire_state(
         Some(state) => (state, default_status_message(state)),
         None => ("active", default_status_message("active")),
     }
-}
-
-/// What the consumer's own state → phase mapping
-/// ([`crate::hud_logic::ribbon_phase_for_state_key`]) does with each state
-/// that can be published — used to explain the round trip in the lab UI;
-/// the publisher itself never consults it.
-///
-/// The mapping is lossy in both directions: several states collapse onto
-/// `flow`, so a phase can move the lab's ribbon without moving the
-/// consumer's. Every current phase round-trips or is renderer-driven
-/// (`unfold`: the renderer plays the reveal itself when the pill appears,
-/// on its own clock).
-pub fn shell_phase(
-    phase: &str,
-    severity_tint: Option<Severity>,
-    session_active: bool,
-) -> Option<RibbonPhase> {
-    let (state, _) = wire_state(phase, severity_tint, session_active);
-    crate::hud_logic::ribbon_phase_for_state_key(match state {
-        wire::LOADING => crate::states::DictationState::Loading,
-        wire::RECORDING => crate::states::DictationState::Recording,
-        wire::TRANSCRIBING => crate::states::DictationState::Transcribing,
-        wire::FINALIZING => crate::states::DictationState::Finalizing,
-        wire::NOTICE => crate::states::DictationState::Notice,
-        wire::ERROR => crate::states::DictationState::Error,
-        wire::IDLE => crate::states::DictationState::Idle,
-        _ => crate::states::DictationState::Active,
-    })
 }
 
 /// The vumeter takes `max(rms, peak * 0.55)`, so any peak below

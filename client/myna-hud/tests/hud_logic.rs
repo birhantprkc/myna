@@ -6,8 +6,7 @@
 
 use myna_hud::hud_logic::{
     icon_for_severity, indicator_state, pill_color_class, pulse_position,
-    ribbon_phase_for_state_key, ribbon_visible_for_severity, severity_auto_dismisses,
-    should_replace_held_notice, smooth_level, PILL_COLOR_CLASSES,
+    ribbon_phase_for_state_key, ribbon_visible_for_severity, smooth_level, PILL_COLOR_CLASSES,
 };
 use myna_hud::ribbon::RibbonPhase;
 use myna_hud::states::{DictationState, Severity};
@@ -30,35 +29,6 @@ fn x19_icon_by_severity() {
         icon_for_severity(None),
         "audio-input-microphone-symbolic",
         "no severity (loading/recording/...) → plain mic"
-    );
-}
-
-// --- FR-007a/FR-007b: auto-dismiss behavior by severity --------------------
-// Only Recoverable (notice) auto-dismisses locally; Critical (error)
-// stays until server publishes new state. Server auto-dismisses notice
-// after longer hold, client keeps showing for even longer (slower reading)
-// and ignores server idle until its own timer completes.
-
-#[test]
-fn auto_dismiss_by_severity() {
-    assert!(severity_auto_dismisses(Some(Severity::Recoverable)));
-    assert!(!severity_auto_dismisses(Some(Severity::Critical)));
-    assert!(
-        !severity_auto_dismisses(None),
-        "non-problem states have no auto-dismiss concept"
-    );
-}
-
-// --- RC20: replace-in-place — any new problem descriptor replaces the held
-// --- slot; there is never a queue, regardless of matching severity. --------
-
-#[test]
-fn x20_replace_in_place() {
-    assert!(should_replace_held_notice(Some(Severity::Recoverable)));
-    assert!(should_replace_held_notice(Some(Severity::Critical)));
-    assert!(
-        !should_replace_held_notice(None),
-        "a non-problem state does not \"replace\" (nothing to hold)"
     );
 }
 

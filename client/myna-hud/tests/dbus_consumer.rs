@@ -61,7 +61,6 @@ fn x7_dormant_without_an_owner() {
         recorder.borrow().events.is_empty(),
         "no state emissions and no error surfaced while dormant"
     );
-    assert!(!svc.is_available(), "not available without an owner");
 }
 
 // --- RC8: name-appeared connects and reflects the current State -----------
@@ -90,7 +89,6 @@ fn x8_name_appeared_reflects_the_current_state() {
             .any(|e| matches!(e, Event::State { state, .. } if state == wire::RECORDING)),
         "the current State is reflected on connect: {events:?}"
     );
-    assert!(svc.is_available());
 }
 
 // --- RC8: name-vanished clears to idle (daemon crash/exit) ---------------
@@ -118,7 +116,6 @@ fn x8_name_vanished_clears_to_idle() {
         "clears to idle, not frozen mid-session"
     );
     assert!(events.contains(&Event::Available(false)));
-    assert!(!svc.is_available());
 }
 
 // --- Property pushes: state transitions and levels ----------------------
@@ -274,8 +271,6 @@ fn x9_disable_drops_everything_and_x10_reenable_works() {
         ..Default::default()
     });
     svc.disable();
-    assert!(!svc.is_available(), "unavailable after disable");
-    assert!(!svc.is_watching(), "the name watch is removed");
 
     recorder.borrow_mut().events.clear();
     // Events arriving after disable() must not reach the application.
@@ -289,7 +284,6 @@ fn x9_disable_drops_everything_and_x10_reenable_works() {
     );
 
     svc.enable();
-    assert!(svc.is_watching(), "re-enable re-establishes the watch");
     svc.simulate_name_appeared(Snapshot {
         state: wire::FINALIZING.into(),
         ..Default::default()

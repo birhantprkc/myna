@@ -141,16 +141,6 @@ impl DictationService {
         self.last_hud_style = None;
     }
 
-    /// Whether the name currently has an owner (E5).
-    pub fn is_available(&self) -> bool {
-        self.available
-    }
-
-    /// Whether the name watch is established.
-    pub fn is_watching(&self) -> bool {
-        self.watching
-    }
-
     /// The name gained an owner: connect and reflect the current State (RC8).
     /// Driven by the bus wiring (or a test).
     pub fn simulate_name_appeared(&mut self, snapshot: Snapshot) {

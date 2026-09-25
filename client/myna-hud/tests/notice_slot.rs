@@ -58,7 +58,6 @@ fn recoverable_replacement_restarts_the_hold() {
     let exp1 = hold_ms_for("first");
     // Halfway through the original hold, a second occurrence arrives.
     slot.hold(Some(Severity::Recoverable), "second", exp1 / 2.0);
-    assert_eq!(slot.reason(), Some("second"), "replaced in place");
     let exp2 = hold_ms_for("second");
     assert_eq!(
         slot.expires_at(),
@@ -78,7 +77,6 @@ fn critical_replacement_still_never_auto_clears() {
     let mut slot = NoticeSlot::default();
     slot.hold(Some(Severity::Critical), "first", 0.0);
     slot.hold(Some(Severity::Critical), "second", 500.0);
-    assert_eq!(slot.reason(), Some("second"), "replaced in place");
     assert_eq!(slot.expires_at(), None, "still no auto-dismiss");
     assert!(
         slot.is_showing(8000.0),
@@ -94,7 +92,6 @@ fn any_problem_replaces_the_single_slot() {
     slot.hold(Some(Severity::Recoverable), "hiccup", 0.0);
     slot.hold(Some(Severity::Critical), "broken", 100.0);
     assert_eq!(slot.severity(), Some(Severity::Critical));
-    assert_eq!(slot.reason(), Some("broken"));
     assert_eq!(slot.expires_at(), None, "now persistent");
 
     slot.hold(Some(Severity::Recoverable), "hiccup again", 200.0);

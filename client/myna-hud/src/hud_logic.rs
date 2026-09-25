@@ -68,27 +68,6 @@ pub fn icon_for_severity(severity: Option<Severity>) -> &'static str {
     }
 }
 
-/// Whether a held notice of this severity auto-dismisses on its own.
-/// Only `Recoverable` (`notice`) auto-dismisses locally after its dynamic
-/// hold; `Critical` (`error`) stays until the server publishes a new state.
-/// The server auto-dismisses `notice` after a longer hold, but the client
-/// keeps showing for its own (even longer, slower reading) hold, ignoring
-/// the server's `idle` until its timer completes.
-///
-pub fn severity_auto_dismisses(severity: Option<Severity>) -> bool {
-    severity == Some(Severity::Recoverable)
-}
-
-/// Whether an incoming descriptor should replace an already-held notice in
-/// place rather than being ignored or queued (R15, FR-007a/FR-007d, RC20):
-/// any new problem descriptor (`Some` severity) always replaces whatever is
-/// currently held — there is exactly one held-notice slot, never a queue,
-/// regardless of whether the severity matches the one already showing.
-///
-pub fn should_replace_held_notice(incoming_severity: Option<Severity>) -> bool {
-    incoming_severity.is_some()
-}
-
 /// The pill's colour-class name for this state/severity (feature 004
 /// follow-up, post-manual-test-review): orange for a recoverable notice, red
 /// for a critical error — so severity reads at a glance, not just from text —

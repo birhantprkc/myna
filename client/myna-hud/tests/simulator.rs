@@ -3,10 +3,7 @@
 // The drift checks round-trip through the REAL vumeter math to catch
 // calibration drift between the slider and the rendered ribbon.
 
-use myna_hud::ribbon::RibbonPhase;
-use myna_hud::simulator::{
-    default_status_message, envelope_to_levels, shell_phase, wire_state, PUBLISH_HZ,
-};
+use myna_hud::simulator::{default_status_message, envelope_to_levels, wire_state, PUBLISH_HZ};
 use myna_hud::states::{wire, Severity};
 use myna_hud::vumeter::levels_to_intensity;
 
@@ -81,32 +78,6 @@ fn unknown_phase_degrades_to_active() {
     // rather than breaking the publisher.
     assert_eq!(wire_state("relax", None, true).0, "active");
     assert_eq!(wire_state("quantize", None, true).0, "active");
-}
-
-// --- shell_phase: the round-trip explanation mapping ----------------------
-
-#[test]
-fn shell_phase_round_trips() {
-    // Every phase either round-trips through the wire and the consumer's
-    // own state → phase mapping, or is Shell/renderer-internal (unfold: the
-    // renderer plays the reveal itself on a fresh session, on its own
-    // clock).
-    assert_eq!(shell_phase("flow", None, true), Some(RibbonPhase::Flow));
-    assert_eq!(shell_phase("morph", None, true), Some(RibbonPhase::Morph));
-    assert_eq!(
-        shell_phase("complete", None, true),
-        Some(RibbonPhase::Complete)
-    );
-    assert_eq!(
-        shell_phase("unfold", None, true),
-        Some(RibbonPhase::Flow),
-        "unfold publishes recording; the renderer plays the reveal itself"
-    );
-    // Severity states force no phase — the severity carries them instead.
-    assert_eq!(shell_phase("flow", Some(Severity::Recoverable), true), None);
-    assert_eq!(shell_phase("flow", Some(Severity::Critical), true), None);
-    // An ended session leaves nothing to show.
-    assert_eq!(shell_phase("flow", None, false), None);
 }
 
 // --- envelope_to_levels: invert the vumeter so the slider is 1:1 ----------

@@ -3,7 +3,7 @@
 //! renderer by the 2026-08-26 architecture revision).
 //!
 //! There is exactly **one** slot, never a queue: any new problem descriptor
-//! replaces whatever is held (see [`crate::hud_logic::should_replace_held_notice`]).
+//! replaces whatever is held.
 //! Only `Recoverable` (`notice`) auto-dismisses after its dynamic hold;
 //! `Critical` (`error`) stays until the server publishes a new state.
 //! The server auto-dismisses `notice` after `server_hold_ms_for` (longer);
@@ -11,10 +11,6 @@
 //! and ignores the server's `idle` until its timer completes.
 
 use crate::states::Severity;
-
-/// How long a recoverable notice is held before it clears itself. Kept for
-/// tests/compat — the actual hold is now dynamic (see `hold_ms_for`).
-pub const HOLD_MS: f64 = 3500.0;
 
 /// Minimum display time for a `notice` on the client. The server
 /// auto-dismisses `notice` after `server_hold_ms_for` (longer), and the
@@ -33,7 +29,6 @@ pub fn hold_ms_for(reason: &str) -> f64 {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NoticeSlot {
     severity: Option<Severity>,
-    reason: String,
     /// When the notice clears itself (`None` = never — a critical error).
     expires_at: Option<f64>,
 }
@@ -55,7 +50,6 @@ impl NoticeSlot {
             None => self.clear(),
             Some(sev) => {
                 self.severity = Some(sev);
-                self.reason = reason.to_string();
                 self.expires_at = match sev {
                     Severity::Recoverable => Some(now_ms + hold_ms_for(reason)),
                     Severity::Critical => None,
@@ -71,7 +65,6 @@ impl NoticeSlot {
     /// new state.
     pub fn clear(&mut self) {
         self.severity = None;
-        self.reason.clear();
         self.expires_at = None;
     }
 
@@ -87,15 +80,6 @@ impl NoticeSlot {
     /// The held severity, if any.
     pub fn severity(&self) -> Option<Severity> {
         self.severity
-    }
-
-    /// The held content-free reason, if any.
-    pub fn reason(&self) -> Option<&str> {
-        if self.severity.is_some() {
-            Some(&self.reason)
-        } else {
-            None
-        }
     }
 
     /// When the notice clears itself — `None` for a critical error (the
