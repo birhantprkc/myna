@@ -669,11 +669,7 @@ pub struct BackendSnapshot {
 }
 
 impl BackendSnapshot {
-    pub fn new(identity: BackendIdentity) -> Self {
-        Self::empty(identity)
-    }
-
-    pub(crate) fn empty(identity: BackendIdentity) -> Self {
+    pub fn empty(identity: BackendIdentity) -> Self {
         Self {
             identity,
             configuration: BackendConfiguration::default(),
@@ -850,10 +846,6 @@ impl ValidationError {
             field: field.into(),
             message: message.into(),
         }
-    }
-
-    pub fn field(&self) -> &str {
-        &self.field
     }
 
     pub fn message(&self) -> &str {

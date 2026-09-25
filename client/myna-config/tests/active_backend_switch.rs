@@ -217,7 +217,7 @@ impl BackendRepository for FakeRepository {
         backend: &BackendIdentity,
         _cancellation: CancellationToken,
     ) -> BackendSnapshot {
-        BackendSnapshot::new(backend.clone())
+        BackendSnapshot::empty(backend.clone())
     }
 
     async fn refresh(

@@ -283,5 +283,5 @@ fn staged_changes_reject_noops_and_retain_restart_requirements() {
         false,
     )
     .unwrap_err();
-    assert_eq!(error.field(), "streaming");
+    assert_eq!(error.to_string(), "streaming: staged value is unchanged");
 }
