@@ -141,10 +141,6 @@ PURGEABLE = frozenset(
 )
 
 
-class SweepOverran(Exception):
-    """The warm sweep exceeded its wall-clock budget."""
-
-
 class TargetUnavailable(Exception):
     """This target's artefacts are missing; the others can still run."""
 
