@@ -356,22 +356,12 @@ impl GlobalShortcutTrigger {
         let conn = crate::dbus::serve::connect_session()
             .await
             .map_err(|e| TriggerError::PortalUnavailable(e.to_string()))?;
-        Self::bind_with_connection(conn, shortcut_id, preferred_trigger, mode).await
-    }
-
-    /// As [`Self::bind`] but on a caller-provided session-bus connection.
-    #[cfg(not(test))]
-    pub async fn bind_with_connection(
-        conn: zbus::Connection,
-        shortcut_id: &str,
-        preferred_trigger: Option<&str>,
-        mode: ActivationMode,
-    ) -> Result<Self, TriggerError> {
         Self::bind_with_connection_timeout(conn, shortcut_id, preferred_trigger, mode, BIND_TIMEOUT)
             .await
     }
 
-    /// As [`Self::bind_with_connection`] but with an explicit answer deadline.
+    /// As [`Self::bind`] but on a caller-provided session-bus connection and
+    /// with an explicit answer deadline.
     ///
     /// The deadline is a parameter only so the fake-portal suite
     /// (`tests/portal_leak.rs`) can exercise the abandon-and-clean-up path
