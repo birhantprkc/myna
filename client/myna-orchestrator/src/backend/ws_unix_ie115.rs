@@ -1,5 +1,6 @@
 //! IE115-dialect [`BackendClient`] — the OpenAI-Realtime-shaped wire (plan T43),
-//! the Rust mirror of Python `myna.core.wire_ie115` + `WsUnixIe115Client`.
+//! the Rust mirror of Python `myna.core.wire_ie115` and the test client in
+//! `server/tests/_ie115_client.py`.
 //!
 //! Same transport (WebSocket over a Unix socket), different frame vocabulary.
 //! The FSM above this is **unchanged** — this is a second backend behind the
@@ -156,7 +157,7 @@ impl BackendClient for WsUnixIe115Backend {
 /// Decode one IE115 server frame into zero or more internal events (the
 /// utterance terminal is a real frame, `completed` → `done`). Control frames
 /// (`session.created`/`session.updated`) yield nothing. Mirrors the Python
-/// `Ie115Decoder`. `after_commit` says whether our `input_audio_buffer.commit`
+/// test-side `Ie115Decoder`. `after_commit` says whether our `input_audio_buffer.commit`
 /// has gone out, which is what tells an answered commit from the canonical
 /// adapter's mid-stream resets.
 fn decode_frame(value: &Value, after_commit: bool) -> Vec<TranscriptionEvent> {
