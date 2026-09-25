@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-26 23:54+0100\n"
+"POT-Creation-Date: 2026-09-27 12:32+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,7 +46,7 @@ msgstr ""
 msgid "Revert"
 msgstr ""
 
-#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:864
+#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:878
 msgid "About and Diagnostics"
 msgstr ""
 
@@ -60,7 +60,7 @@ msgid ""
 "dictation needs."
 msgstr ""
 
-#: data/diagnostics-page.blp:18 data/main-window.blp:44
+#: data/diagnostics-page.blp:18 data/main-window.blp:46
 msgid "Diagnostics"
 msgstr ""
 
@@ -102,29 +102,29 @@ msgstr ""
 msgid "Read-only privacy-safe diagnostic text."
 msgstr ""
 
-#: data/main-window.blp:7 src/app.rs:154 src/diagnostics.rs:458
+#: data/main-window.blp:9 src/app.rs:154 src/diagnostics.rs:458
 #: data/com.canonical.Myna.Config.metainfo.xml:8
 #: data/com.canonical.Myna.Config.desktop:3
 msgid "Myna Settings"
 msgstr ""
 
-#: data/main-window.blp:22
+#: data/main-window.blp:24
 msgid "Main Menu"
 msgstr ""
 
-#: data/main-window.blp:30 src/backend_ui.rs:2109
+#: data/main-window.blp:32 src/backend_ui.rs:2109
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:37 data/myna-page.blp:16 src/app.rs:859
+#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:873
 msgid "Backend"
 msgstr ""
 
-#: data/main-window.blp:69
+#: data/main-window.blp:71
 msgid "_Set Up Dictation…"
 msgstr ""
 
-#: data/main-window.blp:73
+#: data/main-window.blp:75
 msgid "_About Myna Settings"
 msgstr ""
 
@@ -222,11 +222,11 @@ msgstr ""
 msgid "Copy the full failure details to the clipboard"
 msgstr ""
 
-#: data/status-page.blp:12 src/app.rs:854 src/app.rs:1695
+#: data/status-page.blp:12 src/app.rs:868 src/app.rs:1751
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:13 src/app.rs:855 src/app.rs:1696
+#: data/status-page.blp:13 src/app.rs:869 src/app.rs:1752
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -234,39 +234,39 @@ msgstr ""
 msgid "translator-credits"
 msgstr ""
 
-#: src/app.rs:448 src/onboarding_ui.rs:350
+#: src/app.rs:459 src/onboarding_ui.rs:350
 msgid "Copy Command"
 msgstr ""
 
-#: src/app.rs:475 src/onboarding_ui.rs:339
+#: src/app.rs:486 src/onboarding_ui.rs:339
 msgid "Install"
 msgstr ""
 
-#: src/app.rs:484 src/onboarding_ui.rs:359
+#: src/app.rs:495 src/onboarding_ui.rs:359
 msgid "How to install"
 msgstr ""
 
-#: src/app.rs:860
+#: src/app.rs:874
 msgid "Backend details will appear after discovery."
 msgstr ""
 
-#: src/app.rs:865
+#: src/app.rs:879
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:1700
+#: src/app.rs:1756
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:1701
+#: src/app.rs:1757
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:1717
+#: src/app.rs:1773
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:2070
+#: src/app.rs:2126
 msgid "Could not save the setting"
 msgstr ""
 

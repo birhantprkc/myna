@@ -98,8 +98,9 @@ Where the portal has no GlobalShortcuts (Noble), the daemon publishes
 `Activation` as `control` and listens on its control socket. The key is then a
 GNOME custom shortcut to `/snap/bin/myna.toggle`, the entry
 `myna.install-shortcut` writes. Set Up Shortcut installs it with Super+J, the
-application being unconfined, and Change Shortcut opens Settings' Keyboard
-panel.
+application being unconfined, and Change Shortcut captures a new combination
+in a dialog. It must include Ctrl, Alt or Super, so a bare key cannot take over
+typing.
 
 ## Cost
 

@@ -705,6 +705,7 @@ fn template_probe() -> glib::ExitCode {
         "onboarding-welcome.ui",
         "onboarding-window.ui",
         "operation-error-dialog.ui",
+        "shortcut-dialog.ui",
         "status-page.ui",
     ] {
         let path = format!("/com/canonical/Myna/Config/ui/{resource}");
@@ -788,6 +789,8 @@ fn template_probe() -> glib::ExitCode {
     let status = ui::StatusPage::new();
     let _ = status.status();
     println!("StatusPage");
+    let _ = ui::ShortcutDialog::new();
+    println!("ShortcutDialog");
     let error_dialog = ui::OperationErrorDialog::new(
         "Operation failed",
         "concise summary",
@@ -1259,6 +1262,27 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("shortcut-bound: Super+J");
+
+    if control {
+        button.emit_clicked();
+        settles(&|| window.visible_dialog().is_some());
+        let Some(dialog) = window
+            .visible_dialog()
+            .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
+        else {
+            eprintln!("Change Shortcut opened no capture dialog");
+            return glib::ExitCode::FAILURE;
+        };
+        dialog.press(
+            gtk::gdk::Key::d,
+            gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK,
+        );
+        if !settles(&|| caps() == ["Ctrl", "Alt", "D"]) {
+            eprintln!("the captured shortcut rendered as {:?}", caps());
+            return glib::ExitCode::FAILURE;
+        }
+        println!("shortcut-changed: Ctrl+Alt+D");
+    }
     glib::ExitCode::SUCCESS
 }
 

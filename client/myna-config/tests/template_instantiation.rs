@@ -29,6 +29,7 @@ fn every_top_level_template_instantiates_headlessly_when_enabled() {
         "BackendPage",
         "DiagnosticsPage",
         "StatusPage",
+        "ShortcutDialog",
         "OperationErrorDialog",
         "OnboardingWelcome",
         "OnboardingComponents",
@@ -253,6 +254,7 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
     for line in [
         "shortcut-unbound: offered set-up",
         "shortcut-bound: Super+J",
+        "shortcut-changed: Ctrl+Alt+D",
     ] {
         assert!(
             stdout.contains(line),

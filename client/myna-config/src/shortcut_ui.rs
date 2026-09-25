@@ -157,9 +157,7 @@ impl ShortcutControl {
         let (label, help) = match (path, &state) {
             (ShortcutPath::Control, ShortcutState::Bound(_)) => (
                 gettextrs::gettext("Change Shortcut"),
-                gettextrs::gettext(
-                    "Open the desktop's keyboard settings, where the dictation shortcut is changed.",
-                ),
+                gettextrs::gettext("Press a different keyboard shortcut for dictation."),
             ),
             (ShortcutPath::Control, ShortcutState::Unbound | ShortcutState::NotRunning) => (
                 gettextrs::gettext("Set Up Shortcut"),
@@ -189,8 +187,8 @@ impl ShortcutControl {
         let state = self.state.borrow().clone();
         match (self.path.get(), state) {
             (_, ShortcutState::NotRunning) => {}
-            (ShortcutPath::Control, ShortcutState::Unbound) => self.install(),
-            (ShortcutPath::Control, _) => self.open_settings("keyboard"),
+            (ShortcutPath::Control, ShortcutState::Unbound) => self.install(DEFAULT_ACCELERATOR),
+            (ShortcutPath::Control, _) => self.change(),
             (ShortcutPath::Portal, ShortcutState::Unbound) => self.bind(),
             (ShortcutPath::Portal, _) => {
                 self.open_settings(&format!("applications {MYNA_SNAP}_{MYNA_SNAP}"))
@@ -198,15 +196,27 @@ impl ShortcutControl {
         }
     }
 
-    /// Bind the default key to the snap's toggle app, which pokes the
-    /// daemon's control socket.
-    fn install(&self) {
+    /// Capture a new key for the desktop shortcut.
+    fn change(self: &Rc<Self>) {
+        let dialog = crate::ui::ShortcutDialog::new();
+        let control = Rc::downgrade(self);
+        dialog.connect_captured(move |accelerator| {
+            if let Some(control) = control.upgrade() {
+                control.install(accelerator);
+            }
+        });
+        dialog.present(self.overlay.root().as_ref());
+    }
+
+    /// Bind `accelerator` to the snap's toggle app, which pokes the daemon's
+    /// control socket.
+    fn install(&self, accelerator: &str) {
         let installed = self.desktop.as_ref().is_some_and(|desktop| {
             desktop
                 .install(
                     &gettextrs::gettext("Dictation"),
                     &format!("/snap/bin/{MYNA_SNAP}.toggle"),
-                    DEFAULT_ACCELERATOR,
+                    accelerator,
                 )
                 .is_ok()
         });
@@ -260,8 +270,7 @@ impl ShortcutControl {
         });
     }
 
-    /// GNOME rebinds portal shortcuts on the app's page under Apps, and
-    /// custom shortcuts under Keyboard.
+    /// GNOME rebinds portal shortcuts on the app's page under Apps.
     fn open_settings(&self, panel: &str) {
         let command = format!("gnome-control-center {panel}");
         let launched =
