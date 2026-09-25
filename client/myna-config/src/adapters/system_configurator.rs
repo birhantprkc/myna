@@ -78,20 +78,6 @@ fn default_executor() -> PathBuf {
 
 #[async_trait(?Send)]
 impl SystemConfigurator for PkexecSystemConfigurator {
-    async fn execute_privileged(
-        &self,
-        operations: &[CommandRequest],
-        cancellation: CancellationToken,
-    ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure> {
-        execute_apply_plan(
-            self.runner.as_ref(),
-            &self.executor,
-            operations,
-            cancellation,
-        )
-        .await
-    }
-
     async fn execute_backend_switch(
         &self,
         plan: &SwitchPlan,
@@ -155,8 +141,13 @@ impl SystemConfigurator for PkexecSystemConfigurator {
         preview: &ApplyPreview,
         cancellation: CancellationToken,
     ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure> {
-        self.execute_privileged(preview.operations(), cancellation)
-            .await
+        execute_apply_plan(
+            self.runner.as_ref(),
+            &self.executor,
+            preview.operations(),
+            cancellation,
+        )
+        .await
     }
 }
 

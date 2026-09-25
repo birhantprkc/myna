@@ -1476,11 +1476,28 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
         Ok(())
     }
 
-    async fn execute_privileged(
+    async fn execute_backend_switch(
         &self,
-        operations: &[crate::command::CommandRequest],
+        plan: &crate::active_backend::SwitchPlan,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure> {
+        Ok(self.record(plan.operations()))
+    }
+
+    async fn apply_backend_config(
+        &self,
+        preview: &crate::backend_apply::ApplyPreview,
+        _cancellation: crate::command::CancellationToken,
+    ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure> {
+        Ok(self.record(preview.operations()))
+    }
+}
+
+impl ProbeMachine {
+    fn record(
+        &self,
+        operations: &[crate::command::CommandRequest],
+    ) -> Vec<crate::domain::CommandResult> {
         let mut results = Vec::new();
         for operation in operations {
             let arguments = operation.arguments().to_vec();
@@ -1504,7 +1521,7 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
                 "",
             ));
         }
-        Ok(results)
+        results
     }
 }
 

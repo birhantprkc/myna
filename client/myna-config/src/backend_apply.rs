@@ -854,6 +854,14 @@ mod tests {
             unreachable!("an apply never restarts Myna")
         }
 
+        async fn execute_backend_switch(
+            &self,
+            _plan: &crate::active_backend::SwitchPlan,
+            _cancellation: CancellationToken,
+        ) -> Result<Vec<CommandResult>, crate::ports::SystemConfiguratorFailure> {
+            unreachable!("an apply never switches backends")
+        }
+
         async fn apply_backend_config(
             &self,
             preview: &ApplyPreview,

@@ -7,6 +7,7 @@ use myna_config::active_backend::{
     ensure_backend_active, execute_switch, myna_restart_request, ActiveBackendController,
     PrepareSwitchError, SwitchOutcome, SwitchPlan,
 };
+use myna_config::backend_apply::ApplyPreview;
 use myna_config::command::{CancellationToken, CommandRequest};
 use myna_config::domain::{
     parse_connections, ActiveBackendState, BackendIdentity, BackendSnapshot, BackendSurface,
@@ -271,6 +272,14 @@ impl SystemConfigurator for FakeConfigurator {
             Some(Err(failure)) => Err(failure.into_parts().1),
             _ => Ok(()),
         }
+    }
+
+    async fn apply_backend_config(
+        &self,
+        _preview: &ApplyPreview,
+        _cancellation: CancellationToken,
+    ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure> {
+        unreachable!("a switch never applies backend settings")
     }
 }
 

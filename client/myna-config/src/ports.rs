@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::active_backend::SwitchPlan;
 use crate::backend_apply::ApplyPreview;
-use crate::command::{CancellationToken, CommandRequest};
+use crate::command::CancellationToken;
 use crate::diagnostics::InstalledSnap;
 use crate::domain::{
     BackendIdentity, BackendSnapshot, BackendSurfaceError, ClientSetting, ClientSettingMetadata,
@@ -53,31 +53,11 @@ pub trait BackendRepository {
 
 #[async_trait(?Send)]
 pub trait SystemConfigurator {
-    async fn execute_privileged(
-        &self,
-        _operations: &[CommandRequest],
-        _cancellation: CancellationToken,
-    ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure> {
-        Err(SystemConfiguratorFailure::new(
-            Vec::new(),
-            SystemConfiguratorError::execution(
-                "pkexec",
-                Vec::new(),
-                None,
-                "",
-                "generic privileged operations are not supported",
-            ),
-        ))
-    }
-
     async fn execute_backend_switch(
         &self,
         plan: &SwitchPlan,
         cancellation: CancellationToken,
-    ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure> {
-        self.execute_privileged(plan.operations(), cancellation)
-            .await
-    }
+    ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure>;
 
     /// Restart Myna's user service so it picks up a changed backend mount.
     async fn restart_myna(
@@ -89,10 +69,7 @@ pub trait SystemConfigurator {
         &self,
         preview: &ApplyPreview,
         cancellation: CancellationToken,
-    ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure> {
-        self.execute_privileged(preview.operations(), cancellation)
-            .await
-    }
+    ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
