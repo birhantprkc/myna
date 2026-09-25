@@ -451,15 +451,12 @@ fn a_choice_row_lists_the_schema_default_first_then_schema_order() {
         Some("Indicator style".into()),
         None,
         ClientSettingValue::Choice("bar".into()),
-        SettingRange::Choices(vec!["ribbon".into(), "vumeter".into(), "bar".into()]),
-        ClientSettingValue::Choice("ribbon".into()),
+        SettingRange::Choices(vec!["vumeter".into(), "bar".into()]),
+        ClientSettingValue::Choice("vumeter".into()),
         true,
     );
 
-    assert_eq!(
-        widget_plan(&hud_style).choices,
-        ["bar", "ribbon", "vumeter"]
-    );
+    assert_eq!(widget_plan(&hud_style).choices, ["bar", "vumeter"]);
 }
 
 #[test]
@@ -468,7 +465,6 @@ fn schema_choices_have_translated_labels_but_keep_raw_index_mapping() {
         "auto",
         "streaming",
         "batch",
-        "ribbon",
         "vumeter",
         "bar",
         "future-mode",
@@ -484,14 +480,13 @@ fn schema_choices_have_translated_labels_but_keep_raw_index_mapping() {
             "Automatic",
             "As you speak",
             "When you stop",
-            "Ribbon",
             "VU meter",
             "Default",
             "future-mode",
         ]
     );
     assert_ne!(labels[0], raw[0]);
-    assert_eq!(raw[5], "bar");
+    assert_eq!(raw[4], "bar");
 }
 
 #[test]
@@ -501,7 +496,6 @@ fn enum_display_labels_are_extracted_into_the_gettext_template() {
         "Automatic",
         "As you speak",
         "When you stop",
-        "Ribbon",
         "VU meter",
         "Default",
     ] {

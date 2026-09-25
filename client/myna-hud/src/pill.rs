@@ -2,12 +2,11 @@
 //! can live either in a borderless overlay toplevel ([`crate::window`]) or
 //! embedded inside another window (the `--serve-dbus` publisher's preview).
 //!
-//! It owns the widget tree (mic icon, status label, GPU wave ribbon), the
-//! live state, the GL renderer, the frame clock, and the accent/motion
-//! subscriptions. Every *decision* is delegated to the pure modules
-//! ([`crate::states`], [`crate::hud_logic`], [`crate::vumeter`],
-//! [`crate::ribbon`], [`crate::notice_slot`]); this owns only widgets and
-//! their wiring.
+//! It owns the widget tree (mic icon, status label, level indicators), the
+//! live state, the frame clock, and the motion/contrast subscriptions. Every
+//! *decision* is delegated to the pure modules ([`crate::states`],
+//! [`crate::hud_logic`], [`crate::vumeter`], [`crate::notice_slot`]); this
+//! owns only widgets and their wiring.
 //!
 //! The pill knows nothing about the surface: click-through, positioning and
 //! window typing are overlay concerns that live in [`crate::window`].
@@ -22,19 +21,14 @@ use gtk::prelude::*;
 use gtk4 as gtk;
 
 use crate::bar::BarView;
-use crate::gl::RibbonRenderer;
 use crate::hud_logic::{
-    icon_for_severity, pill_color_class, ribbon_phase_for_state_key, ribbon_visible_for_severity,
-    HudStyle, PILL_COLOR_CLASSES,
+    icon_for_severity, indicator_visible_for_severity, pill_color_class, HudStyle,
+    PILL_COLOR_CLASSES,
 };
 use crate::notice_slot::NoticeSlot;
 use crate::platform;
-use crate::ribbon::{compute_ribbon_model, RibbonInput, RibbonPhase};
 use crate::segmented_meter::SegmentedMeterView;
-#[cfg(dev_lab)]
-use crate::shader::hex_to_rgb;
 use crate::states::Descriptor;
-use crate::vumeter::levels_to_intensity;
 
 /// The pill's resting width: a floor just above the natural content width
 /// (icon + the bar's own 160px minimum) for a one-line status, so the pill
@@ -55,9 +49,6 @@ pub const PILL_WIDTH: i32 = 240;
 /// the overlay changing width underneath the user as messages change.
 pub const LABEL_MAX_CHARS: i32 = 30;
 
-/// The ribbon's height, matching the extension's `RIBBON_HEIGHT`.
-pub const RIBBON_HEIGHT: i32 = 32;
-
 /// The pill's resting height with the default (`bar`) indicator: padding,
 /// one label line, the gap, and the 6px bar. A floor, like [`PILL_WIDTH`].
 pub const PILL_HEIGHT: i32 = 58;
@@ -66,35 +57,17 @@ pub const PILL_HEIGHT: i32 = 58;
 /// (FR-022), defined in `style.css`.
 pub const HIGH_CONTRAST_CLASS: &str = "myna-hud-high-contrast";
 
-/// The most recent level push and when it arrived — the vumeter decays by
-/// *arrival age*, so a stalled publisher visibly falls to the floor instead
-/// of freezing mid-wave (R16a).
-#[derive(Clone, Copy, Debug)]
-struct LevelSample {
-    rms: f64,
-    peak: f64,
-    at: Instant,
-}
-
 /// The mutable state the frame clock reads.
 struct PillState {
     descriptor: Descriptor,
     notice: NoticeSlot,
-    level: Option<LevelSample>,
-    /// Forced by a state transition; `None` lets the ribbon manage itself.
-    phase: RibbonPhase,
-    phase_since: Instant,
     started: Instant,
     reduced_motion: bool,
     #[cfg(dev_lab)]
     /// Lab override: when `Some`, replaces the desktop-derived
     /// `reduced_motion` and is not clobbered by a live preference change.
     reduced_motion_override: Option<bool>,
-    palette: crate::shader::RibbonPalette,
-    /// The accent last read from the theme, so the palette is rebuilt only
-    /// when the colour genuinely changes rather than every frame.
-    accent: Option<crate::shader::Rgb>,
-    /// The HUD's audio-level presentation: the GPU ribbon or the classic
+    /// The HUD's audio-level presentation: the accent bar or the classic
     /// segmented meter. Pushed by the publisher over `HudStyle`, never read
     /// from settings here — see `myna_desktop::dbus::hud_style`.
     hud_style: HudStyle,
@@ -102,11 +75,6 @@ struct PillState {
     /// Lab override: when `Some`, replaces the published `hud_style` and is
     /// not clobbered by a publisher push, like `reduced_motion_override`.
     hud_style_override: Option<HudStyle>,
-    #[cfg(dev_lab)]
-    /// Lab override: when `Some`, forces the accent hex instead of the
-    /// desktop's — libadwaita has no public runtime accent setter (it is a
-    /// desktop preference), so the lab forces the palette directly.
-    accent_override: Option<String>,
     #[cfg(dev_lab)]
     /// Lab override: when `Some`, forces high-contrast on/off instead of the
     /// desktop's `gtk-interface-contrast` / `Adw.StyleManager:high-contrast`.
@@ -120,23 +88,20 @@ pub struct Pill {
     pill: gtk::Box,
     icon: gtk::Image,
     label: gtk::Label,
-    ribbon: gtk::GLArea,
     bar: Rc<BarView>,
     meter: Rc<SegmentedMeterView>,
     state: Rc<RefCell<PillState>>,
-    renderer: Rc<RefCell<Option<RibbonRenderer>>>,
-    /// Owns the accent/reduced-motion subscriptions; dropped with the pill,
+    /// Owns the reduced-motion/contrast subscriptions; dropped with the pill,
     /// so no preference callback can outlive it.
     preferences: RefCell<Option<platform::PreferenceWatch>>,
     /// The lab accent-override provider: sets the bar accent to the override
-    /// hex so that CSS-driven view follows the lab selector too (the ribbon
-    /// gets it via the palette). `None` when unset, or cleared.
+    /// hex. `None` when unset, or cleared.
     #[cfg(dev_lab)]
     accent_override_css: RefCell<Option<gtk::CssProvider>>,
 }
 
 impl Pill {
-    /// Build the pill and wire its clock, renderer and preference tracking.
+    /// Build the pill and wire its clock and preference tracking.
     pub fn new() -> Rc<Self> {
         load_css();
 
@@ -161,11 +126,6 @@ impl Pill {
         label.set_natural_wrap_mode(gtk::NaturalWrapMode::Word);
         label.set_max_width_chars(LABEL_MAX_CHARS);
 
-        let ribbon = gtk::GLArea::new();
-        ribbon.add_css_class("myna-hud-ribbon");
-        ribbon.set_height_request(RIBBON_HEIGHT);
-        ribbon.set_hexpand(true);
-
         let bar = BarView::new();
         let meter = SegmentedMeterView::new();
 
@@ -177,7 +137,6 @@ impl Pill {
         content.append(&label);
         content.append(bar.widget());
         content.append(meter.widget());
-        content.append(&ribbon);
 
         let pill = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         pill.add_css_class("myna-hud-pill");
@@ -190,26 +149,16 @@ impl Pill {
         let state = Rc::new(RefCell::new(PillState {
             descriptor: crate::states::state_to_descriptor(None, ""),
             notice: NoticeSlot::default(),
-            level: None,
-            phase: RibbonPhase::Unfold,
-            phase_since: Instant::now(),
             started: Instant::now(),
             reduced_motion: platform::probe_reduced_motion(),
             #[cfg(dev_lab)]
             reduced_motion_override: None,
-            // No styled widget is rooted yet, so this is the fallback
-            // palette; sync_palette() re-resolves from the theme once the
-            // ribbon is mapped.
-            palette: platform::probe_accent_palette(None::<&gtk::Widget>).as_ribbon_palette(),
-            accent: None,
             // The default until the publisher says otherwise: nothing is
             // drawn before the first bus event anyway, so no wrong meter is
             // ever visible.
             hud_style: HudStyle::default(),
             #[cfg(dev_lab)]
             hud_style_override: None,
-            #[cfg(dev_lab)]
-            accent_override: None,
             #[cfg(dev_lab)]
             high_contrast_override: None,
         }));
@@ -218,22 +167,17 @@ impl Pill {
             pill,
             icon,
             label,
-            ribbon,
             bar,
             meter,
             state,
-            renderer: Rc::default(),
             preferences: RefCell::new(None),
             #[cfg(dev_lab)]
             accent_override_css: RefCell::new(None),
         });
 
-        this.connect_palette();
-        this.connect_renderer();
         this.connect_clock();
         this.connect_preferences();
         this.sync_high_contrast();
-        this.sync_palette();
         this.push_reduced_motion();
         this.apply_descriptor(crate::states::state_to_descriptor(None, ""));
         this
@@ -242,11 +186,6 @@ impl Pill {
     /// The pill's root widget, to embed in a window or another container.
     pub fn widget(&self) -> &gtk::Box {
         &self.pill
-    }
-
-    /// The ribbon area, for the window to read its allocation (input region).
-    pub fn ribbon(&self) -> &gtk::GLArea {
-        &self.ribbon
     }
 
     /// The segmented meter, for the window to read its allocation when the
@@ -290,8 +229,8 @@ impl Pill {
 
     // ── State in ────────────────────────────────────────────────────────
 
-    /// Apply a state descriptor: label, icon, colour class, ribbon phase,
-    /// held notice, and visibility. Positioning/input-region are the
+    /// Apply a state descriptor: label, icon, colour class, held notice, and
+    /// visibility. Positioning/input-region are the
     /// window's concern (its opacity is bound to the pill's visibility).
     pub fn apply_descriptor(self: &Rc<Self>, descriptor: Descriptor) {
         let now = self.now_ms();
@@ -360,21 +299,11 @@ impl Pill {
             } else {
                 state.notice.clear();
             }
-            if let Some(phase) = ribbon_phase_for_state_key(descriptor.key) {
-                // `flow` during the fresh-session unfold reveal is a no-op,
-                // so the reveal is never cut short.
-                let unfolding = state.phase == RibbonPhase::Unfold
-                    && state.phase_since.elapsed().as_millis() < 400;
-                if !(phase == RibbonPhase::Flow && unfolding) && state.phase != phase {
-                    state.phase = phase;
-                    state.phase_since = Instant::now();
-                }
-            }
             state.descriptor = descriptor.clone();
         }
 
-        // Drive the non-ribbon views' state animations (loading pulse,
-        // notice warning colour, finalize settle) from the same descriptor.
+        // Drive the views' state animations (loading pulse, notice warning
+        // colour, finalize settle) from the same descriptor.
         self.bar.set_state(descriptor.key, descriptor.severity);
         self.meter.set_state(descriptor.key, descriptor.severity);
 
@@ -391,16 +320,14 @@ impl Pill {
 
         // The indicator is hidden when a critical error collapses it OR when
         // the whole pill is hidden at idle — the latter matters because the
-        // frame clock only queues a render while the indicator is visible, so
-        // hiding it here is what makes idle cost no GPU. Which indicator is
-        // shown follows the `hud-style` setting (ribbon/vumeter/bar).
-        let visible = !descriptor.hidden && ribbon_visible_for_severity(descriptor.severity);
+        // frame clock only queues a redraw while the indicator is visible, so
+        // hiding it here is what makes idle cost nothing. Which indicator is
+        // shown follows the `hud-style` setting (bar/vumeter).
+        let visible = !descriptor.hidden && indicator_visible_for_severity(descriptor.severity);
         let style = {
             let state = self.state.borrow();
             state.hud_style
         };
-        self.ribbon
-            .set_visible(visible && style == HudStyle::Ribbon);
         self.meter
             .widget()
             .set_visible(visible && style == HudStyle::Vumeter);
@@ -414,7 +341,7 @@ impl Pill {
         // host); it is the WINDOW's opacity that makes it vanish — see
         // `HudWindow::apply_descriptor` — and in the embedded lab preview
         // there is no window, so the pill is simply left empty at idle.
-        // Either way the ribbon above is hidden, so nothing draws.
+        // Either way the indicator above is hidden, so nothing draws.
 
         // Announce the change to assistive technology: the status text is
         // the accessible description, and it is content-free by contract.
@@ -438,11 +365,6 @@ impl Pill {
     /// A level push from the publisher. Never deduplicated — the arrival
     /// time is what keeps a steady voice from decaying (R16a).
     pub fn push_level(&self, rms: f64, peak: f64) {
-        self.state.borrow_mut().level = Some(LevelSample {
-            rms,
-            peak,
-            at: Instant::now(),
-        });
         self.bar.push_level(rms, peak);
         self.meter.push_level(rms, peak);
     }
@@ -453,64 +375,8 @@ impl Pill {
 
     // ── Wiring ──────────────────────────────────────────────────────────
 
-    /// Resolve the accent once the ribbon is rooted, and again whenever the
-    /// theme recomputes its style.
-    fn connect_palette(self: &Rc<Self>) {
-        let this = Rc::downgrade(self);
-        self.ribbon.connect_map(move |_| {
-            if let Some(this) = this.upgrade() {
-                this.schedule_accent_resync();
-            }
-        });
-    }
-
-    fn connect_renderer(self: &Rc<Self>) {
-        let renderer = self.renderer.clone();
-        self.ribbon.connect_realize(move |area| {
-            area.make_current();
-            if let Some(error) = area.error() {
-                eprintln!("myna-hud: GL context failed: {error}");
-                return;
-            }
-            match RibbonRenderer::realize() {
-                Ok(built) => *renderer.borrow_mut() = Some(built),
-                Err(e) => eprintln!("myna-hud: ribbon shader failed to build: {e}"),
-            }
-        });
-
-        let renderer_unrealize = self.renderer.clone();
-        self.ribbon.connect_unrealize(move |area| {
-            area.make_current();
-            if let Some(mut built) = renderer_unrealize.borrow_mut().take() {
-                built.unrealize();
-            }
-        });
-
-        let renderer_render = self.renderer.clone();
-        let state = self.state.clone();
-        self.ribbon.connect_render(move |area, _ctx| {
-            let borrowed = renderer_render.borrow();
-            let Some(renderer) = borrowed.as_ref() else {
-                return glib::Propagation::Proceed;
-            };
-
-            // The GLArea's framebuffer is in device pixels.
-            let scale = area.scale_factor();
-            let width = area.width() * scale;
-            let height = area.height() * scale;
-            if width <= 0 || height <= 0 {
-                return glib::Propagation::Proceed;
-            }
-
-            let state = state.borrow();
-            let model = build_model(&state);
-            renderer.render(&model, &state.palette, width, height);
-            glib::Propagation::Proceed
-        });
-    }
-
     /// Drive the animation from the frame clock rather than a timer, so the
-    /// ribbon advances in step with the compositor and stops when not
+    /// indicator advances in step with the compositor and stops when not
     /// drawing. The tick is attached to the pill widget, so it works whether
     /// the pill is a toplevel's child or embedded.
     fn connect_clock(self: &Rc<Self>) {
@@ -519,12 +385,8 @@ impl Pill {
             let Some(this) = this.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            // The ribbon repaints through the GLArea; the vumeter and the
-            // accent bar through their own snapshot. Queue whichever is
-            // currently visible so a hidden indicator costs no GPU / redraw.
-            if this.ribbon.is_visible() {
-                this.ribbon.queue_render();
-            }
+            // Queue whichever indicator is currently visible so a hidden one
+            // costs no redraw.
             if this.meter.widget().is_visible() {
                 this.meter.queue_draw();
             }
@@ -537,7 +399,7 @@ impl Pill {
 
     fn connect_preferences(self: &Rc<Self>) {
         let this = Rc::downgrade(self);
-        let watch = platform::watch_preferences(move |readiness| {
+        let watch = platform::watch_preferences(move |_| {
             let Some(this) = this.upgrade() else { return };
             // Motion comes straight from its own sources, so it is always
             // read now — unless the lab has pinned it.
@@ -552,7 +414,7 @@ impl Pill {
             {
                 this.state.borrow_mut().reduced_motion = platform::probe_reduced_motion();
             }
-            // Recompute the non-ribbon views' pulse pace.
+            // Recompute the views' pulse pace.
             this.push_reduced_motion();
 
             // High contrast is a plain setting too — unless the lab has
@@ -567,15 +429,6 @@ impl Pill {
             let high_changed = true;
             if high_changed {
                 this.sync_high_contrast_inner(None);
-            }
-
-            // The accent is a computed CSS colour, readable immediately only
-            // on libadwaita's own notification (it reloads the accent
-            // provider before notifying); anything else waits for the next
-            // frame.
-            match readiness {
-                platform::AccentReadiness::Current => this.sync_palette(),
-                platform::AccentReadiness::NextFrame => this.schedule_accent_resync(),
             }
         });
         *self.preferences.borrow_mut() = Some(watch);
@@ -616,13 +469,7 @@ impl Pill {
         }
     }
 
-    /// Force a re-read of the theme's accent at the next frame.
-    pub fn resync_accent(self: &Rc<Self>) {
-        self.schedule_accent_resync();
-    }
-
-    /// Forward the current reduce-animation preference to the non-ribbon
-    /// views so they travel at the right pace (slower under reduced motion).
+    /// Forward the current reduce-animation preference to the views so they travel at the right pace (slower under reduced motion).
     fn push_reduced_motion(&self) {
         let reduced = {
             let state = self.state.borrow();
@@ -632,8 +479,8 @@ impl Pill {
         self.meter.set_reduced_motion(reduced);
     }
 
-    /// Switch the audio-level presentation: the accent level bar, the GPU
-    /// ribbon or the classic segmented meter.
+    /// Switch the audio-level presentation: the accent level bar or the
+    /// classic segmented meter.
     ///
     /// The value arrives from the publisher's `HudStyle` property; the HUD
     /// reads no settings store of its own.
@@ -686,26 +533,14 @@ impl Pill {
         }
         drop(state);
         self.push_reduced_motion();
-        self.ribbon.queue_render();
     }
 
-    /// Force the accent to a `#rrggbb` hex (the lab's override). `None`
-    /// returns to the desktop accent. libadwaita has no public runtime
-    /// accent setter (it is a desktop preference), so the lab forces the
-    /// ribbon palette directly, and the CSS-driven bar follows through an
-    /// injected high-priority CSS rule.
+    /// Force the bar's accent to a `#rrggbb` hex (the lab's override).
+    /// `None` returns to the desktop accent. libadwaita has no public runtime
+    /// accent setter (it is a desktop preference), so the lab injects a
+    /// high-priority CSS rule on the bar's colour instead.
     #[cfg(dev_lab)]
     pub fn set_accent_override(&self, hex: Option<String>) {
-        self.state.borrow_mut().accent_override = hex.clone();
-        self.sync_accent_override_css(hex.as_deref());
-        self.sync_palette();
-    }
-
-    /// Install/clear the lab accent-override CSS so the CSS-driven bar
-    /// follows the lab selector too. The override is a high-priority rule on
-    /// its accent colour; `None` removes it.
-    #[cfg(dev_lab)]
-    fn sync_accent_override_css(&self, hex: Option<&str>) {
         let display = match gdk::Display::default() {
             Some(d) => d,
             None => {
@@ -714,7 +549,7 @@ impl Pill {
             }
         };
         let provider = gtk::CssProvider::new();
-        match hex {
+        match hex.as_deref() {
             Some(hex) => {
                 let css = format!(".myna-hud-bar {{ color: {hex}; }}");
                 provider.load_from_string(&css);
@@ -743,64 +578,6 @@ impl Pill {
         self.state.borrow_mut().high_contrast_override = value;
         self.sync_high_contrast_inner(value);
     }
-
-    fn schedule_accent_resync(self: &Rc<Self>) {
-        let this = Rc::downgrade(self);
-        self.ribbon.add_tick_callback(move |_area, _clock| {
-            if let Some(this) = this.upgrade() {
-                this.sync_palette();
-            }
-            glib::ControlFlow::Break
-        });
-    }
-
-    /// Read the desktop's accent and rebuild the palette if it changed.
-    fn sync_palette(&self) {
-        let mut state = self.state.borrow_mut();
-        // A lab override wins over the desktop entirely.
-        #[cfg(dev_lab)]
-        let palette = match state.accent_override.as_deref() {
-            Some(hex) => crate::accent::resolve_theme_accent_palette(hex_to_rgb(hex)),
-            None => platform::probe_accent_palette(Some(&self.ribbon)),
-        };
-        #[cfg(not(dev_lab))]
-        let palette = platform::probe_accent_palette(Some(&self.ribbon));
-        let accent = palette.main_rgb();
-        if state.accent == Some(accent) {
-            return;
-        }
-        state.accent = Some(accent);
-        state.palette = palette.as_ribbon_palette();
-        drop(state);
-        self.ribbon.queue_render();
-    }
-}
-
-/// Build the current frame's ribbon model from the live state.
-fn build_model(state: &PillState) -> crate::ribbon::RibbonModel {
-    let elapsed_ms = state.started.elapsed().as_secs_f64() * 1000.0;
-    let envelope = match state.level {
-        Some(sample) => {
-            let age_ms = sample.at.elapsed().as_secs_f64() * 1000.0;
-            levels_to_intensity(sample.rms, sample.peak, age_ms)
-        }
-        None => 0.0,
-    };
-
-    compute_ribbon_model(RibbonInput {
-        envelope,
-        elapsed_ms,
-        phase: state.phase,
-        phase_elapsed_ms: state.phase_since.elapsed().as_secs_f64() * 1000.0,
-        #[cfg(dev_lab)]
-        reduced_motion: state
-            .reduced_motion_override
-            .unwrap_or(state.reduced_motion),
-        #[cfg(not(dev_lab))]
-        reduced_motion: state.reduced_motion,
-        severity_tint: state.notice.severity(),
-        ..Default::default()
-    })
 }
 
 /// Install the pill's stylesheet once per display.

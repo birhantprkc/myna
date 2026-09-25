@@ -151,7 +151,7 @@ fn concurrent_different_key_edits_share_one_writer_and_both_persist() {
         .set("streaming-mode", ClientSettingValue::Choice("batch".into()))
         .unwrap();
     let hud = controller
-        .set("hud-style", ClientSettingValue::Choice("ribbon".into()))
+        .set("hud-style", ClientSettingValue::Choice("vumeter".into()))
         .unwrap();
     let streaming_request = streaming.clone();
     let hud_request = hud.clone();
@@ -176,7 +176,7 @@ fn concurrent_different_key_edits_share_one_writer_and_both_persist() {
     );
     assert_eq!(
         reopened.get("hud-style").unwrap(),
-        ClientSettingValue::Choice("ribbon".into())
+        ClientSettingValue::Choice("vumeter".into())
     );
 }
 

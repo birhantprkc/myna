@@ -68,7 +68,6 @@ pub fn choice_display_label(choice: &str) -> String {
         "auto" => gettextrs::gettext("Automatic"),
         "streaming" => gettextrs::gettext("As you speak"),
         "batch" => gettextrs::gettext("When you stop"),
-        "ribbon" => gettextrs::gettext("Ribbon"),
         "vumeter" => gettextrs::gettext("VU meter"),
         "bar" => gettextrs::gettext("Default"),
         unknown => unknown.to_owned(),
