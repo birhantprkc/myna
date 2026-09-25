@@ -276,9 +276,6 @@ parts:
       - libpipewire-0.3-dev
       - libgtk-4-dev
       - libadwaita-1-dev
-      - libepoxy-dev
-      - libegl-dev
-      - libgl1-mesa-dev
       - gettext # xgettext for myna-hud po template (build-time only)
     override-build: |
       toolchain="$HOME/.rustup/toolchains/stable-$(uname -m)-unknown-linux-gnu"
