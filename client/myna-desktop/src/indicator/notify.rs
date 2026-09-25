@@ -42,15 +42,6 @@ impl Default for NotifyIndicator {
     }
 }
 
-impl std::fmt::Debug for NotifyIndicator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NotifyIndicator")
-            .field("app_name", &self.app_name)
-            .field("id", &self.id)
-            .finish()
-    }
-}
-
 /// The notification-specific summary + body for a state (labels only — never
 /// transcript text). `None` means "close the toast" (`Hidden`).
 fn toast_text(state: &IndicatorState) -> Option<(String, String)> {

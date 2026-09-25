@@ -71,12 +71,6 @@ impl<T> From<T> for Live<T> {
     }
 }
 
-impl<T: Clone + std::fmt::Debug> std::fmt::Debug for Live<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Live({:?})", self.get())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

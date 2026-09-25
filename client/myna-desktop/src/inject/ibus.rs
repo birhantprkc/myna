@@ -835,12 +835,6 @@ pub struct IbusInjector {
     objects_served: bool,
 }
 
-impl std::fmt::Debug for IbusInjector {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IbusInjector").finish_non_exhaustive()
-    }
-}
-
 impl IbusInjector {
     /// Connect to the IBus daemon's private bus. `Err(Unavailable)` if IBus is
     /// not reachable.
