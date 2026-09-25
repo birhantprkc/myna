@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The keys Myna Settings touches, from gnome-settings-daemon's schema. -->
+<schemalist>
+  <schema id="org.gnome.settings-daemon.plugins.media-keys" path="/org/gnome/settings-daemon/plugins/media-keys/">
+    <key name="custom-keybindings" type="as">
+      <default>[]</default>
+    </key>
+  </schema>
+  <schema id="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding">
+    <key name="name" type="s">
+      <default>''</default>
+    </key>
+    <key name="binding" type="s">
+      <default>''</default>
+    </key>
+    <key name="command" type="s">
+      <default>''</default>
+    </key>
+  </schema>
+</schemalist>
