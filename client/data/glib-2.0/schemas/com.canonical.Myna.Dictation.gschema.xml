@@ -15,7 +15,6 @@
 -->
 <schemalist gettext-domain="myna-config">
   <enum id="com.canonical.Myna.Dictation.StreamingMode">
-    <value nick="auto" value="0"/>
     <value nick="streaming" value="1"/>
     <value nick="batch" value="2"/>
   </enum>
@@ -31,8 +30,7 @@
       <summary>When to transcribe</summary>
       <description>
         As you speak shows partial text in the field while you talk; When you
-        stop injects the whole transcript once the utterance ends; Automatic
-        picks per machine from the measured RTF table.
+        stop injects the whole transcript once the utterance ends.
       </description>
     </key>
 

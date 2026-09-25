@@ -91,7 +91,7 @@ fn enumerates_the_real_schema_and_its_metadata() {
     );
     assert_eq!(
         streaming.range(),
-        &SettingRange::Choices(vec!["auto".into(), "streaming".into(), "batch".into()])
+        &SettingRange::Choices(vec!["streaming".into(), "batch".into()])
     );
     assert_eq!(streaming.current_value(), streaming.default_value());
     assert!(streaming.writable());

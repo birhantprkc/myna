@@ -1,7 +1,6 @@
 //! Client settings: the persisted streaming-mode preference (T047/T048).
 //!
-//! One setting today: [`StreamingMode`] (Auto | Streaming | Batch), resolved
-//! against the tier gate when Auto (FR-002/FR-003).
+//! One setting today: [`StreamingMode`] (Streaming | Batch).
 //!
 //! ## Where it lives
 //!
@@ -21,12 +20,6 @@
 //! Nothing here fails hard. A machine without the schema installed (an
 //! unpackaged build on a box where `make install-schema` was never run) reads
 //! defaults, exactly as a missing file did.
-//!
-//! [`effective_mode`] is the resolver every binary calls: it finds the
-//! shipped baseline ([`tier_table`]), fingerprints the machine
-//! ([`hardware_tier`]), and resolves without needing a server connection.
-//! One implementation, so the CLI and the desktop daemon cannot drift. The
-//! gate semantics are pinned by the unit tests in [`crate::tier`].
 
 use std::path::PathBuf;
 
@@ -304,71 +297,9 @@ fn watch_with(
 
 fn mode_from_nick(nick: &str) -> Option<StreamingMode> {
     match nick {
-        "auto" => Some(StreamingMode::Auto),
         "streaming" => Some(StreamingMode::Streaming),
         "batch" => Some(StreamingMode::Batch),
         _ => None,
-    }
-}
-
-/// Coarse hardware fingerprint used as the tier table's `hardware` key.
-///
-/// Deliberately coarse: the lab pins a machine with `MYNA_HARDWARE_TIER` when
-/// recording a baseline, and anything unrecognised falls through to the batch
-/// default rather than guessing.
-pub fn hardware_tier() -> String {
-    std::env::var("MYNA_HARDWARE_TIER")
-        .unwrap_or_else(|_| format!("{}-cpu-generic", std::env::consts::ARCH))
-}
-
-/// The shipped RTF baseline, searched in this order:
-///
-/// 1. `$MYNA_TIER_TABLE` - explicit override for the lab and for tests
-/// 2. `$SNAP/usr/share/myna/streaming-tiers.json` - the packaged copy
-/// 3. `/usr/share/myna/streaming-tiers.json` - a system install
-///
-/// Missing or unparseable yields an empty table, which gates `Auto` to batch
-/// (FR-010). A baseline is measured data, never inferred: an absent file must
-/// read as "unmeasured", not as "assume it streams".
-pub fn tier_table() -> crate::TierTable {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(explicit) = std::env::var_os("MYNA_TIER_TABLE") {
-        candidates.push(PathBuf::from(explicit));
-    }
-    if let Some(snap) = std::env::var_os("SNAP") {
-        candidates.push(PathBuf::from(snap).join("usr/share/myna/streaming-tiers.json"));
-    }
-    candidates.push(PathBuf::from("/usr/share/myna/streaming-tiers.json"));
-
-    candidates
-        .iter()
-        .find_map(|path| {
-            let text = std::fs::read_to_string(path).ok()?;
-            crate::TierTable::from_json(&text).ok()
-        })
-        .unwrap_or_default()
-}
-
-/// The mode this machine will actually use, with no server connection needed.
-///
-/// `Streaming`/`Batch` are the user's explicit choice and pass straight
-/// through; `Auto` goes through the tier gate. The model axis stays open
-/// (see [`crate::streaming_viable_here`]) because the active model is
-/// server-side and not knowable before a session opens.
-pub fn effective_mode(preference: StreamingMode) -> StreamingMode {
-    match preference {
-        StreamingMode::Streaming | StreamingMode::Batch => preference,
-        StreamingMode::Auto => {
-            if crate::streaming_viable_here(
-                &tier_table(),
-                &hardware_tier(),
-                crate::DEFAULT_RTF_THRESHOLD,
-            ) {
-                StreamingMode::Streaming
-            } else {
-                StreamingMode::Batch
-            }
-        }
     }
 }
 
@@ -384,20 +315,9 @@ mod tests {
     /// happen to agree.
     fn mode_nick(mode: StreamingMode) -> &'static str {
         match mode {
-            StreamingMode::Auto => "auto",
             StreamingMode::Streaming => "streaming",
             StreamingMode::Batch => "batch",
         }
-    }
-
-    /// T045: an explicit choice bypasses the tier gate, in both directions.
-    #[test]
-    fn explicit_modes_bypass_the_gate() {
-        assert_eq!(
-            effective_mode(StreamingMode::Streaming),
-            StreamingMode::Streaming
-        );
-        assert_eq!(effective_mode(StreamingMode::Batch), StreamingMode::Batch);
     }
 
     fn test_schema() -> gio::SettingsSchema {
@@ -497,11 +417,7 @@ mod tests {
     #[test]
     fn every_mode_nick_round_trips_through_the_schema() {
         let store = test_store();
-        for mode in [
-            StreamingMode::Auto,
-            StreamingMode::Streaming,
-            StreamingMode::Batch,
-        ] {
+        for mode in [StreamingMode::Streaming, StreamingMode::Batch] {
             set_mode(&store, mode);
             assert_eq!(store.streaming_mode(), mode);
             assert_eq!(mode_from_nick(mode_nick(mode)), Some(mode));
@@ -530,6 +446,24 @@ mod tests {
             assert_eq!(
                 Settings::from_store(&store_on(&path)).hud_style.as_deref(),
                 Some(DEFAULT_HUD_STYLE),
+                "{retired}"
+            );
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// `auto` left the schema with the tier gate, but a keyfile written before
+    /// that still holds it; it must read as the default like any other value
+    /// the schema does not know.
+    #[test]
+    fn a_streaming_mode_outside_the_schema_reads_the_default() {
+        let path =
+            std::env::temp_dir().join(format!("myna-streaming-mode-{}.ini", std::process::id()));
+        for retired in ["auto", "supersonic"] {
+            std::fs::write(&path, format!("[dictation]\nstreaming-mode='{retired}'\n")).unwrap();
+            assert_eq!(
+                Settings::from_store(&store_on(&path)).streaming_mode,
+                StreamingMode::Streaming,
                 "{retired}"
             );
         }

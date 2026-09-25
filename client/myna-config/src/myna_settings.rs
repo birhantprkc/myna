@@ -65,7 +65,6 @@ fn default_first(choices: &[String], default: &ClientSettingValue) -> Vec<String
 
 pub fn choice_display_label(choice: &str) -> String {
     match choice {
-        "auto" => gettextrs::gettext("Automatic"),
         "streaming" => gettextrs::gettext("As you speak"),
         "batch" => gettextrs::gettext("When you stop"),
         "vumeter" => gettextrs::gettext("VU meter"),

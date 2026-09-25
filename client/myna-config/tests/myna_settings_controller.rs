@@ -110,8 +110,8 @@ fn rows() -> Vec<ClientSettingMetadata> {
     vec![
         metadata(
             "streaming-mode",
-            ClientSettingValue::Choice("auto".into()),
-            SettingRange::Choices(vec!["auto".into(), "streaming".into(), "batch".into()]),
+            ClientSettingValue::Choice("streaming".into()),
+            SettingRange::Choices(vec!["streaming".into(), "batch".into()]),
             true,
         ),
         metadata(
@@ -220,14 +220,11 @@ fn external_change_updates_only_the_affected_row() {
     let controller = MynaSettingsController::load(fake.clone());
     let original_language = controller.row("language").unwrap();
 
-    fake.external_change(
-        "streaming-mode",
-        ClientSettingValue::Choice("streaming".into()),
-    );
+    fake.external_change("streaming-mode", ClientSettingValue::Choice("batch".into()));
 
     assert_eq!(
         controller.row("streaming-mode").unwrap().value(),
-        &ClientSettingValue::Choice("streaming".into())
+        &ClientSettingValue::Choice("batch".into())
     );
     assert_eq!(controller.row("language").unwrap(), original_language);
 }
@@ -461,14 +458,7 @@ fn a_choice_row_lists_the_schema_default_first_then_schema_order() {
 
 #[test]
 fn schema_choices_have_translated_labels_but_keep_raw_index_mapping() {
-    let raw = [
-        "auto",
-        "streaming",
-        "batch",
-        "vumeter",
-        "bar",
-        "future-mode",
-    ];
+    let raw = ["streaming", "batch", "vumeter", "bar", "future-mode"];
     let labels: Vec<_> = raw
         .iter()
         .map(|choice| choice_display_label(choice))
@@ -477,7 +467,6 @@ fn schema_choices_have_translated_labels_but_keep_raw_index_mapping() {
     assert_eq!(
         labels,
         [
-            "Automatic",
             "As you speak",
             "When you stop",
             "VU meter",
@@ -486,19 +475,13 @@ fn schema_choices_have_translated_labels_but_keep_raw_index_mapping() {
         ]
     );
     assert_ne!(labels[0], raw[0]);
-    assert_eq!(raw[4], "bar");
+    assert_eq!(raw[3], "bar");
 }
 
 #[test]
 fn enum_display_labels_are_extracted_into_the_gettext_template() {
     let pot = include_str!("../po/myna-config.pot");
-    for label in [
-        "Automatic",
-        "As you speak",
-        "When you stop",
-        "VU meter",
-        "Default",
-    ] {
+    for label in ["As you speak", "When you stop", "VU meter", "Default"] {
         assert!(pot.contains(&format!("msgid \"{label}\"")), "{label}");
     }
 }

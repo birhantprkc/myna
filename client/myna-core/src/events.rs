@@ -51,13 +51,11 @@ pub enum Disposition {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamingMode {
-    /// Force streaming regardless of tier (user accepts potential latency)
+    /// Committed text as it arrives, with unstable hypotheses as preedit
     #[default]
     Streaming,
-    /// Force batch regardless of tier (user prefers all-at-once)
+    /// The whole transcript once the utterance completes
     Batch,
-    /// Resolve to streaming or batch based on tier assessment
-    Auto,
 }
 
 fn default_phase() -> String {

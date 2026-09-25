@@ -25,7 +25,6 @@ pub mod events;
 pub mod protocol;
 pub mod session;
 pub mod settings;
-pub mod tier;
 
 pub use audio::{AudioFormat, PcmChunk};
 pub use capabilities::Capabilities;
@@ -39,5 +38,4 @@ pub use events::{
 };
 pub use protocol::PROTOCOL_VERSION;
 pub use session::SessionConfig;
-pub use settings::{effective_mode, hardware_tier, tier_table, Settings, SettingsWatch};
-pub use tier::{streaming_viable_here, TierAssessment, TierTable, DEFAULT_RTF_THRESHOLD};
+pub use settings::{Settings, SettingsWatch};

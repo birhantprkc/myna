@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-27 23:20+0100\n"
+"POT-Creation-Date: 2026-09-27 23:40+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1129,62 +1129,57 @@ msgid "chunks dropped this session"
 msgstr ""
 
 #: src/myna_settings.rs:68
-msgid "Automatic"
-msgstr ""
-
-#: src/myna_settings.rs:69
 msgid "As you speak"
 msgstr ""
 
-#: src/myna_settings.rs:70
+#: src/myna_settings.rs:69
 msgid "When you stop"
 msgstr ""
 
-#: src/myna_settings.rs:71
+#: src/myna_settings.rs:70
 msgid "VU meter"
 msgstr ""
 
-#: src/myna_settings.rs:72
+#: src/myna_settings.rs:71
 msgid "Default"
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:31
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:30
 msgid "When to transcribe"
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:32
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:31
 msgid ""
 "As you speak shows partial text in the field while you talk; When you stop "
-"injects the whole transcript once the utterance ends; Automatic picks per "
-"machine from the measured RTF table."
+"injects the whole transcript once the utterance ends."
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:41
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:39
 msgid "Spoken language"
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:42
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:40
 msgid ""
 "A BCP-47-ish code (en, fr, zh) for the language you dictate in. The backend "
 "skips language detection and decodes in this language; a code that does not "
 "match what is spoken degrades the transcript. Empty lets the backend decide."
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:52
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:50
 msgid "Indicator style"
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:53
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:51
 msgid ""
 "Both render the same calibrated audio envelope: Default is a level bar in "
 "the accent colour, VU meter a segmented meter."
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:62
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:60
 msgid "Stop after silence (seconds)"
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:63
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:61
 msgid ""
 "With tap-to-start activation, end the dictation session on its own after "
 "this many seconds without speech. 0 keeps it running until the next tap. "

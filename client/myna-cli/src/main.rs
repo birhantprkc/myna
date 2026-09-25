@@ -93,8 +93,8 @@ OPTIONS:
                        adapter uses /v1/realtime)
     --show-unstable    display unstable hypothesis deltas as `~` lines
                        (streaming mode; off by default — FR-007)
-    --mode <mode>      transcription mode: `auto` (default; tier-gated),
-                       `streaming`, or `batch` — overrides the persisted setting
+    --mode <mode>      transcription mode: `streaming` or `batch`; overrides
+                       the persisted setting
     --realtime         pace clips at real time, like a microphone (default: as
                        fast as the backend takes them)
     -h, --help         show this help
@@ -142,12 +142,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             "--show-unstable" => show_unstable = true,
             "--mode" => {
                 mode = Some(match next(&mut it, "--mode")?.as_str() {
-                    "auto" => myna_core::StreamingMode::Auto,
                     "streaming" => myna_core::StreamingMode::Streaming,
                     "batch" => myna_core::StreamingMode::Batch,
-                    other => {
-                        return Err(format!("unknown mode: {other} (want auto|streaming|batch)"))
-                    }
+                    other => return Err(format!("unknown mode: {other} (want streaming|batch)")),
                 })
             }
             "--realtime" => realtime = true,
@@ -173,8 +170,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     if ws_path.is_some() && dialect != Dialect::Ie115 {
         return Err("--ws-path only applies to --dialect ie115".into());
     }
-    // T049/T050: the --mode flag overrides the persisted setting; the persisted
-    // setting (Auto default) is resolved against the tier gate below.
+    // T049/T050: the --mode flag overrides the persisted setting.
     let mode = mode.unwrap_or_else(|| myna_core::Settings::load().streaming_mode);
     let socket = resolve_socket(&backend)?;
 
@@ -470,8 +466,7 @@ async fn dictate_clips<B: BackendClient>(backend: B, args: &Args) -> ExitCode {
     let plural = if n == 1 { "" } else { "s" };
     println!("dictating {n} clip{plural} to {}", args.socket.display());
 
-    let resolved = myna_core::effective_mode(args.mode);
-    println!("mode: {:?}", resolved);
+    println!("mode: {:?}", args.mode);
     let mut streaming_sink = UnstableFilter {
         inner: StdoutSink,
         show_unstable: args.show_unstable,
@@ -500,11 +495,13 @@ async fn dictate_clips<B: BackendClient>(backend: B, args: &Args) -> ExitCode {
             language: args.language.clone(),
             ..Default::default()
         };
-        let outcome = match resolved {
+        let outcome = match args.mode {
             myna_core::StreamingMode::Batch => {
                 run_dictation(&backend, config, source, &mut batch_sink).await
             }
-            _ => run_dictation(&backend, config, source, &mut streaming_sink).await,
+            myna_core::StreamingMode::Streaming => {
+                run_dictation(&backend, config, source, &mut streaming_sink).await
+            }
         };
         match outcome {
             Ok(SessionOutcome::Completed { .. }) => {} // StdoutSink already printed it

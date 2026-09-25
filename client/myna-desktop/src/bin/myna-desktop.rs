@@ -160,7 +160,7 @@ impl Activation {
 /// Everything the daemon works out for itself, resolved once at startup.
 ///
 /// A command-line flag wins, then the user's settings value, then the
-/// built-in - packaging for activation, the tier gate for preedit.
+/// built-in - packaging for activation, the streaming mode for preedit.
 /// Activation and the preferred shortcut are argv-only debugging overrides:
 /// they were settings keys once, and neither was worth a user-facing knob.
 #[derive(Debug, PartialEq)]
@@ -307,9 +307,9 @@ impl LiveSettings {
     /// GSettings notifies per key, so most changes touch neither of these.
     ///
     /// A change that resolves to the value already in force is the interesting
-    /// *silent* case (a flag outranks it, or the tier gate refuses it), so it
-    /// is logged too - at the debug tier, where it explains "I changed it and
-    /// nothing happened" without filling a long-lived daemon's journal.
+    /// *silent* case (a flag outranks it), so it is logged too - at the debug
+    /// tier, where it explains "I changed it and nothing happened" without
+    /// filling a long-lived daemon's journal.
     fn apply(&self, resolved: &Resolved, reason: &str) {
         if self.preedit.get() != resolved.preedit {
             myna_core::info_log!("settings", "preedit -> {} ({reason})", resolved.preedit);
@@ -418,35 +418,28 @@ fn set_activation(a: &mut Args, mode: Activation) -> Result<(), String> {
 
 /// Streaming preedit (R9) is a consequence of the transcription mode, not a
 /// separate preference: hypotheses only exist in streaming mode, so "show
-/// them in the field" is decided by the same tier gate that decides streaming
-/// ([`myna_core::effective_mode`]) — no server round-trip needed, and a
-/// batch-only backend simply never emits `Unstable` anyway.
+/// them in the field" follows the persisted mode. No server round-trip is
+/// needed, and a batch-only backend simply never emits `Unstable` anyway.
 ///
 /// The injector still has the final say downstream: the controller renders a
 /// preedit only where the backend has a real preedit region
 /// (`Injector::supports_preedit`).
 fn resolve_preedit(forced: Option<bool>, preference: myna_core::StreamingMode) -> bool {
-    forced.unwrap_or_else(|| {
-        myna_core::effective_mode(preference) == myna_core::StreamingMode::Streaming
-    })
+    forced.unwrap_or(preference == myna_core::StreamingMode::Streaming)
 }
 
 /// Why preedit came out the way it did, for the journal.
 ///
 /// It is the one setting nobody typed, so "why are partials not showing" has
 /// to be answerable from the log alone: either a flag forced it, or the
-/// persisted preference met the tier gate. Kept separate from
+/// persisted preference decided it. Kept separate from
 /// [`resolve_preedit`] so that resolving - which now happens again on every
 /// settings change - stays silent, and only the startup line and an actual
 /// change say anything.
 fn preedit_reason(forced: Option<bool>, preference: myna_core::StreamingMode) -> String {
     match forced {
         Some(forced) => format!("forced {forced} by flag"),
-        None => format!(
-            "streaming-mode {preference:?} resolves to {:?} on tier {}",
-            myna_core::effective_mode(preference),
-            myna_core::hardware_tier()
-        ),
+        None => format!("from streaming-mode {preference:?}"),
     }
 }
 
@@ -1164,11 +1157,6 @@ fn print_status(args: &Args) -> ExitCode {
         format!("{:?}", settings.streaming_mode).to_lowercase(),
         format!("preedit {}", resolved.preedit),
         source(args.preedit.is_some(), store.is_some()),
-    );
-    println!(
-        "  {:<15} {}",
-        "",
-        preedit_reason(args.preedit, settings.streaming_mode)
     );
 
     let rt = match cli_runtime() {
@@ -1946,8 +1934,8 @@ mod tests {
     }
 
     #[test]
-    fn forced_preedit_skips_the_tier_gate() {
-        // Overrides must not consult settings/tier state at all — that is what
+    fn forced_preedit_overrides_the_mode() {
+        // Overrides must not consult settings state at all - that is what
         // makes them usable for debugging on any machine.
         assert!(resolve_preedit(Some(true), myna_core::StreamingMode::Batch));
         assert!(!resolve_preedit(
