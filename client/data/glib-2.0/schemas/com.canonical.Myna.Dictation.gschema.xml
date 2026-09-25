@@ -27,7 +27,7 @@
 
   <schema id="com.canonical.Myna.Dictation" path="/com/canonical/myna/dictation/">
     <key name="streaming-mode" enum="com.canonical.Myna.Dictation.StreamingMode">
-      <default>'auto'</default>
+      <default>'streaming'</default>
       <summary>When to transcribe</summary>
       <description>
         As you speak shows partial text in the field while you talk; When you

@@ -87,7 +87,7 @@ fn enumerates_the_real_schema_and_its_metadata() {
     assert!(streaming.description().unwrap().contains("partial text"));
     assert_eq!(
         streaming.default_value(),
-        &ClientSettingValue::Choice("auto".into())
+        &ClientSettingValue::Choice("streaming".into())
     );
     assert_eq!(
         streaming.range(),

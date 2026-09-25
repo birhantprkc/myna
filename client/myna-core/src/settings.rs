@@ -90,7 +90,8 @@ impl Default for Settings {
 
 impl Settings {
     /// Read the store. A missing schema or an unreadable backend yields
-    /// defaults (Auto) - a broken settings store must never break dictation.
+    /// defaults (streaming) - a broken settings store must never break
+    /// dictation.
     pub fn load() -> Self {
         match Store::open() {
             Some(store) => Self::from_store(&store),
@@ -143,7 +144,8 @@ impl Store {
         }
     }
 
-    /// The persisted preference; an unset key reads the schema default (Auto).
+    /// The persisted preference; an unset key reads the schema default
+    /// (streaming).
     pub fn streaming_mode(&self) -> StreamingMode {
         mode_from_nick(self.settings.string(KEY_STREAMING_MODE).as_str()).unwrap_or_default()
     }
@@ -463,11 +465,11 @@ mod tests {
     }
 
     /// An untouched store reads the schema's own default, so a fresh machine
-    /// gets Auto without anything having to write it first.
+    /// streams without anything having to write it first.
     #[test]
     fn an_unset_key_reads_the_schema_default() {
-        assert_eq!(test_store().streaming_mode(), StreamingMode::Auto);
-        assert_eq!(Settings::default().streaming_mode, StreamingMode::Auto);
+        assert_eq!(test_store().streaming_mode(), StreamingMode::Streaming);
+        assert_eq!(Settings::default().streaming_mode, StreamingMode::Streaming);
     }
 
     /// The silence timeout's schema default and the no-schema fallback are
@@ -513,7 +515,7 @@ mod tests {
         assert_eq!(mode_from_nick("supersonic"), None);
         assert_eq!(
             mode_from_nick("supersonic").unwrap_or_default(),
-            StreamingMode::Auto
+            StreamingMode::Streaming
         );
     }
 

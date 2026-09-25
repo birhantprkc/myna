@@ -52,11 +52,11 @@ pub enum Disposition {
 #[serde(rename_all = "lowercase")]
 pub enum StreamingMode {
     /// Force streaming regardless of tier (user accepts potential latency)
+    #[default]
     Streaming,
     /// Force batch regardless of tier (user prefers all-at-once)
     Batch,
-    /// Resolve to streaming or batch based on tier assessment (default)
-    #[default]
+    /// Resolve to streaming or batch based on tier assessment
     Auto,
 }
 
