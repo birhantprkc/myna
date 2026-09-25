@@ -21,7 +21,7 @@ HUD or consume `com.canonical.Myna.Dictation` itself — the standalone
   fallback suppression now uses `com.canonical.Myna.Dictation` `RegisterClient`
   client set.
 
-The HUD pill itself, its GPU wave ribbon, accent colour, reduced-motion
+The HUD pill itself, its level indicator, reduced-motion and contrast
 handling, lab and simulator modes all live in `client/myna-hud`. Contract
 and design history: `specs/004-gnome-shell-indicator/`.
 
@@ -58,11 +58,11 @@ Driven entirely by `com.canonical.Myna.Dictation` (served by `myna-desktop`):
 - **Critical error** (e.g. "Microphone unavailable"): a persistent pill with
   a mic-with-slash icon that does not clear on a timer — the client resolves
   it by publishing a different state.
-- **Audio level**: a flowing, accent-coloured GPU wave ribbon, calibrated to
-  real speech levels, unfolding on session start, flowing with the voice,
-  relaxing on a pause, and morphing into a simplified processing motion on
-  stop. Coloured from the desktop's accent preference (Yaru-aware), or
-  Ubuntu orange as a fallback; a static line under reduced motion.
+- **Audio level**: calibrated to real speech levels, shown as a level bar in
+  the desktop's accent colour (the default) or, with the `hud-style` setting
+  at `vumeter`, a segmented green/yellow/red meter. While the model loads or
+  the session finishes, a block travels back and forth instead, more slowly
+  under reduced motion.
 
 ## Layout
 
