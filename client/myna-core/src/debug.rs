@@ -17,7 +17,8 @@
 use std::sync::OnceLock;
 use std::time::Instant;
 
-fn enabled_cell() -> bool {
+/// Whether debug instrumentation is enabled (`MYNA_DEBUG`).
+pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         matches!(
@@ -30,11 +31,6 @@ fn enabled_cell() -> bool {
 fn start() -> Instant {
     static START: OnceLock<Instant> = OnceLock::new();
     *START.get_or_init(Instant::now)
-}
-
-/// Whether debug instrumentation is enabled (`MYNA_DEBUG`).
-pub fn enabled() -> bool {
-    enabled_cell()
 }
 
 fn emit(stage: &str, msg: &str) {
@@ -51,7 +47,7 @@ pub fn info(stage: &str, msg: impl AsRef<str>) {
 /// Emit one timestamped debug line for `stage`, prefixed so pipeline stages are
 /// easy to grep (`[myna +1.234s] capture: …`). No-op unless [`enabled`].
 pub fn log(stage: &str, msg: impl AsRef<str>) {
-    if !enabled_cell() {
+    if !enabled() {
         return;
     }
     emit(stage, msg.as_ref());
