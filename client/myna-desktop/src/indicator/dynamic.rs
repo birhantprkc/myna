@@ -50,14 +50,9 @@ impl Indicator for DynamicIndicator {
         // Suppress the notification fallback while any HUD is present,
         // closing a toast left over from before the HUD appeared.
         if self.has_clients() {
-            self.notify.hide().await;
+            self.notify.set_state(IndicatorState::Hidden).await;
         } else {
             self.notify.set_state(state).await;
         }
-    }
-
-    async fn hide(&mut self) {
-        self.dbus.hide().await;
-        self.notify.hide().await;
     }
 }

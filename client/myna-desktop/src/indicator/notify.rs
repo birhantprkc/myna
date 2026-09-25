@@ -207,15 +207,6 @@ impl Indicator for NotifyIndicator {
             }
         }
     }
-
-    async fn hide(&mut self) {
-        if self.pending_hide.is_some() {
-            return;
-        }
-        self.abort_pending();
-        self.close().await;
-        self.id = None;
-    }
 }
 
 #[cfg(test)]

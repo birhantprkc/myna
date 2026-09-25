@@ -145,8 +145,7 @@ fn server_hold_ms_for(reason: &str) -> u64 {
 /// the standard `PropertiesChanged`, the interface's only signal (contract
 /// §Confinement). Emits exactly one `State` update per *wire-state* transition
 /// (C2 — a duplicate `IndicatorState` whose mapped state is unchanged is a
-/// no-op), carries only state + a content-free reason (C3), and `hide()`
-/// publishes `idle`, zeroes the levels, and clears `StatusMessage` (P3).
+/// no-op) and carries only state + a content-free reason (C3).
 pub struct DbusIndicator {
     bus: SharedBus,
     readiness: Readiness,
@@ -215,7 +214,7 @@ impl DbusIndicator {
                     return;
                 }
             }
-            // Publish idle; also clear levels/status as `hide()` does.
+            // Publish idle, clearing the levels and status (P3).
             {
                 let mut bus = bus.lock().await;
                 bus.set_property("StatusMessage", PropertyValue::Str(String::new()))
@@ -281,16 +280,6 @@ impl Indicator for DbusIndicator {
         let mut bus = self.bus.lock().await;
         bus.set_property("AudioDroppedNotActive", PropertyValue::U64(not_active))
             .await;
-    }
-
-    async fn hide(&mut self) {
-        self.cancel_auto_hide();
-        self.publish(wire_state::IDLE, "").await;
-        // P3: levels die with the session. publish() already cleared the
-        // StatusMessage together with the idle State transition.
-        let mut bus = self.bus.lock().await;
-        bus.set_property("AudioRms", PropertyValue::F64(0.0)).await;
-        bus.set_property("AudioPeak", PropertyValue::F64(0.0)).await;
     }
 }
 
@@ -546,35 +535,6 @@ mod tests {
             bus.property("State"),
             Some(PropertyValue::Str(wire_state::TRANSCRIBING.into())),
             "a stale auto-hide must not fire after the state moved on"
-        );
-    }
-
-    /// hide() clears a transient immediately and aborts any pending hide, so
-    /// nothing yanks a later state to `idle` afterwards.
-    #[tokio::test]
-    async fn hide_clears_error_immediately_and_aborts_pending() {
-        let bus = FakeBus::new();
-        let shared: SharedBus = Arc::new(tokio::sync::Mutex::new(bus.clone()));
-        let mut indicator = DbusIndicator::with_hold(shared, Readiness::new(), |_| 100);
-
-        indicator
-            .set_state(IndicatorState::critical("mic gone"))
-            .await;
-        indicator.hide().await;
-        assert_eq!(
-            bus.property("State"),
-            Some(PropertyValue::Str(wire_state::IDLE.into()))
-        );
-        assert_eq!(
-            bus.property("StatusMessage"),
-            Some(PropertyValue::Str(String::new()))
-        );
-
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        assert_eq!(
-            bus.property("State"),
-            Some(PropertyValue::Str(wire_state::IDLE.into())),
-            "hide() aborts the pending auto-hide; nothing else fires"
         );
     }
 }

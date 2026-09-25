@@ -33,7 +33,7 @@ async fn one_state_update_per_transition_and_state_property_tracks() {
     assert_eq!(fake.property("State"), str_prop("finalizing"));
     assert_eq!(fake.property("StatusMessage"), str_prop("Finishing"));
 
-    indicator.hide().await;
+    indicator.set_state(IndicatorState::Hidden).await;
 
     assert_eq!(
         fake.state_history(),
@@ -41,37 +41,6 @@ async fn one_state_update_per_transition_and_state_property_tracks() {
         "exactly one State update per transition, in order"
     );
     assert_eq!(fake.property("State"), str_prop("idle"));
-}
-
-/// P3: `hide()` publishes `idle`, zeroes the levels, and clears `StatusMessage`.
-#[tokio::test]
-async fn hide_publishes_idle_zeroes_levels_clears_error() {
-    let fake = FakeBus::new();
-    let service = DictationService::new(fake.clone());
-    let readiness = Readiness::new();
-    readiness.note_ready();
-    let mut indicator = DbusIndicator::new(service.bus(), readiness);
-
-    indicator
-        .set_state(IndicatorState::critical(
-            "refusing to type into a password field",
-        ))
-        .await;
-    assert_eq!(
-        fake.property("StatusMessage"),
-        str_prop("Error: refusing to type into a password field")
-    );
-
-    indicator.hide().await;
-
-    assert_eq!(fake.property("State"), str_prop("idle"));
-    assert_eq!(fake.property("AudioRms"), Some(PropertyValue::F64(0.0)));
-    assert_eq!(fake.property("AudioPeak"), Some(PropertyValue::F64(0.0)));
-    assert_eq!(fake.property("StatusMessage"), str_prop(""));
-    assert_eq!(
-        fake.state_history().last().map(String::as_str),
-        Some("idle")
-    );
 }
 
 /// P2/C5: a cold session publishes `loading` for the Loading-seen /
@@ -109,8 +78,8 @@ async fn duplicate_states_do_not_reemit() {
 
     indicator.set_state(IndicatorState::Recording).await;
     indicator.set_state(IndicatorState::Recording).await;
-    indicator.hide().await;
-    indicator.hide().await;
+    indicator.set_state(IndicatorState::Hidden).await;
+    indicator.set_state(IndicatorState::Hidden).await;
 
     assert_eq!(
         fake.state_history(),
@@ -179,7 +148,7 @@ async fn payloads_are_content_free() {
     indicator
         .set_state(IndicatorState::critical("inference backend unavailable"))
         .await;
-    indicator.hide().await;
+    indicator.set_state(IndicatorState::Hidden).await;
 
     for state in fake.state_history() {
         assert!(

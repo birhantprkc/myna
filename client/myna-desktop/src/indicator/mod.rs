@@ -103,9 +103,6 @@ pub trait Indicator: Send {
     /// `Recording` — SC-005).
     async fn set_state(&mut self, state: IndicatorState);
 
-    /// Clear the indicator (equivalent to `set_state(Hidden)`).
-    async fn hide(&mut self);
-
     /// Publish this session's running drop count. A count only - no audio, no
     /// content - and the one capture-health fact no reader outside the daemon
     /// can obtain for itself.

@@ -1,6 +1,6 @@
 //! `MockIndicator` — the hermetic activity-indicator fixture (T008).
 //!
-//! Records the `IndicatorState` sequence (and `hide()`) so controller tests can
+//! Records the `IndicatorState` sequence so controller tests can
 //! assert the state timeline (Recording→Transcribing→Finalizing→Hidden, error
 //! states) with no GTK and no display.
 //! (contract indicator.md N-mapping tests).
@@ -33,9 +33,5 @@ impl MockIndicator {
 impl Indicator for MockIndicator {
     async fn set_state(&mut self, state: IndicatorState) {
         self.log.lock().unwrap().push(state);
-    }
-
-    async fn hide(&mut self) {
-        self.log.lock().unwrap().push(IndicatorState::Hidden);
     }
 }
