@@ -29,11 +29,17 @@ dependencies for the Ubuntu build targets, and writes a reproducible
 
 ## Versions
 
-`debian/changelog` carries the release version. Untagged commits build as
-`<upstream>~git<date>.<sha>`, which sorts below the release and gives every
-commit its own orig tarball. Tag `v<upstream>` to build the release itself.
-Uploads to a PPA take a `~ppaN` suffix on top; never commit that:
+The upstream version is `dev/version.sh`'s, shared with the snaps. The tag
+`vX.Y.Z` builds `X.Y.Z`, which must equal the `debian/changelog` version.
+Commits past it build as `X.Y.Z+git<n>.<sha>`, `<n>` counting commits since
+the tag, which sorts above the release and gives every commit its own orig
+tarball.
 
+`SERIES=<name>` retargets a series other than the changelog's and tags the
+revision `~<release>`. Uploads to a PPA take a `~ppaN` suffix on top, and
+`PPA=N` refuses a HEAD that is not on `origin/main`; never commit either:
+
+    SERIES=noble make build-deb                   # local, ...-0ubuntu1~24.04
     PPA=1 make build-deb-source                   # stonking, ...-0ubuntu1~ppa1
     PPA=1 SERIES=resolute make build-deb-source   # ...-0ubuntu1~26.04~ppa1
 
