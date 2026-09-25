@@ -19,7 +19,7 @@ start offsets per window length.
 A window "collapses" by the exact definition production uses to trigger its
 own retry (``_transcribe_guarded`` in parakeet.py): raw token count under
 ``_COLLAPSE_WORDS_PER_SECOND`` (0.5) tokens per second of window. This calls
-``_ParakeetOnnx.transcribe`` directly (not ``transcribe_text``/
+``_ParakeetOnnx.transcribe`` directly (not ``transcribe_words``/
 ``_transcribe_guarded``) so the retry mitigation cannot mask a collapse.
 
 Stream: the 12 real corpus/english/audio/librispeech-2277-149896-* segments

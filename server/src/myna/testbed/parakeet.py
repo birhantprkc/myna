@@ -698,10 +698,6 @@ class _ParakeetOnnx:
             return tokens, timestamps
         return retry_tokens, retry_timestamps
 
-    def transcribe_text(self, samples: NDArray[np.float32]) -> str:
-        tokens, _ = self._transcribe_guarded(samples)
-        return _detokenize(tokens)
-
     def transcribe_words(self, samples: NDArray[np.float32]) -> list[Word]:
         tokens, timestamps = self._transcribe_guarded(samples)
         return _tokens_to_words(tokens, timestamps)

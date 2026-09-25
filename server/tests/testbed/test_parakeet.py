@@ -67,10 +67,6 @@ class _FakeParakeetModel:
         # fake needs a real one so that path is exercised, not stubbed out.
         self.pressure_monitor = MemoryPressureMonitor()
 
-    def transcribe_text(self, samples) -> str:
-        self.calls.append(len(samples))
-        return self._text
-
     def transcribe_words(self, samples) -> list[Word]:
         self.calls.append(len(samples))
         return [Word(f" {w}", i, i + 1) for i, w in enumerate(self._text.split())]
