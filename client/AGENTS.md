@@ -29,5 +29,5 @@ The client is a Rust workspace that turns activation events into bounded microph
 - `.kb/audio-capture.md` - Capture ownership, buffering, format, and privacy invariants.
 - `.kb/crate-architecture.md` - Cargo dependencies and runtime integration boundaries.
 - `.kb/desktop-integration.md` - Activation, focus, injection, and indication behavior.
-- `.kb/runtime-settings.md` - Persisted client settings and streaming-mode resolution.
+- `.kb/runtime-settings.md` - Persisted client settings, streaming mode, and live reload.
 - `myna-config/AGENTS.md` - Privilege paths, plan executor, and refresh budget of Myna Settings.

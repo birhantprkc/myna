@@ -1,6 +1,6 @@
 # Preface
 
-Read this document when changing persisted client preferences, streaming-mode resolution, or live settings reload.
+Read this document when changing persisted client preferences, the streaming mode, or live settings reload.
 
 Read the top-level `.kb/agents.md` file before continuing below.
 
@@ -12,11 +12,12 @@ Client settings use GSettings schema `com.canonical.Myna.Dictation` with the key
 
 The snap stores settings below `$SNAP_USER_COMMON/.config`; unpackaged development uses the host configuration directory and requires `make install-schema`. `myna_core::Settings` is the shared access layer.
 
-`myna_core::effective_mode` is the single resolver used by `myna-testbed` and `myna-desktop`:
+`streaming-mode` is used as stored by `myna-testbed` and `myna-desktop`:
 
+- `streaming` (the default) displays committed deltas as they arrive and enables preedit when supported.
 - `batch` delays display and injection until the utterance completes.
-- `streaming` displays committed deltas as they arrive and enables preedit when supported.
-- `auto` enables streaming only from measured local capability data; absent or invalid measurements resolve safely to batch.
+
+A stored value outside the schema enum, such as the retired `auto`, reads as the default. There is no hardware gate; a capability-based default is a future redesign.
 
 The mode is a client presentation preference, not wire negotiation. A streaming backend can feed a batch client, which accumulates committed deltas until completion.
 
@@ -24,7 +25,5 @@ The mode is a client presentation preference, not wire negotiation. A streaming 
 
 # Important
 
-- Keep one resolver for all client binaries.
-- Missing or invalid performance evidence must resolve to batch, never inferred streaming support.
 - Apply live-reloadable settings without restart. Activation and hotkey changes require rebinding and must report that limitation.
 - Use command-line overrides for debugging without mutating persisted preferences.

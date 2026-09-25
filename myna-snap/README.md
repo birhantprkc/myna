@@ -45,7 +45,7 @@ once; accept it and pick a key. If step 4 misbehaves, jump to
 
 No activation, indicator or preedit flags: packaged, `myna` uses the
 GlobalShortcuts portal, always serves `com.canonical.Myna.Dictation`, and turns
-streaming preedit on only where the tier gate says this machine streams. See
+streaming preedit on whenever `streaming-mode` is `streaming` (the default). See
 **Activation** for forcing any of them.
 
 ## The daemon
@@ -233,10 +233,9 @@ session bus is unreachable - so there is no flag to set. `myna --no-dbus`
 forces the notification path for debugging. The experimental GTK `--overlay`
 was removed (T150).
 
-**Preedit**: in-field unstable hypotheses are on exactly when this machine
-resolves to streaming (your persisted `streaming_mode` through the RTF tier
-gate - see `client/.kb/runtime-settings.md`) *and* the injector has a real
-preedit region. `myna --preedit` / `myna --no-preedit` force it either way.
+**Preedit**: in-field unstable hypotheses are on exactly when the persisted
+`streaming-mode` is `streaming` (see `client/.kb/runtime-settings.md`) *and*
+the injector has a real preedit region. `myna --preedit` / `myna --no-preedit` force it either way.
 
 **Env knobs**: `MYNA_BACKEND_SOCKET`, `MYNA_LANGUAGE`.
 (`MYNA_ACTIVATION` is gone - use `--portal` / `--control` / `--stdin`.)
@@ -266,8 +265,7 @@ settings   com.canonical.Myna.Dictation (schema installed)
   activation      (unset)      -> Portal (packaged)      [built-in]
   language        (unset)      -> (backend default)      [built-in]
   hotkey          (unset)      -> (portal default)       [built-in]
-  streaming-mode  auto         -> preedit false          [settings]
-                  streaming-mode Auto resolves to Batch on tier x86_64-cpu-generic
+  streaming-mode  streaming    -> preedit true           [settings]
 
 backend
   configured      /var/snap/myna/current/backend/*/provider.env
@@ -402,7 +400,7 @@ key reads the schema default, so the file only ever holds what was set.
 
 ```shell
 myna.config                                    # every key, set or default
-myna.config set streaming-mode streaming
+myna.config set streaming-mode batch
 myna.config reset streaming-mode
 ```
 
@@ -410,7 +408,7 @@ myna.config reset streaming-mode
 
 | key | values | effect |
 |---|---|---|
-| `streaming-mode` | `auto` \| `streaming` \| `batch` | emission mode, and with it in-field partials |
+| `streaming-mode` | `streaming` \| `batch` | emission mode, and with it in-field partials |
 | `language` | any short code | session language hint |
 | `activation` | `auto` \| `portal` \| `control` | how a press reaches the daemon |
 | `hotkey` | `'<Super>d'` | the accelerator offered to the portal |
@@ -419,8 +417,7 @@ The daemon logs what it resolved at every start:
 
 ```shell
 journalctl --user -u snap.myna.myna | grep settings:
-#  settings: streaming-mode Auto resolves to Streaming on tier x86_64-cpu-generic
-#  settings: activation Portal, language (backend default), hotkey (portal default)
+#  settings: activation Portal, language (backend default), hotkey (portal default), preedit true (from streaming-mode Streaming)
 ```
 
 Notes:
@@ -434,18 +431,10 @@ Notes:
 - Deleting the keyfile does not reset a running daemon (glib's backend
   ignores file-deleted events); reset keys, don't remove the file.
 
-`auto` gates on a measured RTF baseline, and the snap ships none - so `auto`
-means batch today. That is the safe end of the failure, and the reason is
-recorded in T77: the tier key is the architecture alone, so shipping one
-machine's measurement would promise streaming to every machine of that arch.
-
 ## Known gaps (tracked)
 
 - `experimental.user-daemons` is a manual step until the snap-id is
   allowlisted upstream (see **The daemon**).
-- No RTF baseline is installed, so `streaming-mode=auto` gates to batch
-  everywhere. The tier key is architecture-only, which makes a shipped
-  measurement a promise about machines nobody measured (T77).
 - No `default-provider` on the `backend` plug, so installing a backend is a
   separate step rather than an install prerequisite.
 - Socket access control is "an admin connected the plug" — identity/polkit
