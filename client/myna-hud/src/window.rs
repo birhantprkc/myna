@@ -32,7 +32,6 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::input_region::input_region_rects;
 use crate::pill::{Pill, PILL_HEIGHT, PILL_WIDTH};
 use crate::states::Descriptor;
 
@@ -278,29 +277,13 @@ impl HudWindow {
         progress.connect_map(on_map);
     }
 
-    /// Make the surface fully click-through, in every state (R22/FR-025).
-    /// The HUD takes no pointer input at all, so the region is empty and
-    /// stays empty; a critical error is cleared by the client publishing a
-    /// new state, not by clicking the pill.
+    /// Make the surface fully click-through, in every state (R22/FR-025):
+    /// an empty input region. The HUD takes no pointer input at all; a
+    /// critical error is cleared by the client publishing a new state, not by
+    /// clicking the pill.
     fn apply_input_region(&self) {
-        let Some(surface) = self.window.surface() else {
-            return;
-        };
-        let rects = input_region_rects(None);
-        debug_assert!(
-            rects.is_empty(),
-            "the HUD takes no pointer input in any state"
-        );
-        let region = cairo::Region::create();
-        for rect in rects {
-            let r = cairo::RectangleInt::new(
-                rect.x as i32,
-                rect.y as i32,
-                rect.width as i32,
-                rect.height as i32,
-            );
-            let _ = region.union_rectangle(&r);
+        if let Some(surface) = self.window.surface() {
+            surface.set_input_region(&cairo::Region::create());
         }
-        surface.set_input_region(&region);
     }
 }

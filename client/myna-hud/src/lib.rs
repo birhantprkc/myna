@@ -18,7 +18,6 @@
 //!   [`shader`] (GLSL generator + uniform packing — GPU-only per R23,
 //!   the Cairo painter is deliberately not ported),
 //!   [`hud_logic`] (icon/phase/color/notice rules),
-//!   [`input_region`] (per-state click-through geometry, new R22),
 //!   [`accent`] (accent-color resolution rules, R26),
 //!   [`motion`] (reduced-motion resolution, absent-safe, R26/E2b),
 //!   [`simulator`] (lab-controls ↔ wire-state mapping).
@@ -35,7 +34,6 @@ pub mod dbus_consumer;
 pub mod gl;
 pub mod hud_logic;
 pub mod indicator;
-pub mod input_region;
 #[cfg(dev_lab)]
 pub mod lab;
 pub mod motion;
