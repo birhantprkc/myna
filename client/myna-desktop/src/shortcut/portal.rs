@@ -13,7 +13,7 @@
 //!
 //! The activation/autorepeat logic is a pure state machine ([`Dedup`]) fed by a
 //! stream of [`PortalSignal`]s, so the full `Trigger` behavior is unit-tested
-//! hermetically ([`GlobalShortcutTrigger::from_signals`], T022) with no D-Bus or
+//! hermetically ([`GlobalShortcutTrigger::from_signals_with_mode`], T022) with no D-Bus or
 //! portal. The bind and attach paths ([`GlobalShortcutTrigger::bind`],
 //! [`GlobalShortcutTrigger::attach`]) are proven against a scripted portal that
 //! grants, dismisses or never answers, in `tests/portal_leak.rs`
@@ -194,12 +194,7 @@ pub struct GlobalShortcutTrigger {
 
 impl GlobalShortcutTrigger {
     /// Build a trigger from a pre-made [`PortalSignal`] stream — the hermetic
-    /// test seam (no D-Bus / portal). Uses the default [`ActivationMode`].
-    pub fn from_signals(signals: BoxStream<'static, PortalSignal>) -> Self {
-        Self::from_signals_with_mode(signals, ActivationMode::default())
-    }
-
-    /// [`Self::from_signals`] with an explicit [`ActivationMode`].
+    /// test seam (no D-Bus / portal).
     pub fn from_signals_with_mode(
         signals: BoxStream<'static, PortalSignal>,
         mode: ActivationMode,
