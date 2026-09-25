@@ -1,8 +1,7 @@
 //! `NotifyIndicator` — the headless activity indicator (plan T22, T019).
 //!
 //! The default daemon runs headless (no overlay window, so it can never steal
-//! focus from the target app — the failure mode that sidelined the GTK overlay,
-//! see the removed GTK overlay). To still make dictation *observable* it drives a
+//! focus from the target app). To still make dictation *observable* it drives a
 //! single desktop notification through the whole lifecycle: it raises one toast
 //! on `Recording` ("listening") and **replaces it in place** (same notification
 //! id) as the state advances to transcribing / finishing, closing it on
@@ -11,7 +10,7 @@
 //! Notifications never take input focus, so this is safe on Wayland where a
 //! toplevel overlay is not. It carries state labels only, never transcript text
 //! (privacy, N8). The richer always-on-top overlay is the myna-shell overlay
-//! (feature 004); the former GTK `ui-gtk` overlay was removed in T150.
+//! (feature 004).
 
 use async_trait::async_trait;
 use gettextrs::gettext;

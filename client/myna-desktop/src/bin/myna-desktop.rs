@@ -21,9 +21,8 @@
 //!
 //! Both are press-to-toggle: tap to start, tap again to stop. `--portal` /
 //! `--control` force one; `--hold` switches the portal to hold-to-talk;
-//! `--stdin` is terminal debug (injects back into the terminal). The
-//! experimental GTK activity overlay was removed (T150); the indicator is
-//! either the myna-shell overlay (feature 004) or headless notifications.
+//! `--stdin` is terminal debug (injects back into the terminal). The indicator
+//! is either the myna-shell overlay (feature 004) or headless notifications.
 //!
 //! ```text
 //!   myna-server --adapter whisper --socket /tmp/myna.sock &

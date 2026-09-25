@@ -18,7 +18,7 @@
 //! - [`indicator::Indicator`] — the activity surface
 //!   ([`indicator::notify::NotifyIndicator`] for headless, and the
 //!   myna-shell overlay for GNOME; [`indicator::mock::MockIndicator`] for
-//!   tests). The former GTK overlay was removed in T150.
+//!   tests).
 //!
 //! Real IBus/GTK behavior lives behind env-gated integration suites
 //! (`MYNA_IBUS_TESTS` / `MYNA_DBUS_TESTS`, the latter also covering the portal

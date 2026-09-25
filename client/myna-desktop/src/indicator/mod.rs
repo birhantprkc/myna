@@ -3,10 +3,8 @@
 //! A persistent, screen-reader-perceivable surface showing recording /
 //! transcribing / finalizing / error — so the user always knows dictation is
 //! live. [`notify::NotifyIndicator`] is the shipped default;
-//! [`mock::MockIndicator`] is the hermetic test fixture. The former GTK
-//! overlay (`indicator::gtk`, feature `ui-gtk`) was removed in T150 — the
-//! myna-shell overlay (feature 004) and the headless notify path are the
-//! shipped indicators. See `specs/003-desktop-injection/contracts/indicator.md`.
+//! [`mock::MockIndicator`] is the hermetic test fixture. See
+//! `specs/003-desktop-injection/contracts/indicator.md`.
 
 use async_trait::async_trait;
 use gettextrs::gettext;
@@ -36,10 +34,7 @@ pub enum IndicatorState {
     /// critical failure that persists until acknowledged (e.g. no microphone
     /// available). This is an interim, client-inferred classification ahead
     /// of a true wire-level error disposition — see
-    /// `controller::completion_indicator_state`. Non-D-Bus indicators
-    /// (`gtk`/`notify`) currently render every `Error` identically regardless
-    /// of this field (out of scope for feature 004); only `indicator::dbus`
-    /// branches on it.
+    /// `controller::completion_indicator_state`.
     Error { message: String, recoverable: bool },
 }
 
