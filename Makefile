@@ -149,7 +149,7 @@ test-client-gated: ## Env-gated PipeWire/IBus/D-Bus suites with private services
 	$(WS) test-gated
 
 .PHONY: test-client-ui
-test-client-ui: ## HUD renderer paints a wave under xvfb (workshop: ui-check)
+test-client-ui: ## HUD indicators paint under xvfb (workshop: ui-check)
 	$(WS) ui-check
 
 .PHONY: test-server

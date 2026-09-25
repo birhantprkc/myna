@@ -99,15 +99,12 @@ actions:
   # snap's core24, and the extension targets a Shell no 24.04 archive has.
   # See .workshop/myna-shell.yaml.
 
-  # --- feature 004: GPU render smoke check --------------------------------
-  # The renderer test suite proves the shader compiles and the packings
-  # match; this proves a driver actually paints a wave — running
-  # `examples/render_check` under xvfb and asserting exit 0. CI-friendly
-  # (xvfb + Mesa software renderer is enough; the workshop SDK already
-  # supplies libegl/libgl/libepoxy). Use this whenever the shader core or
-  # the uploader changes — that path is unreachable from unit tests and
-  # easily regresses (see the be8d380 / fix-2e45c6 incident: a wrong GL
-  # upload count silently produced a flat saturated block).
+  # --- feature 004: HUD render smoke check --------------------------------
+  # The unit tests prove what the indicators should draw; this proves GTK
+  # paints it: `examples/render_check` drives a real pill through each
+  # hud-style under xvfb, reads the rasterised indicator back and asserts
+  # exit 0. Use this whenever an indicator's drawing or the style switch
+  # changes; that path is unreachable from unit tests.
   ui-check: |
     set -uo pipefail
     export RUST_BACKTRACE=1
@@ -117,8 +114,6 @@ actions:
     # dev/gated-tests.sh.
     export GIO_USE_VFS=local
     cd /project/client
-    # The example has the rendered ribbon checked end-to-end (compile +
-    # link + render + read_pixels + body-bands-on-centre-row assertions).
     cargo build --workspace --example render_check
     dbus-run-session -- xvfb-run -a -s "-screen 0 800x600x24" \
       ./target/debug/examples/render_check
@@ -172,8 +167,8 @@ actions:
     MYNA_CONFIG_TEMPLATE_TESTS=1 MYNA_CONFIG_GTK_TESTS=1 \
       dbus-run-session -- xvfb-run -a -s "-screen 0 1024x768x24" \
       cargo llvm-cov --no-report --workspace --lib --test template_instantiation -- --test-threads=1
-    # The ribbon renderer only runs with a GL context, which no test has:
-    # `ui-check`'s render_check is its test, so measure it here too.
+    # The indicators only paint on a display, which no test has: `ui-check`'s
+    # render_check is their test, so measure it here too.
     dbus-run-session -- xvfb-run -a -s "-screen 0 800x600x24" \
       cargo llvm-cov run --no-report --example render_check
     # Four exports over every profraw, silent until the summary table.

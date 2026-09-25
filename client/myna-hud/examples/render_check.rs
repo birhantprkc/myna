@@ -1,171 +1,228 @@
-// examples/render_check.rs — the GPU render check (feature 004, T121/T133).
+// examples/render_check.rs — the HUD render check (feature 004, T121/T133).
 //
-// The shader tests prove the generated source *compiles*; this proves a
-// driver actually *lights pixels* with it. Three failure modes hide from a
-// compile check and show only as a wrong overlay:
+// The unit tests prove what the indicators *should* draw; this proves GTK
+// actually paints it. A real pill is driven through a recording session at a
+// known level, once per `hud-style`, and the active indicator is rasterised
+// with the window's own GSK renderer and read back. Failure modes that only
+// show as a wrong overlay:
 //
-//   1. the program links but every strand falls outside the canvas (the
-//      frame is empty);
-//   2. the UV `vUv` is never fed from the vertex stage, so every strand
-//      samples x = 0 and the frame is *constant along x*;
-//   3. the strand-body uniforms are uploaded with the wrong count, so the
-//      wisps/dots still draw but the actual ribbon body is missing
-//      (caught by the centreline-bounded-body check below — the body must
-//      cover a substantial part of the canvas at the centre row, while
-//      wisps alone would give a sparse set of isolated tendrils).
+//   1. the indicator draws nothing (hidden, zero-sized, or a colour that
+//      resolved to transparent);
+//   2. the level does not reach the fill (the bar is empty or pinned full, the
+//      meter lights no segment or all of them);
+//   3. the colour is not the theme's (a grey accent bar, an uncoloured meter);
+//   4. the style switch leaves the other indicator painting too.
 //
 // Run with:  xvfb-run -a -s "-screen 0 640x480x24" \
 //                cargo run -p myna-hud --example render_check
-// Exit code 0 = the ribbon rendered.
+// Exit code 0 = every style rendered.
 
-use gtk::glib;
-use gtk::prelude::*;
-use gtk4 as gtk;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
-use myna_hud::gl::{read_pixels, RibbonRenderer};
-use myna_hud::ribbon::{compute_ribbon_model, RibbonInput, RibbonPhase};
-use myna_hud::shader::RibbonPalette;
+use gtk::prelude::*;
+use gtk::{glib, graphene};
+use gtk4 as gtk;
+use libadwaita as adw;
 
-const WIDTH: i32 = 320;
-const HEIGHT: i32 = 64;
+use myna_hud::hud_logic::HudStyle;
+use myna_hud::pill::Pill;
+use myna_hud::segmented_meter::BAR_COUNT;
+use myna_hud::simulator::envelope_to_levels;
+use myna_hud::states::{state_to_descriptor, wire};
+
+/// The level the check drives, as the lab's slider would.
+const ENVELOPE: f64 = 0.5;
+
+/// Long enough for the window to map and the eased level to settle.
+const SETTLE: Duration = Duration::from_millis(600);
+
+/// A rasterised widget: premultiplied BGRA rows, as `gdk::Texture::download`
+/// writes them.
+struct Frame {
+    width: usize,
+    height: usize,
+    pixels: Vec<u8>,
+}
+
+impl Frame {
+    /// `(r, g, b, a)` at a pixel, un-premultiplied.
+    fn rgba(&self, x: usize, y: usize) -> (u8, u8, u8, u8) {
+        let i = (y * self.width + x) * 4;
+        let [b, g, r, a] = [
+            self.pixels[i],
+            self.pixels[i + 1],
+            self.pixels[i + 2],
+            self.pixels[i + 3],
+        ];
+        let un = |c: u8| match a {
+            0 => 0,
+            _ => ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8,
+        };
+        (un(r), un(g), un(b), a)
+    }
+}
+
+/// Paint `widget` the way its window would and read the pixels back. `None`
+/// when it paints nothing at all.
+fn render(widget: &gtk::Widget) -> Option<Frame> {
+    let (width, height) = (widget.width(), widget.height());
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    let snapshot = gtk::Snapshot::new();
+    gtk::WidgetPaintable::new(Some(widget)).snapshot(&snapshot, width as f64, height as f64);
+    let node = snapshot.to_node()?;
+    let renderer = widget.native()?.renderer()?;
+    let bounds = graphene::Rect::new(0.0, 0.0, width as f32, height as f32);
+    let texture = renderer.render_texture(node, Some(&bounds));
+    let (width, height) = (texture.width() as usize, texture.height() as usize);
+    let mut pixels = vec![0; width * height * 4];
+    texture.download(&mut pixels, width * 4);
+    Some(Frame {
+        width,
+        height,
+        pixels,
+    })
+}
+
+/// A saturated colour rather than a grey: what an accent or a VU zone is.
+fn chromatic((r, g, b, _): (u8, u8, u8, u8)) -> bool {
+    r.max(g).max(b) - r.min(g).min(b) > 40
+}
+
+/// The bar: an opaque accent fill from the left edge, about as long as the
+/// level, over a faint track.
+fn check_bar(frame: &Frame, problems: &mut Vec<String>) {
+    let row = frame.height / 2;
+    let lit: Vec<bool> = (0..frame.width)
+        .map(|x| frame.rgba(x, row).3 > 200)
+        .collect();
+    let fill = lit.iter().take_while(|&&on| on).count();
+    let fraction = fill as f64 / frame.width as f64;
+    println!(
+        "render-check: bar {}x{} fill {fill}px = {:.0}%",
+        frame.width,
+        frame.height,
+        fraction * 100.0
+    );
+    if fill == 0 {
+        problems.push("bar: no fill from the left edge".into());
+        return;
+    }
+    if lit[fill..].iter().any(|&on| on) {
+        problems.push("bar: the fill is not one run from the left edge".into());
+    }
+    if !(0.25..=0.75).contains(&fraction) {
+        problems.push(format!(
+            "bar: fill is {fraction:.2} of the width for a {ENVELOPE} level"
+        ));
+    }
+    if !chromatic(frame.rgba(fill / 2, row)) {
+        problems.push(format!(
+            "bar: the fill is not the accent colour: {:?}",
+            frame.rgba(fill / 2, row)
+        ));
+    }
+    let track = frame.rgba(frame.width - 2, row).3;
+    if !(8..=64).contains(&track) {
+        problems.push(format!(
+            "bar: the track's alpha is {track}, not a faint groove"
+        ));
+    }
+}
+
+/// The meter: segments lit from the left up to about the level, the first
+/// one green, the unlit ones dim.
+fn check_meter(frame: &Frame, problems: &mut Vec<String>) {
+    let row = frame.height / 2;
+    let gap = frame.width as f64 / BAR_COUNT as f64;
+    let centre = |i: usize| ((i as f64 + 0.5) * gap) as usize;
+    let alpha: Vec<u8> = (0..BAR_COUNT)
+        .map(|i| frame.rgba(centre(i), row).3)
+        .collect();
+    let lit = alpha.iter().take_while(|&&a| a > 200).count();
+    println!(
+        "render-check: vumeter {}x{} lit {lit} of {BAR_COUNT}",
+        frame.width, frame.height
+    );
+    if !(BAR_COUNT / 4..=BAR_COUNT * 3 / 4).contains(&lit) {
+        problems.push(format!(
+            "vumeter: {lit} of {BAR_COUNT} segments lit for a {ENVELOPE} level"
+        ));
+    }
+    if alpha[lit..].iter().any(|&a| !(8..=80).contains(&a)) {
+        problems.push(format!(
+            "vumeter: the segments past the level are not dim: {alpha:?}"
+        ));
+    }
+    let (r, g, b, _) = frame.rgba(centre(0), row);
+    if !(g > r && g > b && chromatic((r, g, b, 255))) {
+        problems.push(format!(
+            "vumeter: the first segment is not green: {:?}",
+            (r, g, b)
+        ));
+    }
+}
+
+/// Render the style's own indicator and check it, and require the other one
+/// to paint nothing.
+fn check(pill: &Pill, style: HudStyle, problems: &mut Vec<String>) {
+    let (shown, hidden) = match style {
+        HudStyle::Bar => (pill.bar(), pill.meter()),
+        HudStyle::Vumeter => (pill.meter(), pill.bar()),
+    };
+    if render(hidden).is_some() {
+        problems.push(format!("{style:?}: the other indicator still paints"));
+    }
+    match (render(shown), style) {
+        (None, _) => problems.push(format!("{style:?}: nothing was drawn")),
+        (Some(frame), HudStyle::Bar) => check_bar(&frame, problems),
+        (Some(frame), HudStyle::Vumeter) => check_meter(&frame, problems),
+    }
+}
 
 fn main() {
-    let app = gtk::Application::builder()
+    let app = adw::Application::builder()
         .application_id("com.canonical.Myna.HudRenderCheck")
         .build();
 
     app.connect_activate(|app| {
-        let area = gtk::GLArea::new();
-        area.set_size_request(WIDTH, HEIGHT);
+        let pill = Pill::new();
+        let window = gtk::ApplicationWindow::new(app);
+        window.set_title(Some("myna render-check"));
+        window.set_child(Some(pill.widget()));
+        window.present();
 
-        let failures: Rc<RefCell<Vec<String>>> = Rc::default();
-        let app_quit = app.clone();
-        let failures_render = failures.clone();
+        pill.apply_descriptor(state_to_descriptor(Some(wire::RECORDING), "Listening"));
 
-        area.connect_render(move |_area, _ctx| {
-            let mut problems = failures_render.borrow_mut();
-
-            match RibbonRenderer::realize() {
-                Err(e) => problems.push(format!("shader failed to build: {e}")),
-                Ok(mut renderer) => {
-                    println!("render-check: profile = {:?}", renderer.profile());
-
-                    // A mid-speech recording frame: plenty of activity, so a
-                    // correct ribbon covers a good part of the canvas.
-                    let model = compute_ribbon_model(RibbonInput {
-                        envelope: 0.7,
-                        elapsed_ms: 1200.0,
-                        phase: RibbonPhase::Flow,
-                        ..Default::default()
-                    });
-                    let palette = RibbonPalette::from_hex("#3584E4", "#99C1F1", "#1A5FB4", 0.35);
-                    renderer.render(&model, &palette, WIDTH, HEIGHT);
-
-                    let pixels = unsafe { read_pixels(WIDTH, HEIGHT) };
-                    if let Ok(path) = std::env::var("MYNA_RENDER_CHECK_OUT") {
-                        // Save the framebuffer as a grayscale PGM so the
-                        // rendered ribbon can be eyeballed from CI.
-                        let mut pgm = format!("P5\n{WIDTH} {HEIGHT}\n255\n").into_bytes();
-                        for y in 0..HEIGHT {
-                            for x in 0..WIDTH {
-                                let i = ((y * WIDTH + x) * 4 + 3) as usize;
-                                pgm.push(pixels[i]);
-                            }
-                        }
-                        let _ = std::fs::write(&path, pgm);
-                        println!("render-check: wrote {path}");
-                    }
-                    let alpha_at =
-                        |x: i32, y: i32| -> u8 { pixels[((y * WIDTH + x) * 4 + 3) as usize] };
-
-                    // 1. Something was drawn.
-                    let lit = (0..WIDTH)
-                        .flat_map(|x| (0..HEIGHT).map(move |y| (x, y)))
-                        .filter(|(x, y)| alpha_at(*x, *y) > 8)
-                        .count();
-                    let coverage = lit as f64 / (WIDTH * HEIGHT) as f64;
-                    println!("render-check: coverage = {:.1}%", coverage * 100.0);
-                    if lit == 0 {
-                        problems.push("nothing was drawn — the frame is empty".into());
-                    } else if coverage < 0.01 {
-                        problems.push(format!("suspiciously little drawn ({coverage:.4})"));
-                    }
-
-                    // 2. The ribbon varies along x. A frame that is constant
-                    //    per column is the un-fed-UV signature.
-                    let column_profile: Vec<u32> = (0..WIDTH)
-                        .map(|x| (0..HEIGHT).map(|y| alpha_at(x, y) as u32).sum())
-                        .collect();
-                    let min = column_profile.iter().min().copied().unwrap_or(0);
-                    let max = column_profile.iter().max().copied().unwrap_or(0);
-                    println!("render-check: column alpha min={min} max={max}");
-                    if max == min {
-                        problems
-                            .push("the frame is constant along x — vUv is not being fed".into());
-                    }
-
-                    // 3. The strand BODY drew — not just wisps / dots.
-                    //    The body is a thin band near the vertical
-                    //    centre; wisps + dots add isolated tendrils and a
-                    //    few travelling markers, not a connected fill.
-                    //    A wrong uniform upload (e.g. writing `count` as
-                    //    `components * count` for an array uniform) can
-                    //    leave the strand body drawing nothing while the
-                    //    wisp/dot layer, which reads different uniforms,
-                    //    still draws — and the result is a flat saturated
-                    //    block that passes any "is something drawn?" check.
-                    //
-                    //    The discriminating signal is the number of rows
-                    //    lit per column: a wave lights a band, a solid
-                    //    block lights all rows. We assert the median
-                    //    lit-rows-per-column is well below HEIGHT (the
-                    //    wave is a thin band, not a solid rectangle).
-                    let mut rows_per_col: Vec<u32> = (0..WIDTH)
-                        .map(|x| (0..HEIGHT).filter(|&y| alpha_at(x, y) > 32).count() as u32)
-                        .collect();
-                    rows_per_col.sort_unstable();
-                    let median = rows_per_col[WIDTH as usize / 2];
-                    let p90 = rows_per_col[(WIDTH as usize * 90) / 100];
-                    println!(
-                        "render-check: rows-lit per column median={median} p90={p90} (of {HEIGHT})"
-                    );
-                    if median > HEIGHT as u32 * 3 / 4 {
-                        problems.push(format!(
-                            "the body fills the canvas — median rows-lit per column \
-                             is {median} of {HEIGHT} (a wave is a thin band, not a \
-                             solid block; this usually means the strand-array \
-                             uniforms were uploaded with the wrong count)"
-                        ));
-                    }
-
-                    renderer.unrealize();
-                }
-            }
-
-            let app = app_quit.clone();
-            let failures = failures_render.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
-                let problems = failures.borrow();
-                if problems.is_empty() {
-                    println!("render-check: OK — the ribbon rendered");
-                } else {
-                    for p in problems.iter() {
-                        eprintln!("render-check: FAIL — {p}");
-                    }
-                }
-                let code = i32::from(!problems.is_empty());
-                app.quit();
-                std::process::exit(code);
-            });
-            glib::Propagation::Proceed
+        // Keep the level fresh, as the publisher does; a stale one decays.
+        let (rms, peak) = envelope_to_levels(ENVELOPE);
+        let feed = pill.clone();
+        glib::timeout_add_local(Duration::from_millis(50), move || {
+            feed.push_level(rms, peak);
+            glib::ControlFlow::Continue
         });
 
-        let win = gtk::ApplicationWindow::new(app);
-        win.set_title(Some("myna render-check"));
-        win.set_child(Some(&area));
-        win.present();
+        let problems: Rc<RefCell<Vec<String>>> = Rc::default();
+        let app = app.clone();
+        glib::timeout_add_local_once(SETTLE, move || {
+            check(&pill, HudStyle::Bar, &mut problems.borrow_mut());
+            pill.set_hud_style(HudStyle::Vumeter);
+            glib::timeout_add_local_once(SETTLE, move || {
+                check(&pill, HudStyle::Vumeter, &mut problems.borrow_mut());
+                let problems = problems.borrow();
+                for p in problems.iter() {
+                    eprintln!("render-check: FAIL — {p}");
+                }
+                if problems.is_empty() {
+                    println!("render-check: OK — every style rendered");
+                }
+                app.quit();
+                std::process::exit(i32::from(!problems.is_empty()));
+            });
+        });
     });
 
     std::process::exit(app.run().get() as i32);
