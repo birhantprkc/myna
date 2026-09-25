@@ -150,7 +150,7 @@ fn build_lab(app: &adw::Application, publishing: bool) {
         Target::Embedded(Pill::new())
     } else {
         let hud = HudWindow::new(app);
-        hud.present_standalone();
+        hud.window().present();
         Target::Window(hud)
     }));
 
@@ -627,7 +627,7 @@ fn swap_target(
     } else {
         preview_frame.set_visible(false);
         let hud = HudWindow::new(app);
-        hud.present_standalone();
+        hud.window().present();
         Target::Window(hud)
     };
     *target.borrow_mut() = new_target;

@@ -12,8 +12,7 @@
 //! GNOME the `myna-shell` extension launches it through a
 //! `Meta.WaylandClient`, adopts the window, makes it a DOCK, and places it
 //! (R21) — a renderer that also positioned itself would fight its host. In
-//! [`present_standalone`](HudWindow::present_standalone) (lab) mode there is
-//! no host, so it presents as an ordinary window.
+//! lab mode there is no host, so it presents as an ordinary window.
 //!
 //! ## Click-through (R22/T114)
 //!
@@ -130,11 +129,6 @@ impl HudWindow {
         &self.window
     }
 
-    /// Present as an ordinary window (lab mode — no host to adopt us).
-    pub fn present_standalone(&self) {
-        self.window.present();
-    }
-
     /// Apply a state descriptor to the pill, then map/unmap the overlay for
     /// the idle transition, and refresh the input region.
     pub fn apply_descriptor(self: &Rc<Self>, descriptor: Descriptor) {
@@ -228,11 +222,6 @@ impl HudWindow {
     /// Current wire state (for lab sync when HUD auto-dismisses locally).
     pub fn current_wire_state(&self) -> String {
         self.pill.current_wire_state()
-    }
-
-    /// Current descriptor (for lab sync).
-    pub fn current_descriptor(&self) -> crate::states::Descriptor {
-        self.pill.current_descriptor()
     }
 
     // ── Overlay concerns ────────────────────────────────────────────────
