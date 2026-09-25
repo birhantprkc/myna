@@ -67,47 +67,34 @@ install downloads the GPU components rather than the int8 model.
 
 ## The keyboard shortcut
 
-Under portal activation the accelerator belongs to the compositor, and only the
-daemon holding the portal session sees what was granted. The daemon republishes
-the portal's own description of the binding as the `Shortcut` property on
-`com.canonical.Myna.Dictation`. The last step and the Myna page follow it
-through a live proxy, so a daemon starting or a rebind in Settings shows up
-without a refresh:
+The daemon publishes `Activation` (`portal` or `control`) and, under the portal,
+the portal's description of the binding as `Shortcut`. The last step and the Myna
+page follow both through a live proxy, so a rebind elsewhere shows up at once.
+Not running disables the button; no `Shortcut` from an older daemon is treated
+as bound.
 
-| Daemon                       | Shows                       | Button                    |
-| ---------------------------- | --------------------------- | ------------------------- |
-| not running                  | that it has to start first  | Set Up Shortcut, disabled |
-| `Shortcut` empty             | that no key is bound        | Set Up Shortcut           |
-| `Shortcut` set               | key caps                    | Change Shortcut           |
-| no `Shortcut` (older daemon) | where the key is listed     | Change Shortcut           |
+**Portal.** Set Up Shortcut calls `BindShortcut("")`: the daemon offers `LOGO+j`
+(Super+J) to the portal's dialog, because the portal files a binding under the
+caller's app id and grants one only through that dialog. The description
+(`Press <Super>j`) becomes key caps. Change Shortcut opens
+`gnome-control-center applications myna_myna`: GlobalShortcuts 1 has no
+`ConfigureShortcuts` and no unbind. A refused bind shows the error dialog.
 
-Set Up Shortcut calls `BindShortcut("")`, and the daemon offers `LOGO+j`
-(Super+J) to the portal's dialog. There is no silent default: GNOME grants a new
-binding only through that dialog. Seeding gnome-settings-daemon's store instead
-would bypass the consent, depend on a private schema, and key on an app id that
-has already regressed once. The call goes through the daemon because the portal
-files a binding under the caller's app id.
+**Control (Noble).** The key is a GNOME custom shortcut to
+`/snap/bin/myna.toggle`, the entry `myna.install-shortcut` writes; this
+application is unconfined and writes it itself. Set Up installs Super+J;
+Change captures a key in a dialog that:
 
-GNOME describes a binding as a translated sentence around a GTK accelerator
-(`Press <Super>j`). The accelerator becomes key caps; a description without one
-is shown verbatim. Change Shortcut opens `gnome-control-center applications
-myna_myna`, where GNOME rebinds portal shortcuts: GlobalShortcuts version 1 has
-no `ConfigureShortcuts`, and the portal has no unbind.
-
-Where the portal has no GlobalShortcuts (Noble), the daemon publishes
-`Activation` as `control` and listens on its control socket. The key is then a
-GNOME custom shortcut to `/snap/bin/myna.toggle`, the entry
-`myna.install-shortcut` writes. Set Up Shortcut installs it with Super+J, the
-application being unconfined, and Change Shortcut captures a new combination
-in a dialog. It must include Ctrl, Alt or Super, so a bare key cannot take over
-typing, unless it is a function or media key. While the dialog is open it
-inhibits the desktop's shortcuts, as GNOME Settings does, so keys GNOME already
-uses reach it; GNOME asks once whether to allow that. A key already bound to a
-desktop action or another custom shortcut is taken only after the user agrees to
-replace it, which removes it from there.
-Keys gsd-media-keys binds as `-static` (the hardware-key defaults, such as
-Super+O for rotation lock) are refused instead: it grabs them at login and keeps
-them until logout whatever the setting says, so a replaced one never fires.
+- takes a chord with Ctrl, Alt or Super, or a lone function or media key, so
+  typing is never hijacked; media keys are stored as `XF86<Name>`, the only
+  spelling the desktop resolves;
+- inhibits the desktop's shortcuts while open, as GNOME Settings does, so keys
+  GNOME uses reach it (GNOME asks once to allow this);
+- asks before taking a key from a desktop action or another custom shortcut,
+  and removes it there;
+- refuses keys gsd-media-keys binds as `-static` (Super+O for rotation lock):
+  it grabs those at login and holds them until logout whatever the setting
+  says, so a replaced one would never fire.
 
 ## Cost
 

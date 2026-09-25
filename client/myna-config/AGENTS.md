@@ -20,7 +20,8 @@ Myna Settings is a host application, not a snap. It talks to snapd on the user's
 - Every user-visible string goes through gettext. Adding or changing one requires `make i18n` and committing the template; `make check` fails while it drifts.
 - Strict confinement was measured and rejected (`docs/confinement.md`). Do not reopen it without new evidence.
 - The GSettings schema this application writes is owned by `client/data/` and shared with the daemon.
-- The deb builds against each series' own GTK and libadwaita, Noble's being the oldest. `make test-noble` runs this crate's suites there; the main workshop's newer toolkit hides what breaks on it.
+- The deb builds against each series' own GTK and libadwaita. Noble's 4.14 and 1.5 are the floor, and the main workshop's newer toolkit hides their bugs: an unscrolled page of wrapping labels overflows the window, a dialog with no focusable child never receives keys, a fixed-size dialog warns when its content grows. `make test-noble` runs this crate's suites there, and the startup and shortcut tests fail on any toolkit warning.
+- On Noble the dictation key is a GNOME custom shortcut this application writes (`adapters/desktop_shortcut.rs`), because that portal has no GlobalShortcuts; `docs/onboarding.md` records how GNOME treats it.
 
 # Architecture
 
@@ -29,7 +30,7 @@ Hexagonal. `ports.rs` declares the traits the application depends on (backend re
 # Directory
 
 - `build/` - Build logic outside cargo: the minimum `blueprint-compiler` version that `tests/` pulls in with `include!`, and the translation install the deb build runs.
-- `src/adapters/` - snapd REST client, `snap` CLI repository, pkexec configurator, Gio settings.
+- `src/adapters/` - snapd REST client, `snap` CLI repository, pkexec configurator, Gio settings, GNOME custom shortcut.
 - `src/ui/` - One module per Blueprint template in `data/`.
 - `src/bin/` - Test fixture that stands in for a real command runner.
 - `data/` - Blueprint templates, CSS, desktop entry, polkit action, man page, gresource manifest.
