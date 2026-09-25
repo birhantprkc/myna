@@ -67,8 +67,7 @@ import asyncio
 import logging
 import os
 import re
-import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,7 +92,6 @@ from myna.core import (
 )
 from myna.server.lifecycle import MemoryPressureMonitor, sample_majflt
 from myna.testbed.adapter import Candidate
-from myna.testbed.harness import StreamingTelemetry
 from myna.testbed.streaming.coverage import (
     RETRY_PADS,
     UNTRANSCRIBED_GAP_S,
@@ -112,8 +110,7 @@ from myna.testbed.streaming.strategies import (
 # Tracy zones (dev tooling only): `tracy_client` is built from source
 # by hand and never present in a production
 # install, so this is a permanent import-time branch, not a per-call one -
-# `_zone` costs one nullcontext() when disabled, same order of magnitude as
-# the `bench is not None` checks below.
+# `_zone` costs one nullcontext() when disabled.
 try:
     from tracy_client import ScopedZone as _TracyZone
 
@@ -334,11 +331,6 @@ PARTIAL_TAIL_S = 0.0
 # Murmure's DECODE_SPACE_RE: strip the leading space and spaces before
 # punctuation, keep word-boundary spaces. Tokens carry ▁→space already.
 _DECODE_SPACE_RE = re.compile(r"\A\s|\s\B|(\s)\b")
-
-# Stage span name -> elapsed seconds. Wired only by dev/parakeet/bench_parakeet.py
-# (T01); production callers never pass one, so the hot path pays nothing
-# beyond the branch (verified <1% overhead over 71 joint calls, 2026-08-28).
-BenchSink = Callable[[str, float], None]
 
 
 def _detokenize(tokens: list[str]) -> str:
@@ -596,39 +588,21 @@ class _ParakeetOnnx:
         return buffers.logits
 
     def _decode_sequence(
-        self, encodings: NDArray[np.float32], encodings_len: int, *, bench: BenchSink | None = None
+        self, encodings: NDArray[np.float32], encodings_len: int
     ) -> tuple[list[str], list[float]]:
         """Greedy TDT decode (murmure decode_sequence_greedy): argmax vocab
         token; on non-blank update the decoder state; the duration head skips
         t forward; a blank (or MAX_TOKENS_PER_STEP at one frame) advances 1.
-
-        ``bench``, when given, separates the ``joint`` span (summed ONNX call
-        time) from ``greedy`` (loop wall time minus joint) the way T01's
-        harness needs — the loop's own argmax/control-flow overhead is
-        otherwise invisible next to 71+ sequential ORT calls. It also reports
-        the non-timing counts the harness wants alongside the spans:
-        ``_frames`` (``encodings_len``) and ``_joint_calls``.
         """
-        if bench is not None:
-            bench("_frames", float(encodings_len))
         buffers = self._joint_buffers()
         tokens: list[str] = []
         timestamps: list[float] = []
         t = 0
         emitted_at_frame = 0
         prev_token = self._blank_idx
-        joint_s = 0.0
-        joint_calls = 0
-        loop_t0 = time.perf_counter() if bench is not None else 0.0
         with _zone("decode_sequence"):
             while t < encodings_len:
-                if bench is None:
-                    logits = self._decode_step(buffers, prev_token, encodings[t])
-                else:
-                    step_t0 = time.perf_counter()
-                    logits = self._decode_step(buffers, prev_token, encodings[t])
-                    joint_s += time.perf_counter() - step_t0
-                    joint_calls += 1
+                logits = self._decode_step(buffers, prev_token, encodings[t])
                 vocab_logits = logits[: self._vocab_size]
                 dur_logits = logits[self._vocab_size :]
                 token = int(np.argmax(vocab_logits))
@@ -646,43 +620,24 @@ class _ParakeetOnnx:
                 elif token == self._blank_idx or emitted_at_frame == MAX_TOKENS_PER_STEP:
                     t += 1
                     emitted_at_frame = 0
-        if bench is not None:
-            bench("joint", joint_s)
-            bench("greedy", (time.perf_counter() - loop_t0) - joint_s)
-            bench("_joint_calls", float(joint_calls))
         return tokens, timestamps
 
-    def transcribe(
-        self, samples: NDArray[np.float32], *, bench: BenchSink | None = None
-    ) -> tuple[list[str], list[float]]:
-        """float32 mono 16 kHz → (tokens, token timestamps in region seconds).
-
-        ``bench(name, seconds)`` fires once per stage (``preprocess``,
-        ``encode``, ``transpose``, then ``joint``/``greedy`` from
-        ``_decode_sequence``) — dev/parakeet/bench_parakeet.py's hook (T01). ``None``
-        by default and on every production call path.
-        """
+    def transcribe(self, samples: NDArray[np.float32]) -> tuple[list[str], list[float]]:
+        """float32 mono 16 kHz → (tokens, token timestamps in region seconds)."""
         with _zone("transcribe"):
             waveforms = samples.reshape(1, -1).astype(np.float32)
             waveforms_lens = np.array([samples.shape[0]], dtype=np.int64)
-            t0 = time.perf_counter() if bench is not None else 0.0
             with _zone("preprocess"):
                 features, features_lens = self._preprocessor.run(
                     ["features", "features_lens"],
                     {"waveforms": waveforms, "waveforms_lens": waveforms_lens},
                 )
-            if bench is not None:
-                bench("preprocess", time.perf_counter() - t0)
-                t0 = time.perf_counter()
             with _zone("encode"):
                 encoder_out, encoder_lens = self._encoder.run(
                     ["outputs", "encoded_lengths"],
                     {"audio_signal": features, "length": features_lens},
                     self._encoder_run_options,
                 )
-            if bench is not None:
-                bench("encode", time.perf_counter() - t0)
-                t0 = time.perf_counter()
             # [1, 1024, T] → [1, T, 1024]. Forced contiguous (T09): a plain
             # np.transpose is a strided view, so every one of the ~71 per-frame
             # slices `_decode_step` takes below would itself be a non-contiguous
@@ -690,9 +645,7 @@ class _ParakeetOnnx:
             # contiguous memcpy instead.
             with _zone("transpose"):
                 encoder_out = np.ascontiguousarray(np.transpose(encoder_out, (0, 2, 1)))
-            if bench is not None:
-                bench("transpose", time.perf_counter() - t0)
-            return self._decode_sequence(encoder_out[0], int(encoder_lens[0]), bench=bench)
+            return self._decode_sequence(encoder_out[0], int(encoder_lens[0]))
 
     def _padded(self, samples: NDArray[np.float32], pad_s: float) -> tuple[list[str], list[float]]:
         """Decode ``samples`` nudged by silence on both ends, in region
@@ -784,7 +737,6 @@ class ParakeetAdapter:
         stream_force_cut_s: float = SC_FORCE_CUT_S,
         stream_partial_cadence_s: float = PARTIAL_CADENCE_S,
         stream_partial_tail_s: float = PARTIAL_TAIL_S,
-        stream_telemetry: StreamingTelemetry | None = None,
     ) -> None:
         if device not in ("cpu", "cuda"):
             raise ValueError(f"device must be cpu or cuda, got {device!r}")
@@ -798,8 +750,6 @@ class ParakeetAdapter:
         # 0 tail means the tick decodes the whole uncommitted window.
         self._stream_partial_cadence_s = float(stream_partial_cadence_s)
         self._stream_partial_tail_s = float(stream_partial_tail_s)
-        # perf T03: None on every production call path (dev tooling only).
-        self._stream_telemetry = stream_telemetry
         if self._stream_arm_s <= 0:
             raise ValueError("stream_arm_s must be > 0")
         if self._stream_silence_cut_s <= 0:
@@ -1020,6 +970,5 @@ class ParakeetAdapter:
             overlap_seconds=STREAM_OVERLAP_S,
             partial_cadence_seconds=self._stream_partial_cadence_s or None,
             partial_tail_seconds=self._stream_partial_tail_s or None,
-            telemetry=self._stream_telemetry,
         )
         await emit(TranscriptionDone(text=transcript))

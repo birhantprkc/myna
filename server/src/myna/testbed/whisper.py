@@ -47,7 +47,6 @@ from myna.core import (
     TranscriptionProgress,
 )
 from myna.testbed.adapter import Candidate
-from myna.testbed.harness import StreamingTelemetry
 from myna.testbed.streaming.strategies import Hypothesis, Word
 
 if TYPE_CHECKING:
@@ -229,7 +228,6 @@ class FasterWhisperAdapter:
         stream_cadence_s: float = STREAM_CADENCE_S,
         stream_window_cap_s: float = STREAM_WINDOW_CAP_S,
         stream_beam_size: int = STREAM_BEAM_SIZE,  # 5 ≈ batch quality, 1 ≈ 5× cheaper
-        stream_telemetry: StreamingTelemetry | None = None,
     ) -> None:
         self._model_size = model_size
         self._device = device
@@ -239,10 +237,6 @@ class FasterWhisperAdapter:
         self._stream_cadence_s = stream_cadence_s
         self._stream_window_cap_s = stream_window_cap_s
         self._stream_beam_size = stream_beam_size
-        # perf T03: None on every production call path (dev tooling only). The
-        # streaming duty cycle is invisible on the wire, so this is the only
-        # way to measure it - see StreamingTelemetry's docstring.
-        self._stream_telemetry = stream_telemetry
         self._model: Any | None = None
         self._model_lock = asyncio.Lock()
 
@@ -424,7 +418,6 @@ class FasterWhisperAdapter:
             LocalAgreement(),
             cadence_seconds=self._stream_cadence_s,
             window_cap_seconds=self._stream_window_cap_s,
-            telemetry=self._stream_telemetry,
         )
         await emit(TranscriptionDone(text=transcript))
 
