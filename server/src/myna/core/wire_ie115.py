@@ -25,15 +25,16 @@ What the mapping does:
   — one per ``input_audio_buffer.commit``, carrying the full utterance
   transcript. This is the utterance terminal: **the connection stays open**
   (OpenAI multi-commit shape, decided 2026-07-06); the *client* closes when it is
-  finished. A close *before* ``completed`` therefore decodes as an error, never a
-  synthesised ``done`` — a dead server must not read as a successful utterance.
+  finished. A client therefore reads a close *before* ``completed`` as an
+  error, never a synthesised ``done`` — a dead server must not read as a
+  successful utterance.
 - ``transcription.error`` <-> ``error{error:{type,code,message}}``. The code
   mapping is **lossy** (our richer codes collapse onto IE115's four) — that
   lossiness is the T31 evidence, kept on purpose.
 
 Audio: ``input_audio_buffer.append`` carries base64 PCM16 in JSON; the transport
-also accepts raw WS binary frames (the frame-type hatch). Encoding/decoding of
-the base64 payload lives here.
+also accepts raw WS binary frames (the frame-type hatch). Decoding the base64
+payload lives here.
 
 Conformance (``tests/test_openai_realtime_conformance.py`` holds every server
 frame to the ``openai`` SDK's models): every frame carries a unique
@@ -62,7 +63,6 @@ from myna.core.events import (
     PHASE_PREPARING,
     PHASE_READY,
     PHASE_TRANSCRIBING,
-    Disposition,
     Segment,
     TranscriptionDone,
     TranscriptionError,
@@ -97,7 +97,6 @@ _PHASE_TO_STATE = {
     PHASE_READY: "ready",
     PHASE_TRANSCRIBING: "transcribing",
 }
-_STATE_TO_PHASE = {v: k for k, v in _PHASE_TO_STATE.items()}
 
 # Internal error code -> (IE115 error type, IE115 error code). Intentionally
 # lossy: IE115 defines only four codes across two types and no
@@ -121,7 +120,7 @@ def new_event_id() -> str:
     return f"event_{uuid.uuid4().hex[:12]}"
 
 
-# --- timed segments <-> additive `segments` field --------------------------------
+# --- timed segments -> additive `segments` field --------------------------------
 
 
 def segments_to_ie115(segments: tuple[Segment, ...]) -> list[dict[str, Any]]:
@@ -136,22 +135,6 @@ def segments_to_ie115(segments: tuple[Segment, ...]) -> list[dict[str, Any]]:
         }
         for seg in segments
     ]
-
-
-def segments_from_ie115(raw: Any) -> tuple[Segment, ...]:
-    """Wire objects back to timed segments. An entry without both bounds is
-    dropped: a segment whose time is unknown is worth less than no segment,
-    and a malformed frame must not take the client down."""
-    return tuple(
-        Segment(
-            start=float(seg["start"]),
-            end=float(seg["end"]),
-            text=seg.get("text", ""),
-            score=seg.get("score"),
-        )
-        for seg in (raw or ())
-        if isinstance(seg, dict) and "start" in seg and "end" in seg
-    )
 
 
 # --- session config <-> nested IE115 `session` object ---------------------------
@@ -211,21 +194,13 @@ def session_config_from_ie115(session: dict[str, Any]) -> SessionConfig:
     )
 
 
-# --- audio append <-> PcmChunk --------------------------------------------------
+# --- audio append -> PcmChunk ---------------------------------------------------
 
 
 def append_to_pcm(frame: dict[str, Any], fmt: AudioFormat) -> PcmChunk:
     """Decode an ``input_audio_buffer.append`` (base64 PCM16) into a PcmChunk."""
     data = base64.b64decode(frame.get("audio") or "")
     return PcmChunk(data=data, format=fmt)
-
-
-def pcm_to_append(chunk: PcmChunk) -> dict[str, Any]:
-    """Encode a PcmChunk as an ``input_audio_buffer.append`` frame (base64)."""
-    return {
-        "type": INPUT_AUDIO_APPEND,
-        "audio": base64.b64encode(chunk.data).decode("ascii"),
-    }
 
 
 # --- event encode (server side) -------------------------------------------------
@@ -397,85 +372,3 @@ class Ie115Encoder:
                 "error": {"type": etype, "code": ecode, "message": event.message},
             }
         raise ValueError(f"cannot encode event: {event!r}")
-
-
-# --- event decode (client side) -------------------------------------------------
-
-
-class Ie115Decoder:
-    """Decodes IE115 server frames into internal transcript events for **one
-    utterance**: the ``completed`` answering the client's commit is the terminal
-    ``done``. The client closes the connection itself after it — never infer
-    ``done`` from a server close."""
-
-    def __init__(self) -> None:
-        self._terminated = False
-
-    def decode(self, frame: dict[str, Any]) -> list[TranscriptionEvent]:
-        """Zero or more internal events for one IE115 frame. Control frames
-        (``session.created``/``session.updated``/``input_audio_buffer.committed``/
-        ``conversation.item.created``) yield nothing: this decoder follows one
-        utterance and has no conversation graph to place an item in."""
-        ftype = frame.get("type")
-        if ftype in (
-            SESSION_CREATED,
-            SESSION_UPDATED,
-            INPUT_AUDIO_COMMITTED,
-            CONVERSATION_ITEM_CREATED,
-        ):
-            return []
-        if ftype == STATUS_EVENT:
-            phase = _STATE_TO_PHASE.get(str(frame.get("state") or ""), PHASE_TRANSCRIBING)
-            return [
-                TranscriptionProgress(
-                    phase=phase, snippet=frame.get("snippet"), warning=frame.get("warning")
-                )
-            ]
-        if ftype == TRANSCRIPTION_DELTA:
-            # Committed, append-only segment text — the IE115 face of our
-            # `transcription.final`.
-            # Parse disposition field (T12, feature 007); default to committed for backward-compat
-            disposition_str = frame.get("disposition", "committed")
-            disposition = (
-                Disposition.COMMITTED if disposition_str == "committed" else Disposition.UNSTABLE
-            )
-            segment_index = frame.get("segment_index")  # Optional, only present for committed
-            return [
-                TranscriptionFinal(
-                    text=frame.get("delta") or "",
-                    disposition=disposition,
-                    segment_index=segment_index,
-                    segments=segments_from_ie115(frame.get("segments")),
-                )
-            ]
-        if ftype == TRANSCRIPTION_COMPLETED:
-            self._terminated = True
-            return [
-                TranscriptionDone(
-                    text=frame.get("transcript", ""),
-                    segments=segments_from_ie115(frame.get("segments")),
-                )
-            ]
-        if ftype == ERROR:
-            self._terminated = True
-            err = frame.get("error") or {}
-            return [
-                TranscriptionError(
-                    code=err.get("code", "server_error"), message=err.get("message", "")
-                )
-            ]
-        return []  # unknown/ignored additive frame
-
-    def on_close(self) -> list[TranscriptionEvent]:
-        """A close *before* the utterance's terminal is a failure, not a result:
-        the transcript may be truncated, so it must never surface as a clean
-        ``done``. No-op (idempotent) after a real terminal."""
-        if self._terminated:
-            return []
-        self._terminated = True
-        return [
-            TranscriptionError(
-                code="connection_closed",
-                message="connection closed before the utterance completed",
-            )
-        ]

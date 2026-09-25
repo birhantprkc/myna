@@ -109,6 +109,8 @@ pytest_add_cli_args = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Shared test helpers (tests/_*.py) import by bare name from any subdirectory.
+pythonpath = ["tests"]
 markers = [
     "repo_tree: reads the repository outside server/ (excluded under mutmut)",
 ]

@@ -38,6 +38,7 @@ from typing import Any, cast, get_args
 import numpy as np
 import openai.types.realtime as rt
 import pytest
+from _ie115_client import pcm_to_append
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
 from websockets.asyncio.client import unix_connect
 from websockets.exceptions import ConnectionClosed
@@ -356,7 +357,7 @@ def test_our_own_client_frames_are_openai_client_events():
     session = as_openai_client_event(without_our_rate(update)).session
     assert session.type == "transcription"
     assert session.audio.input.transcription.language == "en"
-    as_openai_client_event(w.pcm_to_append(PcmChunk(data=_CHUNK, format=AudioFormat())))
+    as_openai_client_event(pcm_to_append(PcmChunk(data=_CHUNK, format=AudioFormat())))
     as_openai_client_event({"type": w.INPUT_AUDIO_COMMIT})
 
 

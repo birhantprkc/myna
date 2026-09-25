@@ -4,8 +4,10 @@ Tests that the disposition field is correctly encoded/decoded on delta events
 and that backward compatibility is maintained (absent field → committed default).
 """
 
+from _ie115_client import Ie115Decoder
+
 from myna.core import Disposition, TranscriptionFinal
-from myna.core.wire_ie115 import Ie115Decoder, Ie115Encoder
+from myna.core.wire_ie115 import Ie115Encoder
 
 
 def encode_delta(event: TranscriptionFinal) -> dict:

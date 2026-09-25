@@ -89,12 +89,10 @@ from myna.core.wire_ie115 import (
     SESSION_CREATED,
     SESSION_UPDATE,
     SESSION_UPDATED,
-    Ie115Decoder,
     Ie115Encoder,
     append_to_pcm,
     ie115_session_defaults,
     new_event_id,
-    pcm_to_append,
     session_config_from_ie115,
     session_config_to_ie115,
 )
@@ -790,67 +788,6 @@ class _WsSession:
                     return
         except ConnectionClosed:
             return  # session ended without a terminal event (server abort)
-
-    async def aclose(self) -> None:
-        await self._ws.close()
-
-
-class WsUnixIe115Client:
-    """``SttClient`` speaking the **IE115 dialect** over ws+unix (T45 reference
-    client; the Rust client mirrors it, T43). Sends ``session.update`` eagerly as
-    the first frame (shape-sniff trigger). Audio goes as raw binary frames by
-    default, or base64 ``input_audio_buffer.append`` when ``base64_audio=True``
-    (OpenAI-parity path, feeds the T46 micro-benchmark)."""
-
-    def __init__(self, socket_path: Path | str, *, base64_audio: bool = False) -> None:
-        self._socket_path = str(socket_path)
-        self._base64_audio = base64_audio
-
-    async def open_session(self, config: SessionConfig) -> _Ie115Session:
-        ws = await unix_connect(self._socket_path, ping_interval=None)
-        await ws.send(
-            json.dumps({"type": SESSION_UPDATE, "session": session_config_to_ie115(config)})
-        )
-        return _Ie115Session(ws, base64_audio=self._base64_audio)
-
-
-class _Ie115Session:
-    def __init__(self, ws: ClientConnection, *, base64_audio: bool) -> None:
-        self._ws = ws
-        self._base64_audio = base64_audio
-        self._audio_finished = False
-        self._decoder = Ie115Decoder()
-
-    async def send_audio(self, chunk: PcmChunk) -> None:
-        if self._audio_finished:
-            raise RuntimeError("send_audio() after finish_audio()")
-        # See _WsSession.send_audio: tolerate the server closing mid-stream so a
-        # terminal error isn't masked by a ConnectionClosed traceback.
-        with contextlib.suppress(ConnectionClosed):
-            if self._base64_audio:
-                await self._ws.send(json.dumps(pcm_to_append(chunk)))
-            else:
-                await self._ws.send(chunk.data)
-
-    async def finish_audio(self) -> None:
-        if not self._audio_finished:
-            self._audio_finished = True
-            with contextlib.suppress(ConnectionClosed):
-                await self._ws.send(json.dumps({"type": INPUT_AUDIO_COMMIT}))
-
-    async def events(self) -> AsyncIterator[TranscriptionEvent]:
-        try:
-            async for frame in self._ws:
-                if isinstance(frame, bytes):
-                    continue  # server never sends binary; tolerate it
-                for event in self._decoder.decode(json.loads(frame)):
-                    yield event
-                    if event.type in _TERMINAL:
-                        return
-        except ConnectionClosed:
-            pass  # fall through: synthesise the terminal from close
-        for event in self._decoder.on_close():  # IE115 has no session `done` frame
-            yield event
 
     async def aclose(self) -> None:
         await self._ws.close()

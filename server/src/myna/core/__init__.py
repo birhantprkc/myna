@@ -44,7 +44,6 @@ from myna.core.transport import (
 )
 from myna.core.transport_ws import (
     WsUnixClient,
-    WsUnixIe115Client,
     serve_unix,
     systemd_socket,
 )
@@ -74,7 +73,6 @@ __all__ = [
     "TranscriptionFinal",
     "TranscriptionProgress",
     "WsUnixClient",
-    "WsUnixIe115Client",
     "capabilities_from_wire",
     "capabilities_to_wire",
     "event_from_wire",
