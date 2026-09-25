@@ -13,15 +13,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "src"))
+from myna.core import SessionConfig, WsUnixClient
+from myna.testbed import Harness, WavFileSource, load_manifest
+from myna.testbed.adapter import Candidate
 
-from myna.core import SessionConfig, WsUnixClient  # noqa: E402
-from myna.testbed import Harness, WavFileSource, load_manifest  # noqa: E402
-from myna.testbed.adapter import Candidate  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def pick_source(args: argparse.Namespace) -> tuple[WavFileSource, str | None]:

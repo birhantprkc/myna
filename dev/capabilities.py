@@ -12,13 +12,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "src"))
-
-from myna.core import WsUnixClient  # noqa: E402
+from myna.core import WsUnixClient
 
 
 async def main() -> None:
