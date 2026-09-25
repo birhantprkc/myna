@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -84,14 +83,6 @@ def sha256_file(path: Path | str) -> str:
     with open(path, "rb") as fp:
         for block in iter(lambda: fp.read(1 << 20), b""):
             h.update(block)
-    return h.hexdigest()
-
-
-def digest_files(paths: Iterable[Path | str]) -> str:
-    """One digest over a set of files, by name."""
-    h = hashlib.sha256()
-    for path in sorted(Path(p) for p in paths):
-        h.update(f"{path.name}\0{sha256_file(path)}\n".encode())
     return h.hexdigest()
 
 
