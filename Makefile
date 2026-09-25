@@ -311,12 +311,8 @@ install-schema: ## Install the client GSettings schema on the host (needs sudo)
 install-desktop: ## Install the Myna Settings desktop entry + icons for this user
 	install -Dm644 client/data/icons/hicolor/scalable/apps/com.canonical.Myna.Config.svg \
 		$(HOME)/.local/share/icons/hicolor/scalable/apps/com.canonical.Myna.Config.svg
-	install -Dm644 client/data/icons/hicolor/symbolic/apps/com.canonical.Myna.Config-symbolic.svg \
-		$(HOME)/.local/share/icons/hicolor/symbolic/apps/com.canonical.Myna.Config-symbolic.svg
 	install -Dm644 client/data/icons/hicolor/scalable/apps/com.canonical.Myna.svg \
 		$(HOME)/.local/share/icons/hicolor/scalable/apps/com.canonical.Myna.svg
-	install -Dm644 client/data/icons/hicolor/symbolic/apps/com.canonical.Myna-symbolic.svg \
-		$(HOME)/.local/share/icons/hicolor/symbolic/apps/com.canonical.Myna-symbolic.svg
 	sed 's|^Exec=myna-config$$|Exec=$(CURDIR)/client/target/debug/myna-config|' \
 		client/myna-config/data/com.canonical.Myna.Config.desktop \
 		> $(HOME)/.local/share/applications/com.canonical.Myna.Config.desktop
