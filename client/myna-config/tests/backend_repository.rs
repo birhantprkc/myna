@@ -144,14 +144,13 @@ fn discovery_and_installed_app_listing_fail_explicitly() {
     let (failed_repository, _) = repository([ok(CONNECTIONS), failed("interface")]);
     let discovery = block_on(failed_repository.discover(CancellationToken::new())).unwrap_err();
     assert_eq!(discovery.surface(), BackendSurface::Connections);
-    assert_eq!(discovery.arguments(), ["interface", "content", "--attrs"]);
     assert_eq!(discovery.stderr(), "interface failed");
 
     let (unparseable_repository, _) = repository([ok(CONNECTIONS), ok("not snap output\n")]);
     let discovery =
         block_on(unparseable_repository.discover(CancellationToken::new())).unwrap_err();
     assert_eq!(discovery.surface(), BackendSurface::Connections);
-    assert_eq!(discovery.arguments(), ["interface", "content", "--attrs"]);
+    assert!(discovery.message().starts_with("snap interface:"));
 
     let (repository, runner) = repository([failed("snap info")]);
     let snapshot = block_on(repository.read_snapshot(

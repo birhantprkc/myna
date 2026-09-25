@@ -2925,8 +2925,6 @@ mod tests {
     fn a_surface_failure_becomes_one_sentence_with_no_command_line() {
         let error = crate::domain::BackendSurfaceError::new(
             crate::domain::BackendSurface::Connections,
-            "snap",
-            ["connections", "--all"].map(str::to_owned).to_vec(),
             "snap connections failed",
             "permission denied",
         );
@@ -2940,19 +2938,11 @@ mod tests {
         let errors = [
             crate::domain::BackendSurfaceError::new(
                 crate::domain::BackendSurface::ModelctlConfig,
-                "snap",
-                ["run", "myna-whisper.whisper", "get"]
-                    .map(str::to_owned)
-                    .to_vec(),
                 "command exited unsuccessfully with status Some(1)",
                 "private config output",
             ),
             crate::domain::BackendSurfaceError::new(
                 crate::domain::BackendSurface::Models,
-                "snap",
-                ["run", "myna-whisper.whisper", "list-models"]
-                    .map(str::to_owned)
-                    .to_vec(),
                 "model list unavailable",
                 "",
             ),

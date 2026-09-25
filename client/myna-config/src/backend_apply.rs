@@ -1666,8 +1666,6 @@ mod tests {
         let mut restarting = snapshot_with_configuration("verbose: true\n");
         restarting.add_error(crate::domain::BackendSurfaceError::new(
             BackendSurface::Status,
-            "snap",
-            vec!["run".into(), "myna-parakeet".into(), "status".into()],
             "backend is restarting",
             "socket unavailable",
         ));
@@ -1706,8 +1704,6 @@ mod tests {
         let mut incomplete = snapshot_with_configuration("verbose: true\n");
         incomplete.add_error(crate::domain::BackendSurfaceError::new(
             BackendSurface::ModelctlConfig,
-            "snap",
-            vec!["run".into(), "myna-parakeet.parakeet".into(), "get".into()],
             "backend configuration is temporarily unavailable",
             "snap change in progress",
         ));
@@ -1747,8 +1743,6 @@ mod tests {
         let mut readback = snapshot_with_configuration("ratio: 0.25\nverbose: false\n");
         readback.add_error(crate::domain::BackendSurfaceError::new(
             BackendSurface::Status,
-            "snap",
-            vec!["services".into(), "myna-parakeet".into()],
             "status unavailable",
             "",
         ));
@@ -1790,8 +1784,6 @@ mod tests {
         let mut readback = snapshot_with_configuration("ratio: 0.25\n");
         readback.add_error(crate::domain::BackendSurfaceError::new(
             BackendSurface::ModelctlConfig,
-            "snap",
-            vec!["run".into(), "myna-parakeet.parakeet".into(), "get".into()],
             "modelctl get failed",
             "read denied",
         ));
@@ -1810,10 +1802,7 @@ mod tests {
         let ApplyFailure::ReadBackUnavailable { errors, .. } = result.unwrap_err() else {
             panic!("expected unavailable read-back");
         };
-        assert_eq!(
-            errors[0].arguments(),
-            ["run", "myna-parakeet.parakeet", "get"]
-        );
+        assert_eq!(errors[0].surface(), BackendSurface::ModelctlConfig);
         assert_eq!(errors[0].stderr(), "read denied");
     }
 

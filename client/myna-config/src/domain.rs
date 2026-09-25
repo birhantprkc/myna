@@ -628,8 +628,6 @@ pub enum BackendSurface {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackendSurfaceError {
     surface: BackendSurface,
-    executable: String,
-    arguments: Vec<String>,
     message: String,
     stderr: String,
 }
@@ -637,15 +635,11 @@ pub struct BackendSurfaceError {
 impl BackendSurfaceError {
     pub fn new(
         surface: BackendSurface,
-        executable: impl Into<String>,
-        arguments: Vec<String>,
         message: impl Into<String>,
         stderr: impl Into<String>,
     ) -> Self {
         Self {
             surface,
-            executable: executable.into(),
-            arguments,
             message: message.into(),
             stderr: stderr.into(),
         }
@@ -653,14 +647,6 @@ impl BackendSurfaceError {
 
     pub fn surface(&self) -> BackendSurface {
         self.surface
-    }
-
-    pub fn executable(&self) -> &str {
-        &self.executable
-    }
-
-    pub fn arguments(&self) -> &[String] {
-        &self.arguments
     }
 
     pub fn message(&self) -> &str {
@@ -899,10 +885,6 @@ impl ParseError {
 
     fn json(source: &'static str, error: serde_json::Error) -> Self {
         Self::new(source, error.to_string())
-    }
-
-    pub fn source_name(&self) -> &str {
-        self.source
     }
 }
 

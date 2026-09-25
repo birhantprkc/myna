@@ -290,7 +290,7 @@ fn success(plan: &SwitchPlan) -> Vec<CommandResult> {
 }
 
 fn error(message: &str) -> BackendSurfaceError {
-    BackendSurfaceError::new(BackendSurface::Connections, "snap", vec![], message, "")
+    BackendSurfaceError::new(BackendSurface::Connections, message, "")
 }
 
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {

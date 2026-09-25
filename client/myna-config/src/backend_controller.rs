@@ -755,8 +755,6 @@ mod tests {
             .set_modelctl_config(parse_modelctl_config("verbose: true\n").expect("modelctl parse"));
         snapshot.add_error(BackendSurfaceError::new(
             BackendSurface::Status,
-            "modelctl.parakeet",
-            ["status", "--format=json"].map(str::to_owned).to_vec(),
             "modelctl status failed",
             "connection refused",
         ));
@@ -1071,8 +1069,6 @@ mod tests {
         let request = controller.begin_discovery();
         let error = BackendSurfaceError::new(
             BackendSurface::Connections,
-            "snap",
-            ["connections", "--all"].map(str::to_owned).to_vec(),
             "snap connections failed",
             "authorization required",
         );

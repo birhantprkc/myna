@@ -53,11 +53,11 @@ impl SnapBackendRepository {
         arguments: Vec<String>,
         cancellation: CancellationToken,
     ) -> Result<CommandOutput, BackendSurfaceError> {
-        let request = CommandRequest::new(executable.to_owned(), arguments.clone());
+        let request = CommandRequest::new(executable.to_owned(), arguments);
         self.runner
             .run(request, cancellation)
             .await
-            .map_err(|error| command_error(surface, executable, arguments, error))
+            .map_err(|error| command_error(surface, executable, error))
     }
 
     async fn resolve_modelctl(
@@ -102,8 +102,6 @@ impl SnapBackendRepository {
         if candidates.is_empty() {
             return Err(vec![BackendSurfaceError::new(
                 BackendSurface::ModelctlApp,
-                "snap",
-                strings(&["info", snap]),
                 "installed snap advertises no runnable commands",
                 "",
             )]);
@@ -133,8 +131,6 @@ impl SnapBackendRepository {
         }
         failures.push(BackendSurfaceError::new(
             BackendSurface::ModelctlApp,
-            "snap",
-            strings(&["info", snap]),
             "none of the installed snap commands answered `modelctl version`",
             "",
         ));
@@ -173,22 +169,12 @@ impl SnapBackendRepository {
     ) {
         let arguments = modelctl_arguments(app, &["status", "--format=json"]);
         match self
-            .command(
-                BackendSurface::Status,
-                "snap",
-                arguments.clone(),
-                cancellation,
-            )
+            .command(BackendSurface::Status, "snap", arguments, cancellation)
             .await
         {
             Ok(output) => match parse_status(output.stdout()) {
                 Ok(status) => snapshot.set_status(status),
-                Err(error) => snapshot.add_error(parse_error(
-                    BackendSurface::Status,
-                    "snap",
-                    arguments,
-                    error,
-                )),
+                Err(error) => snapshot.add_error(parse_error(BackendSurface::Status, error)),
             },
             Err(error) if is_unconfigured(&error) => {}
             Err(error) => snapshot.add_error(error),
@@ -207,19 +193,16 @@ impl SnapBackendRepository {
             .command(
                 BackendSurface::ModelctlConfig,
                 "snap",
-                get_arguments.clone(),
+                get_arguments,
                 cancellation.clone(),
             )
             .await
         {
             Ok(output) => match parse_modelctl_config(output.stdout()) {
                 Ok(config) => snapshot.set_modelctl_config(config),
-                Err(error) => snapshot.add_error(parse_error(
-                    BackendSurface::ModelctlConfig,
-                    "snap",
-                    get_arguments,
-                    error,
-                )),
+                Err(error) => {
+                    snapshot.add_error(parse_error(BackendSurface::ModelctlConfig, error))
+                }
             },
             Err(error) => snapshot.add_error(error),
         }
@@ -230,19 +213,14 @@ impl SnapBackendRepository {
             .command(
                 BackendSurface::Models,
                 "snap",
-                models_arguments.clone(),
+                models_arguments,
                 cancellation.clone(),
             )
             .await
         {
             Ok(output) => match parse_model_options(output.stdout()) {
                 Ok(models) => snapshot.set_models(models),
-                Err(error) => snapshot.add_error(parse_error(
-                    BackendSurface::Models,
-                    "snap",
-                    models_arguments,
-                    error,
-                )),
+                Err(error) => snapshot.add_error(parse_error(BackendSurface::Models, error)),
             },
             Err(error) if is_unconfigured(&error) => {}
             Err(error) => snapshot.add_error(error),
@@ -254,19 +232,14 @@ impl SnapBackendRepository {
             .command(
                 BackendSurface::Engines,
                 "snap",
-                engines_arguments.clone(),
+                engines_arguments,
                 cancellation,
             )
             .await
         {
             Ok(output) => match parse_engine_options(output.stdout()) {
                 Ok(engines) => snapshot.set_engines(engines),
-                Err(error) => snapshot.add_error(parse_error(
-                    BackendSurface::Engines,
-                    "snap",
-                    engines_arguments,
-                    error,
-                )),
+                Err(error) => snapshot.add_error(parse_error(BackendSurface::Engines, error)),
             },
             Err(error) => snapshot.add_error(error),
         }
@@ -281,29 +254,15 @@ impl BackendRepository for SnapBackendRepository {
         &self,
         cancellation: CancellationToken,
     ) -> Result<Vec<InstalledSnap>, BackendSurfaceError> {
-        let arguments = strings(&["list", "--unicode=never"]);
-        let request = CommandRequest::new("snap".to_owned(), arguments.clone())
+        let request = CommandRequest::new("snap".to_owned(), strings(&["list", "--unicode=never"]))
             .with_environment(BTreeMap::from([("LC_ALL".to_owned(), "C".to_owned())]));
         let output = self
             .runner
             .run(request, cancellation)
             .await
-            .map_err(|error| {
-                command_error(
-                    BackendSurface::SnapInventory,
-                    "snap",
-                    arguments.clone(),
-                    error,
-                )
-            })?;
+            .map_err(|error| command_error(BackendSurface::SnapInventory, "snap", error))?;
         parse_snap_list(output.stdout()).map_err(|error| {
-            BackendSurfaceError::new(
-                BackendSurface::SnapInventory,
-                "snap",
-                arguments,
-                error.to_string(),
-                "",
-            )
+            BackendSurfaceError::new(BackendSurface::SnapInventory, error.to_string(), "")
         })
     }
 
@@ -314,18 +273,11 @@ impl BackendRepository for SnapBackendRepository {
         let connections = self
             .read_connections_surface(&["connections", "--all"], cancellation.clone())
             .await?;
-        let interface_arguments = ["interface", "content", "--attrs"];
         let content_interface = self
-            .read_connections_surface(&interface_arguments, cancellation)
+            .read_connections_surface(&["interface", "content", "--attrs"], cancellation)
             .await?;
-        parse_connections(&connections, &content_interface).map_err(|error| {
-            let arguments = if error.source_name() == "snap interface" {
-                strings(&interface_arguments)
-            } else {
-                strings(&["connections", "--all"])
-            };
-            parse_error(BackendSurface::Connections, "snap", arguments, error)
-        })
+        parse_connections(&connections, &content_interface)
+            .map_err(|error| parse_error(BackendSurface::Connections, error))
     }
 
     async fn read_snapshot(
@@ -387,16 +339,13 @@ impl SnapBackendRepository {
         arguments: &[&str],
         cancellation: CancellationToken,
     ) -> Result<String, BackendSurfaceError> {
-        let arguments = strings(arguments);
-        let request = CommandRequest::new("snap".to_owned(), arguments.clone())
+        let request = CommandRequest::new("snap".to_owned(), strings(arguments))
             .with_environment(BTreeMap::from([("LC_ALL".to_owned(), "C".to_owned())]));
         let output = self
             .runner
             .run(request, cancellation)
             .await
-            .map_err(|error| {
-                command_error(BackendSurface::Connections, "snap", arguments, error)
-            })?;
+            .map_err(|error| command_error(BackendSurface::Connections, "snap", error))?;
         Ok(output.stdout().to_owned())
     }
 }
@@ -460,19 +409,13 @@ fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
 }
 
-fn parse_error(
-    surface: BackendSurface,
-    executable: &str,
-    arguments: Vec<String>,
-    error: ParseError,
-) -> BackendSurfaceError {
-    BackendSurfaceError::new(surface, executable, arguments, error.to_string(), "")
+fn parse_error(surface: BackendSurface, error: ParseError) -> BackendSurfaceError {
+    BackendSurfaceError::new(surface, error.to_string(), "")
 }
 
 fn command_error(
     surface: BackendSurface,
     executable: &str,
-    arguments: Vec<String>,
     error: CommandError,
 ) -> BackendSurfaceError {
     let kind = match &error {
@@ -502,7 +445,7 @@ fn command_error(
         CommandError::NonZero { stderr, .. } => stderr.clone(),
         _ => String::new(),
     };
-    BackendSurfaceError::new(surface, executable, arguments, error.to_string(), stderr)
+    BackendSurfaceError::new(surface, error.to_string(), stderr)
 }
 
 fn surface_key(surface: BackendSurface) -> &'static str {
