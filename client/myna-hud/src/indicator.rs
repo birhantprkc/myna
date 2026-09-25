@@ -102,13 +102,7 @@ impl Indicator {
         let reduced_motion = self.reduced_motion.get();
         let intensity = self.smoothed_intensity(reduced_motion);
         Frame {
-            state: crate::hud_logic::indicator_state(
-                key,
-                severity,
-                intensity,
-                state_ms,
-                reduced_motion,
-            ),
+            state: crate::hud_logic::indicator_state(key, severity, intensity, reduced_motion),
             state_ms,
         }
     }

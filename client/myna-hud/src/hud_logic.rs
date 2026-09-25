@@ -182,15 +182,13 @@ pub struct IndicatorState {
 
 /// The animation state for the simple indicators.
 ///
-/// `intensity` is the calibrated `[0,1]` level; `state_ms` is how long the
-/// indicator has been in its current state (0 = just entered); `reduced_motion`
-/// follows the desktop's reduce-animation preference — under it the activity
-/// pulse travels much more slowly than usual (reduced, not removed motion).
+/// `intensity` is the calibrated `[0,1]` level; `reduced_motion` follows the
+/// desktop's reduce-animation preference — under it the activity pulse
+/// travels much more slowly than usual (reduced, not removed motion).
 pub fn indicator_state(
     key: DictationState,
     severity: Option<Severity>,
     intensity: f64,
-    _state_ms: f64,
     reduced_motion: bool,
 ) -> IndicatorState {
     let level = intensity.clamp(0.0, 1.0);

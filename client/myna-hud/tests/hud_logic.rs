@@ -133,7 +133,7 @@ fn ribbon_visibility_by_severity() {
 
 #[test]
 fn plain_level_states_report_the_raw_level() {
-    let s = indicator_state(DictationState::Recording, None, 0.42, 0.0, false);
+    let s = indicator_state(DictationState::Recording, None, 0.42, false);
     assert_eq!(s.fraction, 0.42);
     assert!(s.pulse.is_none());
     assert!(!s.warning);
@@ -146,7 +146,7 @@ fn loading_transcribing_finalizing_report_a_pulse() {
         (DictationState::Transcribing, 1400.0),
         (DictationState::Finalizing, 1000.0),
     ] {
-        let s = indicator_state(key, None, 0.0, 0.0, false);
+        let s = indicator_state(key, None, 0.0, false);
         let Some(pulse) = s.pulse else {
             panic!("{key:?} must pulse");
         };
@@ -159,11 +159,11 @@ fn loading_transcribing_finalizing_report_a_pulse() {
 #[test]
 fn reduced_motion_pulses_are_slower_but_still_move() {
     let normal = |key| {
-        let s = indicator_state(key, None, 0.0, 0.0, false);
+        let s = indicator_state(key, None, 0.0, false);
         s.pulse.unwrap().period_ms
     };
     let reduced = |key| {
-        let s = indicator_state(key, None, 0.0, 0.0, true);
+        let s = indicator_state(key, None, 0.0, true);
         s.pulse.unwrap().period_ms
     };
     for key in [
@@ -180,8 +180,8 @@ fn reduced_motion_pulses_are_slower_but_still_move() {
 
 #[test]
 fn loading_pulse_is_semi_transparent() {
-    let loading = indicator_state(DictationState::Loading, None, 0.0, 0.0, false);
-    let transcribing = indicator_state(DictationState::Transcribing, None, 0.0, 0.0, false);
+    let loading = indicator_state(DictationState::Loading, None, 0.0, false);
+    let transcribing = indicator_state(DictationState::Transcribing, None, 0.0, false);
     assert!(
         loading.pulse.unwrap().alpha < 1.0,
         "loading uses a semi-transparent accent"
@@ -198,7 +198,6 @@ fn notice_reports_warning_empty() {
         DictationState::Notice,
         Some(Severity::Recoverable),
         0.0,
-        0.0,
         false,
     );
     assert!(s.warning);
@@ -207,13 +206,7 @@ fn notice_reports_warning_empty() {
 
 #[test]
 fn critical_is_closed_and_not_warning() {
-    let s = indicator_state(
-        DictationState::Error,
-        Some(Severity::Critical),
-        0.5,
-        0.0,
-        false,
-    );
+    let s = indicator_state(DictationState::Error, Some(Severity::Critical), 0.5, false);
     assert_eq!(s.fraction, 0.0);
     assert!(s.pulse.is_none());
     assert!(!s.warning);
