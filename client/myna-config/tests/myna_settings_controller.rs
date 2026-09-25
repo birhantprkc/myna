@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use myna_config::app::smoke_build;
 use myna_config::domain::{
     ClientSetting, ClientSettingKey, ClientSettingMetadata, ClientSettingValue, SettingRange,
 };
@@ -349,7 +348,7 @@ fn headless_smoke_build_maps_schema_metadata_to_widget_kinds() {
         rows
     });
 
-    let plans = smoke_build(fake).unwrap();
+    let plans: Vec<_> = fake.list().unwrap().iter().map(widget_plan).collect();
 
     assert_eq!(plans.len(), 3);
     assert_eq!(plans[0].kind, WidgetKind::Choice);

@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 
 use gio::glib;
 use myna_config::adapters::client_settings::GioClientSettings;
-use myna_config::app::{smoke_build, WidgetKind};
 use myna_config::domain::{ClientSettingValue, SettingRange};
-use myna_config::myna_settings::{MynaSettingsController, PersistenceWriter};
+use myna_config::myna_settings::{
+    widget_plan, MynaSettingsController, PersistenceWriter, WidgetKind,
+};
 use myna_config::ports::{ClientSettings, ClientSettingsError};
 
 const SCHEMA_ID: &str = "com.canonical.Myna.Dictation";
@@ -365,7 +366,7 @@ fn headless_widget_smoke_covers_every_real_schema_key() {
     let files = TestFiles::new("widget-smoke");
     let adapter = open_adapter(&files);
 
-    let plans = smoke_build(std::rc::Rc::new(adapter)).unwrap();
+    let plans: Vec<_> = adapter.list().unwrap().iter().map(widget_plan).collect();
 
     assert_eq!(plans.len(), 4);
     assert!(plans.iter().any(|plan| plan.kind == WidgetKind::Choice));

@@ -11,17 +11,14 @@ use libadwaita::prelude::*;
 use crate::adapters::client_settings::GioClientSettings;
 use crate::domain::ClientSettingValue;
 use crate::myna_settings::{
-    choice_display_label, DebouncedTextCommit, MynaSettingsController, PageState,
-    PersistenceRequest, PersistenceWriter, SettingRow, SettingsEvent,
+    choice_display_label, widget_plan, DebouncedTextCommit, MynaSettingsController, PageState,
+    PersistenceRequest, PersistenceWriter, SettingRow, SettingsEvent, WidgetKind,
 };
 use crate::onboarding::needs_onboarding;
 use crate::ports::{ClientSettings, ClientSettingsError};
 use crate::ui;
 use crate::APP_ID;
 
-pub use crate::myna_settings::{widget_plan, WidgetKind, WidgetPlan};
-
-const SMOKE_ENV: &str = "MYNA_CONFIG_SMOKE_BUILD";
 const TEMPLATE_ENV: &str = "MYNA_CONFIG_TEMPLATE_TEST";
 const ACCESSIBILITY_ENV: &str = "MYNA_CONFIG_ACCESSIBILITY_TEST";
 const TYPING_ENV: &str = "MYNA_CONFIG_TYPING_TEST";
@@ -55,25 +52,6 @@ pub const fn appearance_policy(animations_enabled: bool, high_contrast: bool) ->
     }
 }
 
-pub fn smoke_build(settings: Rc<dyn ClientSettings>) -> Result<Vec<WidgetPlan>, String> {
-    settings
-        .list()
-        .map_err(|error| error.to_string())?
-        .iter()
-        .map(|metadata| {
-            let plan = widget_plan(metadata);
-            if plan.title.trim().is_empty()
-                || (plan.kind == WidgetKind::Choice && plan.choices.is_empty())
-                || (plan.kind == WidgetKind::Number && plan.bounds.is_none())
-            {
-                Err(format!("{} has incomplete widget metadata", plan.key))
-            } else {
-                Ok(plan)
-            }
-        })
-        .collect()
-}
-
 pub fn run() -> glib::ExitCode {
     if smoke_requested(std::env::var_os(TEMPLATE_ENV).as_deref()) {
         return template_probe();
@@ -101,23 +79,6 @@ pub fn run() -> glib::ExitCode {
 
     if smoke_requested(std::env::var_os(BACKENDS_ENV).as_deref()) {
         return backends_probe();
-    }
-
-    if smoke_requested(std::env::var_os(SMOKE_ENV).as_deref()) {
-        return match GioClientSettings::open()
-            .map(|settings| Rc::new(settings) as Rc<dyn ClientSettings>)
-            .map_err(|error| error.to_string())
-            .and_then(smoke_build)
-        {
-            Ok(plans) => {
-                println!("validated {} Myna settings widgets", plans.len());
-                glib::ExitCode::SUCCESS
-            }
-            Err(error) => {
-                eprintln!("myna-config smoke build failed: {error}");
-                glib::ExitCode::FAILURE
-            }
-        };
     }
 
     ui::register_resources();
