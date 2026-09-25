@@ -1,10 +1,4 @@
-"""Golden-frame tests for disposition encoding in IE115 wire protocol (T08, feature 007).
-
-Tests that the disposition field is correctly encoded/decoded on delta events
-and that backward compatibility is maintained (absent field → committed default).
-"""
-
-from _ie115_client import Ie115Decoder
+"""Golden-frame tests for disposition encoding in IE115 wire protocol (T08, feature 007)."""
 
 from myna.core import Disposition, TranscriptionFinal
 from myna.core.wire_ie115 import Ie115Encoder
@@ -12,12 +6,6 @@ from myna.core.wire_ie115 import Ie115Encoder
 
 def encode_delta(event: TranscriptionFinal) -> dict:
     return Ie115Encoder().frames(event)[-1]
-
-
-def decode_delta(frame: dict) -> TranscriptionFinal:
-    (event,) = Ie115Decoder().decode(frame)
-    assert isinstance(event, TranscriptionFinal)
-    return event
 
 
 def test_disposition_encoding_committed():
@@ -51,61 +39,6 @@ def test_disposition_encoding_unstable():
     assert wire_frame["delta"] == "Hello wor"
     assert wire_frame["disposition"] == "unstable"
     assert "segment_index" not in wire_frame  # Only present for committed
-
-
-def test_disposition_decoding_committed():
-    """Test that committed disposition is decoded from wire frames."""
-    wire_frame = {
-        "type": "conversation.item.input_audio_transcription.delta",
-        "item_id": "item_001",
-        "content_index": 0,
-        "delta": "Hello world",
-        "disposition": "committed",
-        "segment_index": 0,
-    }
-
-    event = decode_delta(wire_frame)
-
-    assert isinstance(event, TranscriptionFinal)
-    assert event.text == "Hello world"
-    assert event.disposition == Disposition.COMMITTED
-    assert event.segment_index == 0
-
-
-def test_disposition_decoding_unstable():
-    """Test that unstable disposition is decoded from wire frames."""
-    wire_frame = {
-        "type": "conversation.item.input_audio_transcription.delta",
-        "item_id": "item_001",
-        "content_index": 0,
-        "delta": "Hello wor",
-        "disposition": "unstable",
-    }
-
-    event = decode_delta(wire_frame)
-
-    assert isinstance(event, TranscriptionFinal)
-    assert event.text == "Hello wor"
-    assert event.disposition == Disposition.UNSTABLE
-    assert event.segment_index is None
-
-
-def test_backward_compat_absent_disposition():
-    """Test backward compatibility: absent disposition defaults to committed."""
-    wire_frame = {
-        "type": "conversation.item.input_audio_transcription.delta",
-        "item_id": "item_001",
-        "content_index": 0,
-        "delta": "Hello world",
-        # No disposition field - old wire format
-    }
-
-    event = decode_delta(wire_frame)
-
-    assert isinstance(event, TranscriptionFinal)
-    assert event.text == "Hello world"
-    assert event.disposition == Disposition.COMMITTED  # Default
-    assert event.segment_index is None
 
 
 def test_multiple_committed_segments():

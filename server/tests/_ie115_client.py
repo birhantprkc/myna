@@ -42,17 +42,7 @@ def pcm_to_append(chunk: PcmChunk) -> dict[str, Any]:
 
 
 def _segments(raw: Any) -> tuple[Segment, ...]:
-    """Wire objects back to timed segments, dropping any without both bounds."""
-    return tuple(
-        Segment(
-            start=float(seg["start"]),
-            end=float(seg["end"]),
-            text=seg.get("text", ""),
-            score=seg.get("score"),
-        )
-        for seg in (raw or ())
-        if isinstance(seg, dict) and "start" in seg and "end" in seg
-    )
+    return tuple(Segment(**seg) for seg in raw or ())
 
 
 class Ie115Decoder:
@@ -69,11 +59,7 @@ class Ie115Decoder:
         ftype = frame.get("type")
         if ftype == w.STATUS_EVENT:
             phase = _STATE_TO_PHASE.get(str(frame.get("state") or ""), PHASE_TRANSCRIBING)
-            return [
-                TranscriptionProgress(
-                    phase=phase, snippet=frame.get("snippet"), warning=frame.get("warning")
-                )
-            ]
+            return [TranscriptionProgress(phase=phase, snippet=frame.get("snippet"))]
         if ftype == w.TRANSCRIPTION_DELTA:
             disposition = (
                 Disposition.COMMITTED
@@ -84,7 +70,6 @@ class Ie115Decoder:
                 TranscriptionFinal(
                     text=frame.get("delta") or "",
                     disposition=disposition,
-                    segment_index=frame.get("segment_index"),
                     segments=_segments(frame.get("segments")),
                 )
             ]

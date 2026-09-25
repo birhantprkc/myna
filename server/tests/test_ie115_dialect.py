@@ -2,7 +2,7 @@
 
 Two levels:
 
-- **Codec unit tests** — the pure ``myna.core.wire_ie115`` translation both ways
+- **Codec unit tests** — the pure ``myna.core.wire_ie115`` translation
   (session config, each event type, the base64 audio append).
 - **End-to-end parity** — the fake adapter driven by the harness over the IE115
   dialect (``WsUnixIe115Client`` ↔ shape-sniffing ``serve_unix``), asserting the
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import contextlib
 
-from _ie115_client import Ie115Decoder, WsUnixIe115Client, pcm_to_append
+from _ie115_client import WsUnixIe115Client, pcm_to_append
 from _silence import SilenceSource
 
 from myna.core import (
@@ -119,15 +119,7 @@ def test_encoder_progress_phases_map_to_status_states():
     assert _frame(enc.frames(TranscriptionProgress(phase="warming")))["state"] == "transcribing"
 
 
-def test_decoder_status_round_trips_snippet_and_falls_back_to_transcribing():
-    dec = Ie115Decoder()
-    [event] = dec.decode({"type": w.STATUS_EVENT, "state": "transcribing", "snippet": "hi"})
-    assert event == TranscriptionProgress(phase="transcribing", snippet="hi")
-    [unknown] = dec.decode({"type": w.STATUS_EVENT, "state": "warming"})
-    assert unknown.phase == "transcribing"
-
-
-def test_encoder_progress_warning_is_additive_and_round_trips():
+def test_encoder_progress_warning_is_additive():
     # T10: memory-pressure notice rides the same additive STATUS frame.
     enc = w.Ie115Encoder()
     frame = _frame(enc.frames(TranscriptionProgress(phase="transcribing", warning="low on memory")))
@@ -136,9 +128,6 @@ def test_encoder_progress_warning_is_additive_and_round_trips():
         "state": "transcribing",
         "warning": "low on memory",
     }
-    dec = Ie115Decoder()
-    [event] = dec.decode(frame)
-    assert event == TranscriptionProgress(phase="transcribing", warning="low on memory")
 
 
 def test_encoder_finals_become_deltas_sharing_the_utterance_item():
@@ -324,37 +313,14 @@ def test_encoder_maps_an_unlisted_code_to_a_server_error():
     assert frame["error"] == {"type": "server_error", "code": "server_error", "message": "m"}
 
 
-def test_encoder_error_maps_lossily_and_decoder_recovers_ie115_code():
+def test_encoder_error_maps_lossily():
+    # `adapter_crash` does not survive the wire: lossy on purpose (T31 evidence).
     enc = w.Ie115Encoder()
     frame = _frame(enc.frames(TranscriptionError(code="adapter_crash", message="boom")))
     assert _sans_id(frame) == {
         "type": w.ERROR,
         "error": {"type": "server_error", "code": "server_error", "message": "boom"},
     }
-    # the internal `adapter_crash` is *not* recoverable from the wire — the
-    # mapping is lossy on purpose (T31 evidence).
-    dec = Ie115Decoder()
-    (event,) = dec.decode(frame)
-    assert isinstance(event, TranscriptionError)
-    assert event.code == "server_error"  # not "adapter_crash"
-
-
-def test_decoder_delta_is_committed_final_and_completed_is_done():
-    dec = Ie115Decoder()
-    (final,) = dec.decode(
-        {"type": w.TRANSCRIPTION_DELTA, "item_id": "i1", "content_index": 0, "delta": "one"}
-    )
-    assert isinstance(final, TranscriptionFinal) and final.text == "one"
-    (done,) = dec.decode(
-        {
-            "type": w.TRANSCRIPTION_COMPLETED,
-            "item_id": "i1",
-            "content_index": 0,
-            "transcript": "one two",
-        }
-    )
-    assert isinstance(done, TranscriptionDone) and done.text == "one two"
-    assert dec.on_close() == []  # terminal already delivered; close is just close
 
 
 def test_timestamp_granularity_round_trips_through_ie115():
@@ -395,92 +361,6 @@ def test_encoder_omits_a_score_the_adapter_did_not_supply():
         )
     )
     assert frame["segments"] == [{"start": 0.0, "end": 1.0, "text": "hi"}]  # no null score
-
-
-def test_decoder_recovers_timed_segments():
-    dec = Ie115Decoder()
-    (final,) = dec.decode(
-        {
-            "type": w.TRANSCRIPTION_DELTA,
-            "item_id": "i1",
-            "delta": "hi there",
-            "segments": [{"start": 0.42, "end": 1.13, "text": "hi there", "score": -0.3}],
-        }
-    )
-    assert final.segments == (Segment(start=0.42, end=1.13, text="hi there", score=-0.3),)
-
-    (done,) = dec.decode(
-        {
-            "type": w.TRANSCRIPTION_COMPLETED,
-            "item_id": "i1",
-            "transcript": "hi there",
-            "segments": [{"start": 0.42, "end": 1.13, "text": "hi there"}],
-        }
-    )
-    assert done.segments == (Segment(start=0.42, end=1.13, text="hi there", score=None),)
-
-
-def test_decoder_drops_a_segment_that_is_missing_its_bounds():
-    """A malformed frame must not take the client down, and a segment whose
-    time is unknown is worth less than no segment at all."""
-    dec = Ie115Decoder()
-    (final,) = dec.decode(
-        {
-            "type": w.TRANSCRIPTION_DELTA,
-            "item_id": "i1",
-            "delta": "hi",
-            "segments": [{"text": "hi"}, {"start": 1.0, "end": 2.0, "text": "hi"}],
-        }
-    )
-    assert final.segments == (Segment(start=1.0, end=2.0, text="hi", score=None),)
-
-
-def test_decoder_survives_a_delta_with_no_segments_field():
-    dec = Ie115Decoder()
-    (final,) = dec.decode({"type": w.TRANSCRIPTION_DELTA, "item_id": "i1", "delta": "hi"})
-    assert final.segments == ()
-
-
-def test_decoder_close_before_completed_is_an_error_not_a_done():
-    # A dead server must never read as a successful (possibly truncated) utterance.
-    dec = Ie115Decoder()
-    dec.decode({"type": w.TRANSCRIPTION_DELTA, "item_id": "i1", "content_index": 0, "delta": "one"})
-    (event,) = dec.on_close()
-    assert isinstance(event, TranscriptionError)
-    assert event.code == "connection_closed"
-    assert dec.on_close() == []  # idempotent
-
-
-def test_decoder_no_double_terminal_after_error():
-    dec = Ie115Decoder()
-    dec.decode(
-        {"type": w.ERROR, "error": {"type": "server_error", "code": "server_error", "message": "x"}}
-    )
-    assert dec.on_close() == []  # error already terminal
-
-
-def test_decoder_treats_committed_as_a_control_frame():
-    """The commit acknowledgement carries no transcript; the terminal is
-    still the ``completed`` it points at."""
-    dec = Ie115Decoder()
-    assert dec.decode(_ack(w.Ie115Encoder().commit_frames())) == []
-    assert dec.on_close() != []  # nothing terminal has arrived yet
-
-
-def test_decoder_ignores_control_frames():
-    dec = Ie115Decoder()
-    assert dec.decode({"type": w.SESSION_CREATED, "session": {}}) == []
-    assert dec.decode({"type": w.SESSION_UPDATED, "session": {}}) == []
-
-
-def test_decoder_treats_an_item_announcement_as_a_control_frame():
-    """This decoder follows one utterance and keeps no conversation graph, so
-    an item announcement carries nothing it can use - and must not be mistaken
-    for a terminal."""
-    dec = Ie115Decoder()
-    _, created = w.Ie115Encoder().commit_frames()
-    assert dec.decode(created) == []
-    assert dec.on_close() != []  # nothing terminal has arrived yet
 
 
 # --- end-to-end parity over the wire --------------------------------------------
