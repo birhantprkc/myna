@@ -679,7 +679,7 @@ pub fn build_accent_options() -> Vec<(String, Option<String>)> {
 ///
 /// Uses one shared probe widget rooted in a hidden window: the widget's
 /// computed colour is read back after re-loading the provider with the
-/// variable, the way accent_css_probe() demonstrated works synchronously.
+/// variable, which works synchronously.
 /// A fully transparent result means the theme did not define the variable
 /// (older libadwaita).
 fn css_color_hex(variable: &str) -> Option<String> {
