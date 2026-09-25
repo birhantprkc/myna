@@ -227,7 +227,6 @@ fn modelctl_get_preserves_scoped_scalar_values() {
 #[test]
 fn status_exposes_service_health_only_as_diagnostics() {
     let status = parse_status(STATUS).unwrap();
-    assert_eq!(status.engine(), Some("cpu"));
     assert_eq!(status.services()[0].name(), "server");
     assert!(status.services()[0].is_active());
 
@@ -242,24 +241,17 @@ fn status_exposes_service_health_only_as_diagnostics() {
 fn model_and_engine_options_follow_the_live_contract() {
     let models = parse_model_options(MODELS).unwrap();
     assert_eq!(models.active(), Some("parakeet-tdt-0.6b-v3"));
-    assert_eq!(models.options()[0].disk_size(), Some("687M"));
 
     let engines = parse_engine_options(ENGINES).unwrap();
     assert_eq!(engines.active(), Some("cpu"));
     assert!(engines.options()[0].compatible());
-    assert_eq!(
-        engines.options()[0]
-            .configuration()
-            .get("stream-partial-cadence-seconds"),
-        Some(&ConfigValue::Number(0.5))
-    );
 }
 
 #[test]
 fn option_lists_handle_partial_and_empty_payloads_and_reject_malformed_json() {
     let models =
         parse_model_options(include_str!("fixtures/modelctl-list-models-partial.json")).unwrap();
-    assert_eq!(models.options()[0].description(), None);
+    assert_eq!(models.options()[0].name(), "tiny");
     assert!(parse_model_options("{}").unwrap().options().is_empty());
 
     let engines =
@@ -292,15 +284,4 @@ fn staged_changes_reject_noops_and_retain_restart_requirements() {
     )
     .unwrap_err();
     assert_eq!(error.field(), "streaming");
-}
-
-#[test]
-fn modelctl_null_stands_in_for_an_empty_map() {
-    // Every backend but parakeet writes `"configurations": null`, and serde's
-    // `default` only covers a *missing* field.
-    let engines =
-        parse_engine_options(include_str!("fixtures/modelctl-list-engines-null.json")).unwrap();
-
-    assert_eq!(engines.options().len(), 1);
-    assert!(engines.options()[0].configuration().is_empty());
 }

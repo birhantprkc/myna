@@ -439,22 +439,12 @@ impl ServiceHealth {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BackendStatus {
-    engine: Option<String>,
     services: Vec<ServiceHealth>,
-    entrypoints: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl BackendStatus {
-    pub fn engine(&self) -> Option<&str> {
-        self.engine.as_deref()
-    }
-
     pub fn services(&self) -> &[ServiceHealth] {
         &self.services
-    }
-
-    pub fn entrypoints(&self) -> &BTreeMap<String, BTreeMap<String, String>> {
-        &self.entrypoints
     }
 }
 
@@ -495,46 +485,17 @@ pub fn parse_status(input: &str) -> Result<BackendStatus, ParseError> {
             },
         })
         .collect();
-    Ok(BackendStatus {
-        engine: raw.engine,
-        services,
-        entrypoints: raw.entrypoints,
-    })
+    Ok(BackendStatus { services })
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelOption {
     name: String,
-    description: Option<String>,
-    model_card_url: Option<String>,
-    quantization: Option<String>,
-    disk_size: Option<String>,
-    components: Vec<String>,
 }
 
 impl ModelOption {
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    pub fn description(&self) -> Option<&str> {
-        self.description.as_deref()
-    }
-
-    pub fn model_card_url(&self) -> Option<&str> {
-        self.model_card_url.as_deref()
-    }
-
-    pub fn quantization(&self) -> Option<&str> {
-        self.quantization.as_deref()
-    }
-
-    pub fn disk_size(&self) -> Option<&str> {
-        self.disk_size.as_deref()
-    }
-
-    pub fn components(&self) -> &[String] {
-        &self.components
     }
 }
 
@@ -565,14 +526,6 @@ struct RawModelOptions {
 #[derive(Deserialize)]
 struct RawModelOption {
     name: String,
-    description: Option<String>,
-    #[serde(rename = "model-card-url")]
-    model_card_url: Option<String>,
-    quantization: Option<String>,
-    #[serde(rename = "disk-size")]
-    disk_size: Option<String>,
-    #[serde(default, deserialize_with = "null_as_default")]
-    components: Vec<String>,
 }
 
 pub fn parse_model_options(input: &str) -> Result<ModelOptions, ParseError> {
@@ -583,14 +536,7 @@ pub fn parse_model_options(input: &str) -> Result<ModelOptions, ParseError> {
         options: raw
             .models
             .into_iter()
-            .map(|model| ModelOption {
-                name: model.name,
-                description: model.description,
-                model_card_url: model.model_card_url,
-                quantization: model.quantization,
-                disk_size: model.disk_size,
-                components: model.components,
-            })
+            .map(|model| ModelOption { name: model.name })
             .collect(),
     })
 }
@@ -598,15 +544,7 @@ pub fn parse_model_options(input: &str) -> Result<ModelOptions, ParseError> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EngineOption {
     name: String,
-    summary: Option<String>,
-    description: Option<String>,
-    vendor: Option<String>,
-    runtime: Option<String>,
     compatible: bool,
-    score: Option<i64>,
-    model_default: Option<String>,
-    model_options: Vec<String>,
-    configuration: BTreeMap<String, ConfigValue>,
 }
 
 impl EngineOption {
@@ -616,38 +554,6 @@ impl EngineOption {
 
     pub fn compatible(&self) -> bool {
         self.compatible
-    }
-
-    pub fn configuration(&self) -> &BTreeMap<String, ConfigValue> {
-        &self.configuration
-    }
-
-    pub fn model_default(&self) -> Option<&str> {
-        self.model_default.as_deref()
-    }
-
-    pub fn model_options(&self) -> &[String] {
-        &self.model_options
-    }
-
-    pub fn summary(&self) -> Option<&str> {
-        self.summary.as_deref()
-    }
-
-    pub fn description(&self) -> Option<&str> {
-        self.description.as_deref()
-    }
-
-    pub fn vendor(&self) -> Option<&str> {
-        self.vendor.as_deref()
-    }
-
-    pub fn runtime(&self) -> Option<&str> {
-        self.runtime.as_deref()
-    }
-
-    pub fn score(&self) -> Option<i64> {
-        self.score
     }
 }
 
@@ -678,23 +584,8 @@ struct RawEngineOptions {
 #[derive(Deserialize)]
 struct RawEngineOption {
     name: String,
-    summary: Option<String>,
-    description: Option<String>,
-    vendor: Option<String>,
-    runtime: Option<String>,
     #[serde(default, deserialize_with = "null_as_default")]
     compatible: bool,
-    score: Option<i64>,
-    model: Option<RawEngineModels>,
-    #[serde(default, deserialize_with = "null_as_default")]
-    configurations: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Deserialize)]
-struct RawEngineModels {
-    default: Option<String>,
-    #[serde(default, deserialize_with = "null_as_default")]
-    options: Vec<String>,
 }
 
 /// modelctl writes `null` rather than `{}` or `[]` for anything empty, and
@@ -710,36 +601,16 @@ where
 pub fn parse_engine_options(input: &str) -> Result<EngineOptions, ParseError> {
     let raw: RawEngineOptions = serde_json::from_str(input)
         .map_err(|error| ParseError::json("modelctl list-engines", error))?;
-    let options = raw
-        .engines
-        .into_iter()
-        .map(|engine| {
-            let configuration = engine
-                .configurations
-                .iter()
-                .map(|(key, value)| Ok((key.clone(), config_value(value)?)))
-                .collect::<Result<_, ParseError>>()?;
-            let (model_default, model_options) = engine
-                .model
-                .map(|model| (model.default, model.options))
-                .unwrap_or_default();
-            Ok(EngineOption {
-                name: engine.name,
-                summary: engine.summary,
-                description: engine.description,
-                vendor: engine.vendor,
-                runtime: engine.runtime,
-                compatible: engine.compatible,
-                score: engine.score,
-                model_default,
-                model_options,
-                configuration,
-            })
-        })
-        .collect::<Result<_, ParseError>>()?;
     Ok(EngineOptions {
         active: raw.active,
-        options,
+        options: raw
+            .engines
+            .into_iter()
+            .map(|engine| EngineOption {
+                name: engine.name,
+                compatible: engine.compatible,
+            })
+            .collect(),
     })
 }
 
@@ -877,33 +748,6 @@ impl BackendSnapshot {
 
     pub(crate) fn add_error(&mut self, error: BackendSurfaceError) {
         self.errors.insert(error.surface(), error);
-    }
-}
-
-fn config_value(value: &serde_json::Value) -> Result<ConfigValue, ParseError> {
-    match value {
-        serde_json::Value::Null => Ok(ConfigValue::Null),
-        serde_json::Value::Bool(value) => Ok(ConfigValue::Boolean(*value)),
-        serde_json::Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Ok(ConfigValue::Integer(value))
-            } else {
-                value
-                    .as_f64()
-                    .map(ConfigValue::Number)
-                    .ok_or_else(|| ParseError::new("configuration", "number is out of range"))
-            }
-        }
-        serde_json::Value::String(value) => Ok(ConfigValue::Text(value.clone())),
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(config_value)
-            .collect::<Result<_, _>>()
-            .map(ConfigValue::List),
-        serde_json::Value::Object(_) => Err(ParseError::new(
-            "configuration",
-            "nested objects must be flattened before conversion",
-        )),
     }
 }
 

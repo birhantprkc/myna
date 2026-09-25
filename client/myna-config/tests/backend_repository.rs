@@ -184,7 +184,6 @@ fn reads_the_installed_parakeet_shape_without_per_setting_commands() {
         Some("myna-parakeet.parakeet")
     );
     assert!(snapshot.errors().is_empty());
-    assert_eq!(snapshot.status().unwrap().engine(), Some("cpu"));
     assert_eq!(
         snapshot.models().unwrap().active(),
         Some("parakeet-tdt-0.6b-v3")
