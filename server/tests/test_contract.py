@@ -223,17 +223,3 @@ async def test_capabilities_query_round_trips_over_transport(transport, tmp_path
     assert caps == adapter.capabilities()
     assert caps.models == ("fake",)
     assert caps.input_formats  # non-empty: clients need a format to deliver
-
-
-async def test_result_record_serializes_to_json(run_fake, tmp_path):
-    import json
-
-    from myna.testbed.harness import write_records
-
-    record = await run_fake()
-    out = tmp_path / "results.jsonl"
-    write_records([record], out)
-    line = out.read_text().strip()
-    parsed = json.loads(line)
-    assert parsed["candidate"]["model"] == "fake"
-    assert parsed["events"][-1]["event"] in TERMINAL

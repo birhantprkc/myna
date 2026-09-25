@@ -1,31 +1,26 @@
 """Evaluation harness.
 
 The harness is a client: it feeds audio into a session, timestamps every
-received event with a monotonic clock, and writes one structured
+received event with a monotonic clock, and returns one structured
 ``ResultRecord`` per run. It speaks only the interfaces in ``myna.core`` —
 all model-specific behaviour lives in adapters.
 
 Latency metrics are derived, not measured ad hoc: the raw timed event list is
-the source of truth and is preserved in the record so new metrics can be
-computed over old runs.
+the source of truth and is preserved in the record.
 """
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
 
 from myna.core import (
     AudioSource,
     SessionConfig,
     SttClient,
     TranscriptionEvent,
-    event_to_wire,
 )
 from myna.testbed.adapter import Candidate
 
@@ -113,11 +108,6 @@ class ResultRecord:
     audio_end_t: float | None
     metrics: Metrics
     transcript: str
-
-    def to_json(self) -> dict[str, Any]:
-        record = asdict(self)
-        record["events"] = [{"t": te.t, **event_to_wire(te.event)} for te in self.events]
-        return record
 
 
 def compute_metrics(
@@ -240,11 +230,3 @@ class Harness:
             metrics=compute_metrics(timed, audio_end_t, audio_seconds),
             transcript=transcript,
         )
-
-
-def write_records(records: Iterable[ResultRecord], path: Path) -> None:
-    """Append result records to a JSONL file, one record per line."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fp:
-        for record in records:
-            fp.write(json.dumps(record.to_json()) + "\n")
