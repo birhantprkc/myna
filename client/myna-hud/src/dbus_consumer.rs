@@ -1,13 +1,11 @@
 //! dbus_consumer — the `com.canonical.Myna.Dictation` consumer (feature 004; contracts
-//! `dbus-interface.md` C8/C9 + `extension.md` RC7–RC10 (formerly X7–X10,
+//! `dbus-interface.md` C8/C9 + `extension.md` RC7–RC8 (formerly X7–X8,
 //! re-homed to the renderer by the 2026-08-26 architecture revision). Ported
 //! from `extensions/myna-shell/dbus.js`.
 //!
 //! Dormant while the name has no owner (no proxy, no state emissions — RC7);
 //! activates on name-appeared (connects + reflects the current State — RC8)
 //! and clears to idle on name-vanished (daemon crash/exit).
-//! [`DictationService::disable`] removes the watch, drops the proxy and
-//! every subscription (RC9); re-enabling re-establishes cleanly (RC10).
 //!
 //! All updates arrive one way: the standard
 //! `org.freedesktop.DBus.Properties.PropertiesChanged` signal. The proxy
@@ -129,16 +127,6 @@ impl DictationService {
     /// Start watching the name. Dormant until it has an owner (RC7).
     pub fn enable(&mut self) {
         self.watching = true;
-    }
-
-    /// Remove the watch, drop the proxy and every subscription (RC9). Safe
-    /// when already dormant; re-[`enable`](Self::enable) re-establishes
-    /// cleanly (RC10).
-    pub fn disable(&mut self) {
-        self.watching = false;
-        self.available = false;
-        self.last_state = None;
-        self.last_hud_style = None;
     }
 
     /// The name gained an owner: connect and reflect the current State (RC8).

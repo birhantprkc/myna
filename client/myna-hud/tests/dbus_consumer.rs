@@ -1,6 +1,6 @@
 // tests/dbus_consumer.rs — hermetic contract test for the
 // com.canonical.Myna.Dictation consumer lifecycle (feature 004, contract
-// extension.md RC7–RC10 re-homed to the renderer; dbus-interface.md C8/C9).
+// extension.md RC7–RC8 re-homed to the renderer; dbus-interface.md C8/C9).
 // No session bus: the name watch and the proxy are injectable seams.
 
 use std::cell::RefCell;
@@ -257,45 +257,6 @@ fn repeated_states_are_deduplicated() {
         .filter(|e| matches!(e, Event::State { .. }))
         .count();
     assert_eq!(states, 0, "an unchanged state is not re-emitted");
-}
-
-// --- RC9/RC10: disable drops everything; re-enable re-establishes ---------
-
-#[test]
-fn x9_disable_drops_everything_and_x10_reenable_works() {
-    let recorder: Shared = Rc::default();
-    let mut svc = service(&recorder);
-    svc.enable();
-    svc.simulate_name_appeared(Snapshot {
-        state: wire::RECORDING.into(),
-        ..Default::default()
-    });
-    svc.disable();
-
-    recorder.borrow_mut().events.clear();
-    // Events arriving after disable() must not reach the application.
-    svc.simulate_properties_changed(Snapshot {
-        state: wire::TRANSCRIBING.into(),
-        ..Default::default()
-    });
-    assert!(
-        recorder.borrow().events.is_empty(),
-        "no emissions after disable"
-    );
-
-    svc.enable();
-    svc.simulate_name_appeared(Snapshot {
-        state: wire::FINALIZING.into(),
-        ..Default::default()
-    });
-    assert!(
-        recorder
-            .borrow()
-            .events
-            .iter()
-            .any(|e| matches!(e, Event::State { state, .. } if state == wire::FINALIZING)),
-        "re-enabled service reflects state again"
-    );
 }
 
 // --- C8: unknown state values pass through untouched --------------------
