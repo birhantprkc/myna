@@ -601,31 +601,6 @@ fn serialize_value(value: &ConfigValue) -> Result<String, String> {
                 .ok_or_else(|| "value must be a finite number".to_owned())
         }
         ConfigValue::Text(value) => serde_json::to_string(value).map_err(|error| error.to_string()),
-        ConfigValue::List(values) => {
-            serde_json::to_string(&config_value_to_json(values)?).map_err(|error| error.to_string())
-        }
-    }
-}
-
-fn config_value_to_json(value: &[ConfigValue]) -> Result<Vec<serde_json::Value>, String> {
-    value.iter().map(config_scalar_to_json).collect()
-}
-
-fn config_scalar_to_json(value: &ConfigValue) -> Result<serde_json::Value, String> {
-    match value {
-        ConfigValue::Null => Ok(serde_json::Value::Null),
-        ConfigValue::Boolean(value) => Ok(serde_json::Value::Bool(*value)),
-        ConfigValue::Integer(value) => Ok(serde_json::Value::Number((*value).into())),
-        ConfigValue::Number(value) => {
-            if !value.is_finite() {
-                return Err("value must be a finite number".to_owned());
-            }
-            serde_json::Number::from_f64(*value)
-                .map(serde_json::Value::Number)
-                .ok_or_else(|| "value must be a finite number".to_owned())
-        }
-        ConfigValue::Text(value) => Ok(serde_json::Value::String(value.clone())),
-        ConfigValue::List(values) => Ok(serde_json::Value::Array(config_value_to_json(values)?)),
     }
 }
 
@@ -667,7 +642,6 @@ fn display_value(value: &ConfigValue) -> String {
         ConfigValue::Integer(value) => value.to_string(),
         ConfigValue::Number(value) => value.to_string(),
         ConfigValue::Text(value) => value.clone(),
-        ConfigValue::List(_) => serialize_value(value).unwrap_or_else(|_| "<invalid>".to_owned()),
     }
 }
 
@@ -1024,17 +998,6 @@ mod tests {
                 .unwrap(),
                 StagedChange::new(
                     ConfigScope::Engine,
-                    "nested.list",
-                    ConfigValue::Null,
-                    ConfigValue::List(vec![
-                        ConfigValue::Null,
-                        ConfigValue::Text("--leading".into()),
-                        ConfigValue::Text("two words".into()),
-                    ]),
-                )
-                .unwrap(),
-                StagedChange::new(
-                    ConfigScope::Engine,
                     "ratio",
                     ConfigValue::Number(0.25),
                     ConfigValue::Number(0.5),
@@ -1053,7 +1016,6 @@ mod tests {
                 "myna-whisper.whisper".to_owned(),
                 "set".to_owned(),
                 r#"alpha=" spaced ; $(rm -rf /) ""#.to_owned(),
-                r#"nested.list=[null,"--leading","two words"]"#.to_owned(),
                 "ratio=0.5".to_owned(),
                 "zeta=true".to_owned(),
                 "--assume-yes".to_owned(),

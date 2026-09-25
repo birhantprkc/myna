@@ -357,7 +357,7 @@ fn fallback(key: &str, value: &ConfigValue) -> PresentationMetadata {
             (ControlType::Number, Validation::Number)
         }
         ConfigValue::Text(_) => (ControlType::Text, Validation::Text),
-        ConfigValue::Null | ConfigValue::List(_) => (ControlType::ReadOnly, Validation::ReadOnly),
+        ConfigValue::Null => (ControlType::ReadOnly, Validation::ReadOnly),
     };
     if sensitive {
         control = ControlType::ReadOnly;

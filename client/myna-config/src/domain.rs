@@ -177,7 +177,6 @@ pub enum ConfigValue {
     Integer(i64),
     Number(f64),
     Text(String),
-    List(Vec<ConfigValue>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

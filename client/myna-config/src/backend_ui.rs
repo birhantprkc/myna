@@ -2552,11 +2552,6 @@ fn config_value_display(value: &ConfigValue) -> String {
         ConfigValue::Integer(number) => number.to_string(),
         ConfigValue::Number(number) => number.to_string(),
         ConfigValue::Text(text) => text.clone(),
-        ConfigValue::List(items) => items
-            .iter()
-            .map(config_value_display)
-            .collect::<Vec<_>>()
-            .join(", "),
     }
 }
 

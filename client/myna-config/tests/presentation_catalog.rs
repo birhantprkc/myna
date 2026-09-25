@@ -174,7 +174,6 @@ fn validation_exactly_matches_current_configure_hooks() {
         ),
         ("compute-type", ConfigValue::Integer(1), false),
         ("att-context-size", ConfigValue::Text("70,0".into()), true),
-        ("att-context-size", ConfigValue::List(Vec::new()), false),
     ];
 
     for (key, value, valid) in cases {
