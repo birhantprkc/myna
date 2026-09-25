@@ -7,15 +7,11 @@
 // equivalent lands as the env-gated EGL render check over the shader.
 
 use myna_hud::ribbon::{
-    apply_envelope_smoothing, apply_envelope_smoothing_with_tau, complete_progress,
-    compute_envelope, compute_ribbon_model, is_strong_syllable_onset, morph_progress,
-    shape_amplitude, unfold_progress, RibbonInput, RibbonPhase, RibbonTint, StrandRole,
-    AMPLITUDE_CURVE_K, ATTACK_TAU_MS, COMPLETE_MS, DEFAULT_ENVELOPE_HZ, DEFAULT_POINTS_PER_STRAND,
-    DEFAULT_STRAND_COUNT, IDLE_AMPLITUDE, MORPH_MS, PARTICLE_ONSET_THRESHOLD, RELEASE_TAU_MS,
-    SMOOTHING_TAU_MS, UNFOLD_MS,
+    complete_progress, compute_ribbon_model, morph_progress, shape_amplitude, unfold_progress,
+    RibbonInput, RibbonPhase, RibbonTint, StrandRole, AMPLITUDE_CURVE_K, COMPLETE_MS,
+    DEFAULT_POINTS_PER_STRAND, DEFAULT_STRAND_COUNT, MORPH_MS, UNFOLD_MS,
 };
 use myna_hud::states::Severity;
-use myna_hud::vumeter::{FLOOR, STALE_MS};
 
 fn input(envelope: f64, elapsed_ms: f64) -> RibbonInput {
     RibbonInput {
@@ -35,97 +31,6 @@ fn voice_strand(model: &myna_hud::ribbon::RibbonModel) -> &myna_hud::ribbon::Str
 
 fn max_amplitude(strand: &myna_hud::ribbon::Strand) -> f64 {
     strand.points.iter().map(|p| p.y.abs()).fold(0.0, f64::max)
-}
-
-// --- X5 (delegated): instantaneous envelope reuses the vumeter unchanged --
-
-#[test]
-fn x5_delegated_envelope_uses_vumeter() {
-    assert!(compute_envelope(0.002, 0.002, 0.0) < compute_envelope(0.02, 0.02, 0.0));
-    assert!(
-        compute_envelope(0.9, 0.9, 0.0) > compute_envelope(0.9, 0.9, STALE_MS + 50.0),
-        "stale decays toward the floor"
-    );
-}
-
-// --- ~250-400ms smoothing (applyEnvelopeSmoothing) ------------------------
-
-#[test]
-fn smoothing_design_range_and_steps() {
-    assert!(
-        (250.0..=400.0).contains(&SMOOTHING_TAU_MS),
-        "SMOOTHING_TAU_MS within the 250-400ms design range"
-    );
-    // The ATTACK path (rising) is deliberately fast — a single ~16ms frame
-    // tracks a good fraction of a sudden jump, but still isn't instant.
-    let attack_step = apply_envelope_smoothing(0.0, 1.0, 16.0);
-    assert!(
-        (0.2..0.9).contains(&attack_step),
-        "a single ~16ms attack frame is fast but not instantaneous: {attack_step}"
-    );
-    // The RELEASE path (falling) is the slower, smoother one — this is what
-    // "no oscilloscope-like jumps" protects: pauses/decay should ease.
-    let release_step = apply_envelope_smoothing(1.0, 0.0, 16.0);
-    let attack_fraction = attack_step; // distance covered toward target 1.0
-    let release_fraction = 1.0 - release_step; // distance covered toward target 0
-    assert!(
-        attack_fraction > release_fraction * 2.0,
-        "attack covers much more distance per frame than release"
-    );
-    // But after several time constants' worth of steps it converges close to
-    // the target (syllables remain visible).
-    let mut converged = 0.0;
-    for _ in 0..200 {
-        converged = apply_envelope_smoothing(converged, 1.0, 16.0);
-    }
-    assert!(
-        converged > 0.95,
-        "converges close to the target: {converged}"
-    );
-    assert_eq!(
-        apply_envelope_smoothing(0.3, 0.6, 50.0),
-        apply_envelope_smoothing(0.3, 0.6, 50.0),
-        "smoothing is a pure function of its inputs"
-    );
-    assert!(
-        apply_envelope_smoothing(0.0, 5.0, 1000.0) <= 1.0
-            && apply_envelope_smoothing(0.0, -5.0, 1000.0) >= 0.0,
-        "smoothing output stays clamped to [0,1]"
-    );
-}
-
-// --- attack/release ballistics ("more reactive") --------------------------
-
-#[test]
-fn attack_release_ballistics() {
-    // Compile-time invariant: the attack path is deliberately faster than
-    // release ("more reactive to getting louder", R17f).
-    const _: () = assert!(ATTACK_TAU_MS < RELEASE_TAU_MS);
-    let rising = apply_envelope_smoothing(0.0, 1.0, 40.0);
-    let rising_with_release_tau = apply_envelope_smoothing_with_tau(0.0, 1.0, 40.0, RELEASE_TAU_MS);
-    assert!(
-        rising > rising_with_release_tau,
-        "rising uses the fast attack tau"
-    );
-    let falling = apply_envelope_smoothing(1.0, 0.0, 40.0);
-    assert!(
-        (0.5..1.0).contains(&falling),
-        "a falling target still eases: {falling}"
-    );
-    assert_eq!(
-        apply_envelope_smoothing_with_tau(0.0, 1.0, 40.0, 12345.0),
-        apply_envelope_smoothing_with_tau(0.0, 1.0, 40.0, 12345.0),
-        "an explicit tauMs overrides attack/release auto-selection"
-    );
-}
-
-// --- strong-syllable onset detection (particles, optional) ----------------
-
-#[test]
-fn strong_syllable_onset() {
-    assert!(is_strong_syllable_onset(PARTICLE_ONSET_THRESHOLD));
-    assert!(!is_strong_syllable_onset(0.01));
-    assert!(!is_strong_syllable_onset(-0.5));
 }
 
 // --- amplitude response curve ("log scale" follow-up) ---------------------
@@ -306,41 +211,6 @@ fn phase_driven_behavior() {
     assert!(
         max_amplitude(voice_strand(&unfolding)) <= max_amplitude(voice_strand(&unfolded)),
         "unfold starts near-flat and grows to full amplitude"
-    );
-
-    // FR-010a's pause behaviour — delivered by the envelope's release
-    // ballistics easing `flow` down on its own (there is no RELAX phase;
-    // removed 2026-08-24). Driven at the real 24Hz repaint cadence against a
-    // silent input, exactly as the renderer would.
-    let speaking = compute_ribbon_model(input(0.9, 0.0));
-    let speaking_amplitude = max_amplitude(voice_strand(&speaking));
-    let dt_ms = 1000.0 / DEFAULT_ENVELOPE_HZ;
-    let mut paused_env = 0.9;
-    let mut eased = Vec::new();
-    let mut t = 0.0;
-    while t < 1500.0 {
-        // FLOOR, not 0: the vumeter never reports true silence while active.
-        paused_env = apply_envelope_smoothing(paused_env, FLOOR, dt_ms);
-        eased.push(max_amplitude(voice_strand(&compute_ribbon_model(input(
-            paused_env, t,
-        )))));
-        t += dt_ms;
-    }
-    assert!(
-        eased.windows(2).all(|w| w[1] <= w[0] + 1e-9),
-        "a pause eases the wave down without a step"
-    );
-    assert!(
-        eased[0] < speaking_amplitude && eased[0] > eased[eased.len() - 1],
-        "a pause does not stop abruptly"
-    );
-    assert!(
-        eased[eased.len() - 1] < speaking_amplitude * 0.25,
-        "settles toward a thin idle line"
-    );
-    assert!(
-        eased[eased.len() - 1] >= IDLE_AMPLITUDE,
-        "never collapses below the idle floor"
     );
 }
 

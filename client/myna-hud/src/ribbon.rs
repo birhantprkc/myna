@@ -11,20 +11,13 @@
 //!                                      dBFS calibration + stale-decay,
 //!                                      updated ~20-30 Hz)
 //!       ↓
-//! Smoothed loudness envelope          (apply_envelope_smoothing — an
-//!                                      attack/release-ballistics one-pole
-//!                                      low-pass, state MAINTAINED BY THE
-//!                                      CALLER across repaint frames so this
-//!                                      module stays a pure function of its
-//!                                      explicit inputs)
-//!       ↓
 //! Controlled wave amplitude + several offset strands (this module)
 //!       ↓
 //! Left-to-right flowing ribbon         (the GLArea/GPU renderer, shader.rs)
 //! ```
 //!
 //! Deliberately NOT an oscilloscope: no raw audio samples, no pitch/
-//! frequency input, no per-sample reproduction — only a single smoothed
+//! frequency input, no per-sample reproduction — only a single calibrated
 //! loudness envelope drives everything, with fixed, small per-strand offsets
 //! for depth (never independent per-strand state). "Audio drives the energy
 //! of the animation, while the product controls its shape."
@@ -33,7 +26,6 @@
 //! ([`tests/ribbon.rs`]).
 
 use crate::states::Severity;
-use crate::vumeter::levels_to_intensity;
 
 // ── Lifecycle phases & strand roles ──────────────────────────────────────
 
@@ -45,19 +37,15 @@ use crate::vumeter::levels_to_intensity;
 /// - [`RibbonPhase::Complete`]: a brief convergence + brightness pulse
 ///   before the pill clears.
 ///
-/// There is deliberately no pause/relax phase. FR-010a's "relax smoothly
-/// toward a thin idle line during pauses" is delivered by the envelope's
-/// [`RELEASE_TAU_MS`] ballistics below, continuously and in proportion to
-/// the actual audio, rather than by a phase: a phase needs a pause
+/// There is deliberately no pause/relax phase: a phase needs a pause
 /// *detector*, and there is no threshold that works. Trip it at ~400ms and
 /// it fires on ordinary inter-word gaps (the VU reaches its floor after
 /// 300ms of silence), so the ribbon would collapse and snap back
-/// mid-sentence; wait ~1.5s to avoid that and the release curve has already
-/// done the job. A RELAX phase also capped amplitude at the idle floor
-/// regardless of input, so resuming speech mid-ramp was actively suppressed
-/// — something the release curve cannot do. Removed 2026-08-24, having never
-/// been reachable: `ribbon_phase_for_state_key` never returned it and the
-/// renderer never selected it.
+/// mid-sentence. A RELAX phase also capped amplitude at the idle floor
+/// regardless of input, so resuming speech mid-ramp was actively suppressed.
+/// Removed 2026-08-24, having never been reachable:
+/// `ribbon_phase_for_state_key` never returned it and the renderer never
+/// selected it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RibbonPhase {
     Unfold,
@@ -89,23 +77,8 @@ pub enum RibbonTint {
 
 // ── Tunables ────────────────────────────────────────────────────────────
 
-pub const DEFAULT_ENVELOPE_HZ: f64 = 24.0;
 pub const DEFAULT_STRAND_COUNT: usize = 5;
 pub const DEFAULT_POINTS_PER_STRAND: usize = 16;
-
-/// The attack (rising) time constant for the *visual* envelope's ballistics
-/// (distinct from the vumeter's arrival-time stale-decay) — tightened twice
-/// after live passes read as too laggy: a near-immediate reaction to getting
-/// louder is exactly what "more reactive" means.
-pub const ATTACK_TAU_MS: f64 = 35.0;
-/// The release/decay time constant — the slower, smoother side, still within
-/// the design doc's original 250-400ms smoothing intent. This is what
-/// satisfies FR-010a's pause behaviour now that the RELAX phase is gone: a
-/// pause eases the wave from a speaking amplitude toward roughly an eighth
-/// of it over ~1.5s, smoothly and in proportion to the audio, with no
-/// threshold to misfire on.
-pub const SMOOTHING_TAU_MS: f64 = 280.0;
-pub const RELEASE_TAU_MS: f64 = SMOOTHING_TAU_MS;
 
 // Lifecycle-phase durations (ms).
 pub const UNFOLD_MS: f64 = 175.0; // 150-200ms
@@ -118,7 +91,7 @@ pub const COMPLETE_MS: f64 = 400.0; // 300-500ms ("fast enough not to delay the 
 pub(crate) const RECOVERABLE_PULSE_MS: f64 = 1800.0;
 
 // Per-strand offsets (radians / ms / unitless amplitude scale). Fixed,
-// small, deterministic — every strand reads the SAME smoothed envelope,
+// small, deterministic — every strand reads the SAME envelope,
 // only these constant offsets differ. Constants shared with the GPU path
 // (shader.rs), which regenerates this exact wave in GLSL and bakes them
 // into the shader as `#define`s so the Rust model and the GLSL expression
@@ -154,12 +127,6 @@ pub const IDLE_AMPLITUDE: f64 = 0.025;
 /// (`env=1 → amplitude=1`). See [`shape_amplitude`].
 pub const AMPLITUDE_CURVE_K: f64 = 5.0;
 
-/// A strong-syllable onset for the (optional, sparse) particle highlights:
-/// only a genuine rise in the smoothed envelope counts, never a raw sample
-/// spike, and the caller is expected to throttle how many are concurrently
-/// alive — a handful of sparse points, never a music-visualizer shower.
-pub const PARTICLE_ONSET_THRESHOLD: f64 = 0.14;
-
 /// Clamp to `[0,1]`; NaN collapses to 0.
 fn clamp01(x: f64) -> f64 {
     if x.is_nan() {
@@ -182,65 +149,6 @@ pub fn shape_amplitude(env: f64) -> f64 {
         return 0.0;
     }
     clamp01((1.0 + AMPLITUDE_CURVE_K * e).ln() / (1.0 + AMPLITUDE_CURVE_K).ln())
-}
-
-/// The calibrated, instantaneous loudness envelope — a thin, named
-/// re-export of the vumeter's dBFS mapping + arrival-time stale-decay
-/// (R16a), reused unchanged. This is NOT yet the value the wave shape
-/// should be driven by; see [`apply_envelope_smoothing`].
-///
-pub fn compute_envelope(rms: f64, peak: f64, age_ms: f64) -> f64 {
-    levels_to_intensity(rms, peak, age_ms)
-}
-
-/// One step of a one-pole low-pass filter (exponential smoothing) toward
-/// `target`, given `dt_ms` elapsed since the previous step, with
-/// **attack/release ballistics** (the same pattern real audio meters use):
-/// a fast [`ATTACK_TAU_MS`] while the target is rising, the slower
-/// [`RELEASE_TAU_MS`] while it's falling. Pure and deterministic; the CALLER
-/// owns the running smoothed value as state across repaint frames (mirroring
-/// how the phase/phase-start timestamps are caller-owned) — this keeps the
-/// module side-effect-free.
-///
-pub fn apply_envelope_smoothing(previous: f64, target: f64, dt_ms: f64) -> f64 {
-    let clamped_target = clamp01(target);
-    let tau = if clamped_target > previous {
-        ATTACK_TAU_MS
-    } else {
-        RELEASE_TAU_MS
-    };
-    smoothing_step(previous, clamped_target, dt_ms, tau)
-}
-
-/// The explicit-`tau` form of [`apply_envelope_smoothing`] — forces a
-/// single, symmetric time constant instead of attack/release auto-selection
-/// (used by a few tests that care only about convergence, not ballistics).
-///
-/// tauMs)`.
-pub fn apply_envelope_smoothing_with_tau(
-    previous: f64,
-    target: f64,
-    dt_ms: f64,
-    tau_ms: f64,
-) -> f64 {
-    smoothing_step(previous, clamp01(target), dt_ms, tau_ms)
-}
-
-fn smoothing_step(previous: f64, clamped_target: f64, dt_ms: f64, tau_ms: f64) -> f64 {
-    if tau_ms <= 0.0 || dt_ms <= 0.0 {
-        return clamped_target;
-    }
-    let alpha = 1.0 - (-dt_ms / tau_ms).exp();
-    clamp01(previous + (clamped_target - previous) * alpha)
-}
-
-/// Whether a rise in the *smoothed* envelope is large enough to count as a
-/// strong-syllable onset worth a sparse particle highlight. Pure — the
-/// caller supplies the delta (this frame's smoothed value minus last
-/// frame's) so this module never needs to remember history itself.
-///
-pub fn is_strong_syllable_onset(envelope_delta: f64) -> bool {
-    envelope_delta >= PARTICLE_ONSET_THRESHOLD
 }
 
 fn phase_progress(elapsed_ms: f64, duration_ms: f64) -> f64 {
@@ -335,8 +243,7 @@ pub struct RibbonModel {
 /// GJS original, with the same defaults.
 #[derive(Clone, Debug)]
 pub struct RibbonInput {
-    /// The SMOOTHED loudness envelope `[0,1]` (from
-    /// [`apply_envelope_smoothing`], not the raw instantaneous value).
+    /// The calibrated loudness envelope `[0,1]`.
     pub envelope: f64,
     /// Elapsed time for the flow animation.
     pub elapsed_ms: f64,
@@ -434,18 +341,14 @@ fn make_strand(
     }
 }
 
-/// Compute the full ribbon model from an already-smoothed envelope value.
+/// Compute the full ribbon model from an envelope value.
 ///
-/// Four conceptual layers (the design doc's "layered construction"):
+/// Three conceptual layers (the design doc's "layered construction"):
 /// - `base` strand: slow, low-amplitude sway, nearly independent of the
 ///   voice — keeps the ribbon "alive" even in silence.
 /// - `voice` strand: the main, most-reactive strand, driven directly by the
-///   smoothed envelope, with per-point crest brightness.
+///   envelope, with per-point crest brightness.
 /// - `secondary` strand: delayed and less opaque, for depth.
-/// - optional sparse particle highlights (caller-managed list; see
-///   [`is_strong_syllable_onset`]) are NOT generated here — this function
-///   only returns the strand geometry; particle lifetime bookkeeping is the
-///   caller's (mirrors phase/smoothing state).
 ///
 /// During `morph` the strands crossfade into 3 travelling dots; during
 /// `complete` they converge toward a single centred point with a brief
@@ -553,7 +456,7 @@ pub fn compute_ribbon_model(input: RibbonInput) -> RibbonModel {
             });
         }
         RibbonPhase::Flow => {
-            // Steady-state: amplitude tracks the smoothed envelope (through
+            // Steady-state: amplitude tracks the envelope (through
             // shape_amplitude's response curve, below).
         }
     }
