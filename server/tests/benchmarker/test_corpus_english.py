@@ -247,7 +247,8 @@ def test_download_builds_the_corpus_from_the_fetched_tarball(
     assert "manifest:" in capsys.readouterr().out
 
 
-def test_build_appends_seeded_noise_variants_of_the_first_clips(tmp_path, tarball, stub_decode):
+@pytest.mark.usefixtures("stub_decode")
+def test_build_appends_seeded_noise_variants_of_the_first_clips(tmp_path, tarball):
     manifest_path = build(tmp_path / "corpus", tarball, 3, subset="dev-clean", select="balanced")
     noisy = [c for c in load_manifest(manifest_path) if c.category == "noise"]
     assert len(noisy) == N_NOISE
@@ -255,7 +256,8 @@ def test_build_appends_seeded_noise_variants_of_the_first_clips(tmp_path, tarbal
     assert all(c.source.endswith("+noise") for c in noisy)
 
 
-def test_archive_selection_takes_one_speaker_where_balanced_spreads(tmp_path, tarball, stub_decode):
+@pytest.mark.usefixtures("stub_decode")
+def test_archive_selection_takes_one_speaker_where_balanced_spreads(tmp_path, tarball):
     """The two strategies are not interchangeable, which is the whole point of
     keeping both: dev-clean's archive order lands every clip on one speaker."""
     archive = build(tmp_path / "a", tarball, 2, subset="dev-clean", select="archive")
@@ -268,24 +270,28 @@ def test_archive_selection_takes_one_speaker_where_balanced_spreads(tmp_path, ta
     assert speakers(balanced) == {"84", "174"}
 
 
-def test_is_complete_accepts_the_corpus_it_just_built(tmp_path, tarball, stub_decode):
+@pytest.mark.usefixtures("stub_decode")
+def test_is_complete_accepts_the_corpus_it_just_built(tmp_path, tarball):
     build(tmp_path / "corpus", tarball, 2, subset="dev-clean", select="balanced")
     assert is_complete(tmp_path / "corpus", "manifest.json", 2, "dev-clean")
 
 
-def test_is_complete_rejects_a_different_split(tmp_path, tarball, stub_decode):
+@pytest.mark.usefixtures("stub_decode")
+def test_is_complete_rejects_a_different_split(tmp_path, tarball):
     build(tmp_path / "corpus", tarball, 2, subset="dev-clean", select="balanced")
     assert not is_complete(tmp_path / "corpus", "manifest.json", 2, "dev-other")
 
 
-def test_is_complete_rejects_a_tier_missing_its_audio(tmp_path, tarball, stub_decode):
+@pytest.mark.usefixtures("stub_decode")
+def test_is_complete_rejects_a_tier_missing_its_audio(tmp_path, tarball):
     out = tmp_path / "corpus"
     build(out, tarball, 2, subset="dev-clean", select="balanced")
     next(iter((out / "audio").glob("*.wav"))).unlink()
     assert not is_complete(out, "manifest.json", 2, "dev-clean")
 
 
-def test_a_second_split_into_one_dir_is_refused(tmp_path, tarball, stub_decode):
+@pytest.mark.usefixtures("stub_decode")
+def test_a_second_split_into_one_dir_is_refused(tmp_path, tarball):
     """One split per dir: the NOTICE carries that split's attribution, and a
     second one would silently overwrite it."""
     out = tmp_path / "corpus"
