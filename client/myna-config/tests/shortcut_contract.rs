@@ -97,3 +97,25 @@ fn a_desktop_binding_is_the_control_paths_shortcut() {
         ShortcutState::NotRunning
     );
 }
+
+#[test]
+fn accelerators_match_across_gnome_spellings() {
+    use myna_config::shortcut::same_accelerator;
+    assert!(same_accelerator("<Super>l", "<Super>L"));
+    assert!(same_accelerator("<Primary><Alt>t", "<Alt><Control>t"));
+    assert!(same_accelerator("<Mod4>o", "<Super>o"));
+    assert!(same_accelerator(
+        "<Ctrl><Mod1>Delete",
+        "<Control><Alt>Delete"
+    ));
+    assert!(same_accelerator("XF86Calculator", "XF86Calculator"));
+}
+
+#[test]
+fn different_chords_or_keys_do_not_match() {
+    use myna_config::shortcut::same_accelerator;
+    assert!(!same_accelerator("<Super>l", "<Super><Shift>l"));
+    assert!(!same_accelerator("<Super>l", "<Super>k"));
+    assert!(!same_accelerator("", "<Super>l"));
+    assert!(!same_accelerator("", ""));
+}
