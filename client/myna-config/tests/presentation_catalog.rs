@@ -3,7 +3,7 @@ use myna_config::domain::{
 };
 use myna_config::presentation::{
     metadata_for, present_configuration, ControlType, PresentationGroup, RestartBehavior,
-    Sensitivity, Units, Validation,
+    Sensitivity, Validation,
 };
 
 #[test]
@@ -12,7 +12,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "model",
             ControlType::Choice,
-            None,
             Validation::Any,
             PresentationGroup::General,
             RestartBehavior::Required,
@@ -20,7 +19,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "engine",
             ControlType::Choice,
-            None,
             Validation::Any,
             PresentationGroup::General,
             RestartBehavior::Required,
@@ -28,7 +26,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "streaming",
             ControlType::Toggle,
-            None,
             Validation::Boolean,
             PresentationGroup::General,
             RestartBehavior::Required,
@@ -36,7 +33,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "sleep-idle-seconds",
             ControlType::Number,
-            Some(Units::Seconds),
             Validation::NonNegativeInteger,
             PresentationGroup::Runtime,
             RestartBehavior::NotRequired,
@@ -44,7 +40,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "verbose",
             ControlType::Toggle,
-            None,
             Validation::Boolean,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
@@ -52,7 +47,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "ws.unix-socket",
             ControlType::Text,
-            None,
             Validation::Text,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
@@ -60,7 +54,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "stream-arm-seconds",
             ControlType::Number,
-            Some(Units::Seconds),
             Validation::PositiveNumber,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
@@ -68,7 +61,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "stream-silence-cut-seconds",
             ControlType::Number,
-            Some(Units::Seconds),
             Validation::PositiveNumber,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
@@ -76,7 +68,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "stream-force-cut-seconds",
             ControlType::Number,
-            Some(Units::Seconds),
             Validation::PositiveNumber,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
@@ -84,7 +75,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "stream-partial-cadence-seconds",
             ControlType::Number,
-            Some(Units::Seconds),
             Validation::NonNegativeNumber,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
@@ -92,7 +82,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "stream-partial-tail-seconds",
             ControlType::Number,
-            Some(Units::Seconds),
             Validation::NonNegativeNumber,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
@@ -100,7 +89,6 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "compute-type",
             ControlType::Text,
-            None,
             Validation::Text,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
@@ -108,25 +96,22 @@ fn every_shipped_backend_key_has_explicit_typed_metadata() {
         (
             "att-context-size",
             ControlType::Text,
-            None,
             Validation::Text,
             PresentationGroup::Advanced,
             RestartBehavior::Required,
         ),
     ];
 
-    for (key, control, units, validation, group, restart_behavior) in cases {
+    for (key, control, validation, group, restart_behavior) in cases {
         let value = match control {
             ControlType::Toggle => ConfigValue::Boolean(false),
             ControlType::Number => ConfigValue::Integer(0),
             _ => ConfigValue::Text(String::new()),
         };
         let metadata = metadata_for(key, &value);
-        assert!(metadata.known(), "{key} must be in the explicit catalog");
         assert!(!metadata.title().is_empty(), "{key}");
         assert!(!metadata.explanation().is_empty(), "{key}");
         assert_eq!(metadata.control(), control, "{key}");
-        assert_eq!(metadata.units(), units, "{key}");
         assert_eq!(metadata.validation(), &validation, "{key}");
         assert_eq!(metadata.group(), group, "{key}");
         assert_eq!(metadata.restart_behavior(), restart_behavior, "{key}");
@@ -237,7 +222,6 @@ fn unknown_scalars_and_nested_keys_remain_visible_with_honest_fallbacks() {
     ];
     for (row, (key, control, validation)) in rows.iter().zip(expected) {
         assert_eq!(row.key(), key);
-        assert!(!row.metadata().known());
         assert_eq!(row.metadata().group(), PresentationGroup::Advanced);
         assert_eq!(row.metadata().control(), control);
         assert_eq!(row.metadata().validation(), &validation);
@@ -273,7 +257,6 @@ fn internal_and_sensitive_mechanisms_are_never_promoted() {
         assert_eq!(metadata.control(), ControlType::ReadOnly);
         assert_eq!(metadata.validation(), &Validation::ReadOnly);
         assert!(metadata.diagnostics_only());
-        assert!(!metadata.known());
     }
 }
 

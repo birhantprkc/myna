@@ -14,11 +14,6 @@ pub enum ControlType {
     ReadOnly,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Units {
-    Seconds,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Validation {
     Any,
@@ -98,12 +93,10 @@ pub struct PresentationMetadata {
     title: String,
     explanation: String,
     control: ControlType,
-    units: Option<Units>,
     validation: Validation,
     group: PresentationGroup,
     sensitivity: Sensitivity,
     restart_behavior: RestartBehavior,
-    known: bool,
     order: u16,
 }
 
@@ -120,10 +113,6 @@ impl PresentationMetadata {
         self.control
     }
 
-    pub fn units(&self) -> Option<Units> {
-        self.units
-    }
-
     pub fn validation(&self) -> &Validation {
         &self.validation
     }
@@ -138,10 +127,6 @@ impl PresentationMetadata {
 
     pub fn restart_behavior(&self) -> RestartBehavior {
         self.restart_behavior
-    }
-
-    pub fn known(&self) -> bool {
-        self.known
     }
 
     pub fn diagnostics_only(&self) -> bool {
@@ -181,7 +166,6 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
             "Model",
             "The model served by this backend.",
             ControlType::Choice,
-            None,
             Validation::Any,
             (PresentationGroup::General, Sensitivity::UserFacing, 0),
         ),
@@ -189,7 +173,6 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
             "Engine",
             "The inference engine used by this backend.",
             ControlType::Choice,
-            None,
             Validation::Any,
             (PresentationGroup::General, Sensitivity::UserFacing, 1),
         ),
@@ -197,7 +180,6 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
             "Streaming output",
             "Emit partial transcription results while speech is being processed.",
             ControlType::Toggle,
-            None,
             Validation::Boolean,
             (PresentationGroup::General, Sensitivity::UserFacing, 10),
         ),
@@ -205,7 +187,6 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
             "Unload when idle",
             "Unload the inference service after this many idle seconds; zero disables the delay.",
             ControlType::Number,
-            Some(Units::Seconds),
             Validation::NonNegativeInteger,
             (PresentationGroup::Runtime, Sensitivity::UserFacing, 20),
             RestartBehavior::NotRequired,
@@ -214,7 +195,6 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
             "Verbose logging",
             "Write additional backend diagnostics to the system log.",
             ControlType::Toggle,
-            None,
             Validation::Boolean,
             (PresentationGroup::Advanced, Sensitivity::Internal, 100),
         ),
@@ -222,7 +202,6 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
             "Socket path",
             "Raw Unix socket path used by the transcription service.",
             ControlType::Text,
-            None,
             Validation::Text,
             (PresentationGroup::Advanced, Sensitivity::Internal, 101),
         ),
@@ -260,7 +239,6 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
             "Compute type",
             "Runtime numeric format override. Leave the backend-provided value unchanged unless required.",
             ControlType::Text,
-            None,
             Validation::Text,
             (PresentationGroup::Advanced, Sensitivity::UserFacing, 120),
         ),
@@ -268,7 +246,6 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
             "Attention context size",
             "Backend-specific latency and accuracy context. Empty uses the engine default.",
             ControlType::Text,
-            None,
             Validation::Text,
             (PresentationGroup::Advanced, Sensitivity::UserFacing, 121),
         ),
@@ -280,7 +257,6 @@ fn known(
     title: &str,
     explanation: &str,
     control: ControlType,
-    units: Option<Units>,
     validation: Validation,
     placement: (PresentationGroup, Sensitivity, u16),
 ) -> PresentationMetadata {
@@ -288,7 +264,6 @@ fn known(
         title,
         explanation,
         control,
-        units,
         validation,
         placement,
         RestartBehavior::Required,
@@ -299,7 +274,6 @@ fn known_with_restart(
     title: &str,
     explanation: &str,
     control: ControlType,
-    units: Option<Units>,
     validation: Validation,
     placement: (PresentationGroup, Sensitivity, u16),
     restart_behavior: RestartBehavior,
@@ -309,12 +283,10 @@ fn known_with_restart(
         title: title.to_owned(),
         explanation: explanation.to_owned(),
         control,
-        units,
         validation,
         group,
         sensitivity,
         restart_behavior,
-        known: true,
         order,
     }
 }
@@ -329,7 +301,6 @@ fn seconds(
         title,
         explanation,
         ControlType::Number,
-        Some(Units::Seconds),
         validation,
         (PresentationGroup::Advanced, Sensitivity::UserFacing, order),
     )
@@ -353,7 +324,6 @@ fn fallback(key: &str, value: &ConfigValue) -> PresentationMetadata {
         title: key.to_owned(),
         explanation: METADATA_UNAVAILABLE.to_owned(),
         control,
-        units: None,
         validation,
         group: if sensitive {
             PresentationGroup::Sensitive
@@ -366,7 +336,6 @@ fn fallback(key: &str, value: &ConfigValue) -> PresentationMetadata {
             Sensitivity::UserFacing
         },
         restart_behavior: RestartBehavior::Unknown,
-        known: false,
         order: u16::MAX,
     }
 }
