@@ -255,6 +255,7 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
         "shortcut-unbound: offered set-up",
         "shortcut-bound: Super+J",
         "shortcut-changed: Ctrl+Alt+D",
+        "shortcut-special-key: Calculator",
     ] {
         assert!(
             stdout.contains(line),

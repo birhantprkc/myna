@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use adw::subclass::prelude::*;
 use glib::subclass::types::ObjectSubclassIsExt;
-use gtk::{gdk, glib, CompositeTemplate};
+use gtk::{gdk, glib, glib::translate::IntoGlib, CompositeTemplate};
 use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -88,9 +88,9 @@ impl ShortcutDialog {
         self.imp().captured.replace(Some(Box::new(captured)));
     }
 
-    /// Escape cancels. A combination with Ctrl, Alt or Super is captured,
-    /// which closes the dialog; anything else, such as a bare letter that
-    /// would take over typing, is ignored.
+    /// Escape cancels. A combination with Ctrl, Alt or Super is captured, and
+    /// so is a lone function or media key, which closes the dialog. Anything
+    /// else, such as a bare letter that would take over typing, is ignored.
     pub fn press(&self, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
         let modifiers = state & gtk::accelerator_get_default_mod_mask();
         if key == gdk::Key::Escape && modifiers.is_empty() {
@@ -101,14 +101,37 @@ impl ShortcutDialog {
         let chord = gdk::ModifierType::CONTROL_MASK
             | gdk::ModifierType::ALT_MASK
             | gdk::ModifierType::SUPER_MASK;
-        if !modifiers.intersects(chord) || !gtk::accelerator_valid(key, modifiers) {
+        if !(modifiers.intersects(chord) || stands_alone(key))
+            || !gtk::accelerator_valid(key, modifiers)
+        {
             return glib::Propagation::Proceed;
         }
         if let Some(captured) = self.imp().captured.borrow().as_ref() {
-            captured(&gtk::accelerator_name(key, modifiers));
+            captured(&accelerator_name(key, modifiers));
         }
         self.close();
         glib::Propagation::Stop
+    }
+}
+
+/// The XF86 media keys: Calculator, Mail, ...
+const MEDIA_KEYS: std::ops::RangeInclusive<u32> = 0x1008_ff00..=0x1008_ffff;
+
+/// Keys that type nothing and move nothing: F1 to F35 and the media keys.
+fn stands_alone(key: gdk::Key) -> bool {
+    (gdk::Key::F1.into_glib()..=gdk::Key::F35.into_glib()).contains(&key.into_glib())
+        || MEDIA_KEYS.contains(&key.into_glib())
+}
+
+/// GTK names a media key without its `XF86` prefix, which the desktop's
+/// keysym lookup does not know, so the binding would never fire.
+fn accelerator_name(key: gdk::Key, modifiers: gdk::ModifierType) -> String {
+    let name = gtk::accelerator_name(key, modifiers).to_string();
+    match key.name() {
+        Some(bare) if MEDIA_KEYS.contains(&key.into_glib()) && !bare.starts_with("XF86") => name
+            .strip_suffix(bare.as_str())
+            .map_or(name.clone(), |modifiers| format!("{modifiers}XF86{bare}")),
+        _ => name,
     }
 }
 

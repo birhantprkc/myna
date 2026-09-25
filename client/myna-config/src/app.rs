@@ -1290,6 +1290,31 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             return glib::ExitCode::FAILURE;
         }
         println!("shortcut-changed: Ctrl+Alt+D");
+
+        // A bare letter would take over typing; a key with no text, such as
+        // the Calculator key, cannot.
+        button.emit_clicked();
+        settles(&|| window.visible_dialog().is_some());
+        let Some(dialog) = window
+            .visible_dialog()
+            .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
+        else {
+            eprintln!("Change Shortcut opened no capture dialog the second time");
+            return glib::ExitCode::FAILURE;
+        };
+        dialog.press(gtk::gdk::Key::a, gtk::gdk::ModifierType::empty());
+        if window.visible_dialog().is_none() {
+            eprintln!("a bare letter was captured as the shortcut");
+            return glib::ExitCode::FAILURE;
+        }
+        dialog.press(gtk::gdk::Key::Calculator, gtk::gdk::ModifierType::empty());
+        let binding = crate::adapters::desktop_shortcut::DesktopShortcut::open()
+            .and_then(|desktop| desktop.binding());
+        if binding.as_deref() != Some("XF86Calculator") {
+            eprintln!("the Calculator key was stored as {binding:?}");
+            return glib::ExitCode::FAILURE;
+        }
+        println!("shortcut-special-key: Calculator");
     }
     glib::ExitCode::SUCCESS
 }
