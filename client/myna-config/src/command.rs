@@ -53,10 +53,6 @@ impl CommandRequest {
     pub fn environment(&self) -> &BTreeMap<String, String> {
         &self.environment
     }
-
-    pub fn timeout(&self) -> Duration {
-        self.timeout
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,8 +189,6 @@ pub trait CommandRunner: Send + Sync {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GioCommandRunner;
-
-pub use GioCommandRunner as TokioCommandRunner;
 
 #[async_trait(?Send)]
 impl CommandRunner for GioCommandRunner {
