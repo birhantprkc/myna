@@ -3,7 +3,9 @@ using Adw 1;
 
 template $ShortcutDialog: Adw.Dialog {
   title: _("Set Shortcut");
-  content-width: 400;
+  // A fixed content size makes libadwaita 1.5 mismeasure the dialog, and
+  // warn, once the wrapped refusal appears.
+  follows-content-size: true;
   // libadwaita 1.5 focuses nothing in a dialog without a focusable child,
   // and key events only reach the focused widget's ancestors.
   focus-widget: capture;
@@ -25,12 +27,14 @@ template $ShortcutDialog: Adw.Dialog {
         label: _("Press the keys for dictation, for example Super+J.");
         justify: center;
         wrap: true;
+        max-width-chars: 40;
       }
 
       Gtk.Label refusal {
         visible: false;
         justify: center;
         wrap: true;
+        max-width-chars: 40;
 
         styles [
           "error",
@@ -41,6 +45,7 @@ template $ShortcutDialog: Adw.Dialog {
         label: _("Press Escape to cancel.");
         justify: center;
         wrap: true;
+        max-width-chars: 40;
 
         styles [
           "dim-label",

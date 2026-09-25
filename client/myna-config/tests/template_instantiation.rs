@@ -242,6 +242,7 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
         .env("XDG_CONFIG_HOME", &store)
         .env("GDK_DEBUG", "no-portals")
         .env("MYNA_CONFIG_SHORTCUT_CONTROL_TEST", "1")
+        .env("GTK_A11Y", "none")
         .output()
         .expect("run the control shortcut probe under dbus-run-session");
     std::fs::remove_dir_all(&store).ok();
@@ -264,6 +265,13 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
             "control shortcut probe missing: {line}"
         );
     }
+    // The probe's own lines; the bus also starts portals, which warn too.
+    let warnings: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.starts_with("(process:") || line.starts_with("(myna-config:"))
+        .filter(|line| line.contains("-WARNING **") || line.contains("-CRITICAL **"))
+        .collect();
+    assert!(warnings.is_empty(), "toolkit warnings: {warnings:#?}");
 }
 
 /// The real application against a fixture machine: still running once it has
