@@ -33,6 +33,9 @@ pub struct DesktopShortcut {
 pub struct Conflict {
     /// What the key does now, as the desktop describes it.
     pub action: String,
+    /// gsd-media-keys grabs a `-static` key once, at login, and keeps it
+    /// until logout whatever the setting says, so it cannot be taken.
+    pub reserved: bool,
     settings: gio::Settings,
     key: String,
     binding: String,
@@ -130,6 +133,7 @@ impl DesktopShortcut {
                         action: key
                             .summary()
                             .map_or_else(|| name.to_string(), |summary| summary.to_string()),
+                        reserved: name.ends_with("-static"),
                         settings: settings.clone(),
                         key: name.to_string(),
                         binding: binding.to_owned(),
@@ -148,6 +152,7 @@ impl DesktopShortcut {
                 let entry = gio::Settings::new_full(&schema, self.backend.as_ref(), Some(path));
                 same_accelerator(&entry.string("binding"), binding).then(|| Conflict {
                     action: entry.string("name").to_string(),
+                    reserved: false,
                     settings: entry.clone(),
                     key: "binding".to_owned(),
                     binding: binding.to_owned(),

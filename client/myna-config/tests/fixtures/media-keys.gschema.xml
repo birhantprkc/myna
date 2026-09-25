@@ -9,6 +9,10 @@
       <default>['&lt;Super&gt;l']</default>
       <summary>Lock screen</summary>
     </key>
+    <key name="rotate-video-lock-static" type="as">
+      <default>['&lt;Super&gt;o', 'XF86RotationLockToggle']</default>
+      <summary>Toggle automatic screen orientation</summary>
+    </key>
   </schema>
   <schema id="org.gnome.desktop.wm.keybindings" path="/org/gnome/desktop/wm/keybindings/">
     <key name="close" type="as">

@@ -187,3 +187,14 @@ fn releasing_a_conflict_removes_only_that_key() {
     assert_eq!(close, ["<Alt>F4"]);
     assert!(shortcut.conflict("<Control><Alt>w").is_none());
 }
+
+#[test]
+fn a_static_key_is_reserved_and_an_editable_one_is_not() {
+    let (_dir, source) = schemas("reserved");
+    let backend = gio::functions::memory_settings_backend_new();
+    let shortcut = DesktopShortcut::open_with(&source, Some(&backend)).unwrap();
+    let rotate = shortcut.conflict("<Super>o").unwrap();
+    assert_eq!(rotate.action, "Toggle automatic screen orientation");
+    assert!(rotate.reserved);
+    assert!(!shortcut.conflict("<Super>l").unwrap().reserved);
+}
