@@ -5,7 +5,7 @@ use std::rc::Rc;
 use async_trait::async_trait;
 use myna_config::active_backend::{
     ensure_backend_active, execute_switch, myna_restart_request, ActiveBackendController,
-    BackendHealth, PrepareSwitchError, SwitchOutcome, SwitchPlan,
+    PrepareSwitchError, SwitchOutcome, SwitchPlan,
 };
 use myna_config::command::{CancellationToken, CommandRequest};
 use myna_config::domain::{
@@ -521,7 +521,8 @@ fn failed_final_rediscovery_is_exposed() {
 #[test]
 fn controller_serializes_operations_ignores_stale_tokens_and_applies_final_discovery() {
     let initial = connections(&["old", "new"], &["old"]);
-    let controller = ActiveBackendController::new(initial.clone());
+    let controller =
+        ActiveBackendController::with_coordinator(initial.clone(), OperationCoordinator::new());
     let first = controller
         .begin(BackendIdentity::new("new", "provider"))
         .unwrap();
@@ -531,8 +532,6 @@ fn controller_serializes_operations_ignores_stale_tokens_and_applies_final_disco
             .unwrap_err(),
         PrepareSwitchError::Busy
     );
-    controller.cancel();
-    assert!(first.cancellation().is_cancelled());
     assert_eq!(
         controller
             .begin(BackendIdentity::new("new", "provider"))
@@ -591,8 +590,6 @@ fn controller_uses_the_shared_apply_switch_gate() {
         .begin(BackendIdentity::new("new", "provider"))
         .unwrap();
     assert!(gate.begin(OperationKind::BackendApply).is_err());
-    controller.cancel();
-    assert!(switch.cancellation().is_cancelled());
     assert_eq!(gate.active(), Some(OperationKind::BackendSwitch));
     assert!(gate.begin(OperationKind::BackendApply).is_err());
     assert!(controller.complete(
@@ -607,38 +604,26 @@ fn controller_uses_the_shared_apply_switch_gate() {
 }
 
 #[test]
-fn backend_options_include_installed_connection_and_health_context() {
-    let controller = ActiveBackendController::new(connections(
-        &["myna-parakeet", "myna-whisper"],
-        &["myna-parakeet"],
-    ));
-    controller.set_health("myna-parakeet", BackendHealth::Healthy);
-    controller.set_health("myna-whisper", BackendHealth::Degraded);
-    let options = controller.options();
-    assert_eq!(options.len(), 2);
-    assert!(options[0].installed());
-    assert!(options[0].connected());
-    assert_eq!(options[0].health(), BackendHealth::Healthy);
-    assert!(!options[1].connected());
-    assert_eq!(options[1].health(), BackendHealth::Degraded);
-}
-
-#[test]
 fn selector_only_marks_a_backend_selected_for_one_actual_connection() {
-    let disconnected =
-        ActiveBackendController::new(connections(&["myna-parakeet", "myna-whisper"], &[]));
+    let disconnected = ActiveBackendController::with_coordinator(
+        connections(&["myna-parakeet", "myna-whisper"], &[]),
+        OperationCoordinator::new(),
+    );
     assert_eq!(disconnected.selected_index(), None);
 
-    let connected = ActiveBackendController::new(connections(
-        &["myna-parakeet", "myna-whisper"],
-        &["myna-whisper"],
-    ));
+    let connected = ActiveBackendController::with_coordinator(
+        connections(&["myna-parakeet", "myna-whisper"], &["myna-whisper"]),
+        OperationCoordinator::new(),
+    );
     assert_eq!(connected.selected_index(), Some(1));
 
-    let multiple = ActiveBackendController::new(connections(
-        &["myna-parakeet", "myna-whisper"],
-        &["myna-parakeet", "myna-whisper"],
-    ));
+    let multiple = ActiveBackendController::with_coordinator(
+        connections(
+            &["myna-parakeet", "myna-whisper"],
+            &["myna-parakeet", "myna-whisper"],
+        ),
+        OperationCoordinator::new(),
+    );
     assert_eq!(multiple.selected_index(), None);
 }
 

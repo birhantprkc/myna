@@ -16,7 +16,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use crate::active_backend::{
-    execute_switch, ActiveBackendController, BackendHealth, PrepareSwitchError, SwitchOutcome,
+    execute_switch, ActiveBackendController, PrepareSwitchError, SwitchOutcome,
 };
 use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
@@ -282,11 +282,11 @@ impl BackendUi {
                     return;
                 };
                 let selected = page.active_backend_row().selected() as usize;
-                let options = ui.active_backend.options();
-                let Some(option) = options.get(selected) else {
+                let snapshot = ui.active_backend.snapshot();
+                let Some(backend) = snapshot.backends().get(selected) else {
                     return;
                 };
-                ui.begin_backend_switch(option.backend().clone());
+                ui.begin_backend_switch(backend.clone());
             }
         });
     }
@@ -453,10 +453,6 @@ impl BackendUi {
         {
             return;
         }
-        for page in self.controller.pages() {
-            self.active_backend
-                .set_health(page.identity().snap_name(), backend_health(&page));
-        }
         self.render_active_backend_selector();
         self.sync_backend_tab();
     }
@@ -465,10 +461,11 @@ impl BackendUi {
         let Some(page) = self.myna_selector.as_ref() else {
             return;
         };
-        let options = self.active_backend.options();
+        let snapshot = self.active_backend.snapshot();
+        let options = snapshot.backends();
         let labels = options
             .iter()
-            .map(|option| display_title_for(option.backend().snap_name()))
+            .map(|backend| display_title_for(backend.snap_name()))
             .collect::<Vec<_>>();
         let references = labels.iter().map(String::as_str).collect::<Vec<_>>();
         page.active_backend_row()
@@ -999,9 +996,7 @@ impl BackendUi {
                 self.rebuild_diagnostics_page();
             }
             ControllerEvent::BackendChanged(identity) => {
-                if let Some(page) = self.controller.page(identity.snap_name()) {
-                    self.active_backend
-                        .set_health(identity.snap_name(), backend_health(&page));
+                if self.controller.page(identity.snap_name()).is_some() {
                     self.render_active_backend_selector();
                 }
                 self.rebuild_backend_page(identity.snap_name());
@@ -1481,25 +1476,6 @@ impl BackendUi {
         );
         self.active_backend.abandon();
         self.controller.cancel_all();
-    }
-}
-
-fn backend_health(page: &BackendPage) -> BackendHealth {
-    if page.loading() || page.snapshot().is_none() {
-        BackendHealth::Unknown
-    } else if page.partial()
-        || page.snapshot().is_some_and(|snapshot| {
-            snapshot.status().is_some_and(|status| {
-                status
-                    .services()
-                    .iter()
-                    .any(|service| !matches!(service.state(), ServiceState::Active))
-            })
-        })
-    {
-        BackendHealth::Degraded
-    } else {
-        BackendHealth::Healthy
     }
 }
 

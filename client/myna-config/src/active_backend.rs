@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 
 use crate::command::{CancellationToken, CommandRequest};
 use crate::domain::{
@@ -18,63 +17,6 @@ pub const MYNA_USER_UNIT: &str = "snap.myna.myna.service";
 pub enum PrepareSwitchError {
     BackendUnavailable(BackendIdentity),
     Busy,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BackendHealth {
-    Healthy,
-    Degraded,
-    #[default]
-    Unknown,
-}
-
-impl BackendHealth {
-    pub fn label(self) -> String {
-        match self {
-            Self::Healthy => gettextrs::gettext("Healthy"),
-            Self::Degraded => gettextrs::gettext("Degraded"),
-            Self::Unknown => gettextrs::gettext("Health unknown"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BackendOption {
-    backend: BackendIdentity,
-    installed: bool,
-    connected: bool,
-    health: BackendHealth,
-}
-
-impl BackendOption {
-    pub fn backend(&self) -> &BackendIdentity {
-        &self.backend
-    }
-
-    pub fn installed(&self) -> bool {
-        self.installed
-    }
-
-    pub fn connected(&self) -> bool {
-        self.connected
-    }
-
-    pub fn health(&self) -> BackendHealth {
-        self.health
-    }
-
-    pub fn context(&self) -> String {
-        format!(
-            "{} • {} • {}",
-            gettextrs::gettext("Installed"),
-            if self.connected {
-                gettextrs::gettext("Connected")
-            } else {
-                gettextrs::gettext("Not connected")
-            },
-            self.health.label()
-        )
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -433,17 +375,11 @@ pub struct ActiveBackendController {
 struct ControllerState {
     snapshot: ConnectionSnapshot,
     verified: bool,
-    health: BTreeMap<String, BackendHealth>,
     generation: u64,
     pending: Option<(u64, CancellationToken)>,
-    last_outcome: Option<SwitchOutcome>,
 }
 
 impl ActiveBackendController {
-    pub fn new(snapshot: ConnectionSnapshot) -> Self {
-        Self::with_coordinator(snapshot, OperationCoordinator::new())
-    }
-
     pub fn with_coordinator(
         snapshot: ConnectionSnapshot,
         coordinator: OperationCoordinator,
@@ -452,10 +388,8 @@ impl ActiveBackendController {
             inner: RefCell::new(ControllerState {
                 snapshot,
                 verified: true,
-                health: BTreeMap::new(),
                 generation: 0,
                 pending: None,
-                last_outcome: None,
             }),
             coordinator,
         }
@@ -473,33 +407,6 @@ impl ActiveBackendController {
         inner.snapshot = snapshot;
         inner.verified = true;
         true
-    }
-
-    pub fn set_health(&self, snap: &str, health: BackendHealth) {
-        self.inner
-            .borrow_mut()
-            .health
-            .insert(snap.to_owned(), health);
-    }
-
-    pub fn options(&self) -> Vec<BackendOption> {
-        let inner = self.inner.borrow();
-        let connected = connected_backends(&inner.snapshot);
-        inner
-            .snapshot
-            .backends()
-            .iter()
-            .map(|backend| BackendOption {
-                backend: backend.clone(),
-                installed: true,
-                connected: connected.contains(backend),
-                health: inner
-                    .health
-                    .get(backend.snap_name())
-                    .copied()
-                    .unwrap_or_default(),
-            })
-            .collect()
     }
 
     pub fn selected_index(&self) -> Option<u32> {
@@ -536,13 +443,6 @@ impl ActiveBackendController {
         })
     }
 
-    pub fn cancel(&self) {
-        let inner = self.inner.borrow();
-        if let Some((token, _)) = inner.pending.as_ref() {
-            self.coordinator.cancel(*token);
-        }
-    }
-
     pub fn abandon(&self) {
         let mut inner = self.inner.borrow_mut();
         if let Some((token, _)) = inner.pending.take() {
@@ -563,7 +463,6 @@ impl ActiveBackendController {
         } else {
             inner.verified = false;
         }
-        inner.last_outcome = Some(outcome);
         true
     }
 
@@ -573,9 +472,5 @@ impl ActiveBackendController {
 
     pub fn verified(&self) -> bool {
         self.inner.borrow().verified
-    }
-
-    pub fn last_outcome(&self) -> Option<SwitchOutcome> {
-        self.inner.borrow().last_outcome.clone()
     }
 }
