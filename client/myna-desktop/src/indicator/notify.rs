@@ -19,10 +19,12 @@ use notify_rust::{Hint, Notification, Timeout, Urgency};
 
 use super::{Indicator, IndicatorState};
 
+/// App name shown on every toast (`appname` field, not the `summary`).
+const APP_NAME: &str = "Myna";
+
 /// A `notify-rust`-backed indicator: one updating toast per dictation session.
+#[derive(Default)]
 pub struct NotifyIndicator {
-    /// App name shown on every toast (`appname` field, not the `summary`).
-    app_name: String,
     /// The live notification's id, so state changes *replace* it rather than
     /// stack a new toast each transition. Cleared on `Hidden`.
     id: Option<u32>,
@@ -30,12 +32,6 @@ pub struct NotifyIndicator {
     /// not reliably honored by daemons, so we `close()` ourselves after the
     /// dynamic hold.
     pending_hide: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl Default for NotifyIndicator {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// The notification-specific summary + body for a state (labels only — never
@@ -63,11 +59,7 @@ fn toast_text(state: &IndicatorState) -> Option<(String, String)> {
 
 impl NotifyIndicator {
     pub fn new() -> Self {
-        Self {
-            app_name: "Myna".to_string(),
-            id: None,
-            pending_hide: None,
-        }
+        Self::default()
     }
 
     /// Dynamic hold for a notice body, mirroring HUD `hold_ms_for` but
@@ -88,11 +80,10 @@ impl NotifyIndicator {
     /// Freedesktop `Timeout` is not reliably honored, so we always use
     /// `Timeout::Never` and close ourselves after `hold_ms_for` for errors.
     async fn show(&self, summary: String, body: String, error: bool) -> Option<u32> {
-        let app = self.app_name.clone();
         let id = self.id;
         tokio::task::spawn_blocking(move || {
             let mut n = Notification::new();
-            n.appname(&app)
+            n.appname(APP_NAME)
                 .summary(&summary)
                 .body(&body)
                 .timeout(Timeout::Never)
@@ -121,14 +112,7 @@ impl NotifyIndicator {
     /// Close the live toast, if any.
     async fn close(&self) {
         let Some(id) = self.id else { return };
-        let app = self.app_name.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            // Re-address the existing toast by id, then close it.
-            if let Ok(handle) = Notification::new().appname(&app).id(id).show() {
-                handle.close();
-            }
-        })
-        .await;
+        let _ = tokio::task::spawn_blocking(move || close_toast(id)).await;
     }
 
     fn abort_pending(&mut self) {
@@ -140,7 +124,6 @@ impl NotifyIndicator {
     fn schedule_auto_hide(&mut self, body: &str) {
         self.abort_pending();
         let ms = Self::hold_ms_for(body);
-        let app = self.app_name.clone();
         let id = self.id;
         // Notifier-side timeout only: starts when shown, restarts on
         // replacement, and with multiple Dictation clients the server does
@@ -148,15 +131,17 @@ impl NotifyIndicator {
         let handle = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
             if let Some(id) = id {
-                let _ = tokio::task::spawn_blocking(move || {
-                    if let Ok(h) = Notification::new().appname(&app).id(id).show() {
-                        h.close();
-                    }
-                })
-                .await;
+                let _ = tokio::task::spawn_blocking(move || close_toast(id)).await;
             }
         });
         self.pending_hide = Some(handle);
+    }
+}
+
+/// Re-address the existing toast by id, then close it. Blocking.
+fn close_toast(id: u32) {
+    if let Ok(handle) = Notification::new().appname(APP_NAME).id(id).show() {
+        handle.close();
     }
 }
 
