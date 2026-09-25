@@ -191,7 +191,9 @@ fn accessibility_probe() -> glib::ExitCode {
     )
     .ok()
     .and_then(|bytes| String::from_utf8(bytes.as_ref().to_vec()).ok())
-    .unwrap_or_default();
+    .unwrap_or_default()
+    // blueprint-compiler 0.12 (Noble) spells it "true"; GtkBuilder reads both.
+    .replace(r#"translatable="true""#, r#"translatable="yes""#);
     if [
         r#"<property name="label" translatable="yes">Refresh diagnostics</property>"#,
         r#"<property name="label" translatable="yes">Copy diagnostics</property>"#,
