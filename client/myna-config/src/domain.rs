@@ -683,6 +683,17 @@ impl BackendSnapshot {
         self.errors.get(&surface)
     }
 
+    /// The current value of a setting row, with the active model and engine
+    /// standing in for the `model` and `engine` keys.
+    pub fn value(&self, key: &str) -> Option<ConfigValue> {
+        let selected = match key {
+            "model" => self.models().and_then(ModelOptions::active),
+            "engine" => self.engines().and_then(EngineOptions::active),
+            _ => return self.configuration.get(key).cloned(),
+        };
+        selected.map(|value| ConfigValue::Text(value.to_owned()))
+    }
+
     pub(crate) fn set_identity(&mut self, identity: BackendIdentity) {
         self.identity = identity;
     }

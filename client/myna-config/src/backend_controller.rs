@@ -582,7 +582,7 @@ fn apply_discovery(
 
 fn original_value(entry: &PageEntry, key: &str) -> Option<ConfigValue> {
     let snapshot = entry.snapshot.as_ref()?;
-    presented_value(snapshot, key)
+    snapshot.value(key)
 }
 
 fn prune_stale_dirty_edits(entry: &mut PageEntry) {
@@ -592,25 +592,9 @@ fn prune_stale_dirty_edits(entry: &mut PageEntry) {
     let Some(snapshot) = entry.snapshot.as_ref() else {
         return;
     };
-    entry.dirty.retain(|key, value| {
-        presented_value(snapshot, key).is_none_or(|current| current != *value)
-    });
-}
-
-fn presented_value(snapshot: &BackendSnapshot, key: &str) -> Option<ConfigValue> {
-    if key == "model" {
-        return snapshot
-            .models()
-            .and_then(|models| models.active())
-            .map(|value| ConfigValue::Text(value.to_owned()));
-    }
-    if key == "engine" {
-        return snapshot
-            .engines()
-            .and_then(|engines| engines.active())
-            .map(|value| ConfigValue::Text(value.to_owned()));
-    }
-    snapshot.configuration().get(key).cloned()
+    entry
+        .dirty
+        .retain(|key, value| snapshot.value(key).is_none_or(|current| current != *value));
 }
 
 fn build_page(entry: &PageEntry) -> BackendPage {

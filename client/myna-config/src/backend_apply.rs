@@ -514,7 +514,7 @@ pub fn read_back_mismatches(
         .changes()
         .iter()
         .filter_map(|change| {
-            let actual = read_back_value(snapshot, change.key());
+            let actual = snapshot.value(change.key());
             let confirmed = actual.as_ref() == Some(change.proposed())
                 || auto_engine_resolved(change, snapshot);
             if confirmed {
@@ -719,22 +719,6 @@ fn service_state_label(state: &ServiceState) -> &'static str {
         ServiceState::Failed => "failed",
         ServiceState::Unknown(_) => "unknown",
     }
-}
-
-fn read_back_value(snapshot: &BackendSnapshot, key: &str) -> Option<ConfigValue> {
-    if key == "model" {
-        return snapshot
-            .models()
-            .and_then(|models| models.active())
-            .map(|value| ConfigValue::Text(value.to_owned()));
-    }
-    if key == "engine" {
-        return snapshot
-            .engines()
-            .and_then(|engines| engines.active())
-            .map(|value| ConfigValue::Text(value.to_owned()));
-    }
-    snapshot.configuration().get(key).cloned()
 }
 
 #[cfg(test)]
