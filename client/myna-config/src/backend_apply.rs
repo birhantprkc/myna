@@ -4,11 +4,11 @@ use std::time::Duration;
 use crate::backend_controller::BackendPage;
 use crate::command::{CancellationToken, CommandRequest};
 use crate::domain::{
-    BackendIdentity, BackendSnapshot, BackendSurface, CommandResult, ConfigScope, ConfigValue,
-    ServiceState, StagedChange,
+    BackendIdentity, BackendSnapshot, BackendSurface, CommandResult, ConfigValue, ServiceState,
+    StagedChange,
 };
 use crate::ports::{BackendRepository, SystemConfigurator, SystemConfiguratorError};
-use crate::presentation::{PresentationSource, RestartBehavior};
+use crate::presentation::RestartBehavior;
 
 const READINESS_ATTEMPTS: usize = 30;
 const READINESS_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -95,11 +95,7 @@ impl ApplyPreview {
         }
 
         let mut changes = changes;
-        changes.sort_by(|left, right| {
-            left.key()
-                .cmp(right.key())
-                .then(left.scope().cmp(&right.scope()))
-        });
+        changes.sort_by(|left, right| left.key().cmp(right.key()));
 
         let mut issues = validate_backend_identity(&backend, restart_impact);
         let mut assignments = Vec::new();
@@ -317,13 +313,8 @@ pub fn prepare_backend_apply(page: &BackendPage) -> Result<ApplyPreview, Prepare
             continue;
         }
 
-        let scope = match row.presentation().source() {
-            PresentationSource::Configuration(scope) => scope,
-            PresentationSource::Model | PresentationSource::Engine => ConfigScope::User,
-        };
         restart_behaviors.push(metadata.restart_behavior());
         match StagedChange::new(
-            scope,
             row.presentation().key(),
             row.presentation().value().clone(),
             row.effective_value().clone(),
@@ -771,7 +762,7 @@ fn read_back_value(snapshot: &BackendSnapshot, key: &str) -> Option<ConfigValue>
             .and_then(|engines| engines.active())
             .map(|value| ConfigValue::Text(value.to_owned()));
     }
-    snapshot.configuration().effective(key).cloned()
+    snapshot.configuration().get(key).cloned()
 }
 
 #[cfg(test)]
@@ -983,26 +974,19 @@ mod tests {
                 .with_modelctl_app("myna-whisper.whisper"),
             vec![
                 StagedChange::new(
-                    ConfigScope::Package,
                     "zeta",
                     ConfigValue::Boolean(false),
                     ConfigValue::Boolean(true),
                 )
                 .unwrap(),
                 StagedChange::new(
-                    ConfigScope::User,
                     "alpha",
                     ConfigValue::Text("old".into()),
                     ConfigValue::Text(" spaced ; $(rm -rf /) ".into()),
                 )
                 .unwrap(),
-                StagedChange::new(
-                    ConfigScope::Engine,
-                    "ratio",
-                    ConfigValue::Number(0.25),
-                    ConfigValue::Number(0.5),
-                )
-                .unwrap(),
+                StagedChange::new("ratio", ConfigValue::Number(0.25), ConfigValue::Number(0.5))
+                    .unwrap(),
             ],
             RestartImpact::Mixed,
         )
@@ -1038,21 +1022,18 @@ mod tests {
             backend(),
             vec![
                 StagedChange::new(
-                    ConfigScope::User,
                     "model",
                     ConfigValue::Text("old-model".into()),
                     ConfigValue::Text("new model; untouched".into()),
                 )
                 .unwrap(),
                 StagedChange::new(
-                    ConfigScope::User,
                     "engine",
                     ConfigValue::Text("cpu".into()),
                     ConfigValue::Text("auto".into()),
                 )
                 .unwrap(),
                 StagedChange::new(
-                    ConfigScope::Package,
                     "verbose",
                     ConfigValue::Boolean(false),
                     ConfigValue::Boolean(true),
@@ -1098,7 +1079,6 @@ mod tests {
         let error = ApplyPreview::new(
             BackendIdentity::new("myna-parakeet", "provider"),
             vec![StagedChange::new(
-                ConfigScope::User,
                 "model",
                 ConfigValue::Text("old".into()),
                 ConfigValue::Text("new".into()),
@@ -1116,7 +1096,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::User,
                 "engine",
                 ConfigValue::Text("cpu".into()),
                 ConfigValue::Text("tensorrt".into()),
@@ -1145,14 +1124,12 @@ mod tests {
             backend(),
             vec![
                 StagedChange::new(
-                    ConfigScope::User,
                     "model",
                     ConfigValue::Text("old".into()),
                     ConfigValue::Text("parakeet-tdt-0.6b-v3".into()),
                 )
                 .unwrap(),
                 StagedChange::new(
-                    ConfigScope::User,
                     "engine",
                     ConfigValue::Text("old".into()),
                     ConfigValue::Text("cpu".into()),
@@ -1172,7 +1149,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::User,
                 "engine",
                 ConfigValue::Text("tensorrt".into()),
                 ConfigValue::Text("auto".into()),
@@ -1230,7 +1206,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1314,7 +1289,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1345,7 +1319,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1390,7 +1363,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1432,7 +1404,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1463,7 +1434,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1497,7 +1467,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1539,7 +1508,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1589,7 +1557,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1627,7 +1594,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1665,13 +1631,10 @@ mod tests {
     fn no_restart_apply_skips_readiness_but_still_checks_readback() {
         let preview = ApplyPreview::new(
             backend(),
-            vec![StagedChange::new(
-                ConfigScope::Engine,
-                "ratio",
-                ConfigValue::Number(0.25),
-                ConfigValue::Number(0.5),
-            )
-            .unwrap()],
+            vec![
+                StagedChange::new("ratio", ConfigValue::Number(0.25), ConfigValue::Number(0.5))
+                    .unwrap(),
+            ],
             RestartImpact::None,
         )
         .unwrap();
@@ -1706,13 +1669,10 @@ mod tests {
     fn snap_config_read_failure_is_not_reported_as_a_value_mismatch() {
         let preview = ApplyPreview::new(
             backend(),
-            vec![StagedChange::new(
-                ConfigScope::Package,
-                "ratio",
-                ConfigValue::Number(0.25),
-                ConfigValue::Number(0.5),
-            )
-            .unwrap()],
+            vec![
+                StagedChange::new("ratio", ConfigValue::Number(0.25), ConfigValue::Number(0.5))
+                    .unwrap(),
+            ],
             RestartImpact::None,
         )
         .unwrap();
@@ -1840,7 +1800,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1923,7 +1882,7 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].arguments(), preview.operations()[0].arguments());
         assert_eq!(
-            snapshot.configuration().effective("verbose"),
+            snapshot.configuration().get("verbose"),
             Some(&ConfigValue::Boolean(true))
         );
         controller.apply_readback("myna-parakeet", *snapshot);
@@ -1940,7 +1899,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -1974,7 +1932,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
@@ -2011,7 +1968,6 @@ mod tests {
         let preview = ApplyPreview::new(
             backend(),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),

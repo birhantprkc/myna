@@ -626,7 +626,7 @@ fn presented_value(snapshot: &BackendSnapshot, key: &str) -> Option<ConfigValue>
             .and_then(|engines| engines.active())
             .map(|value| ConfigValue::Text(value.to_owned()));
     }
-    snapshot.configuration().effective(key).cloned()
+    snapshot.configuration().get(key).cloned()
 }
 
 fn build_page(entry: &PageEntry) -> BackendPage {

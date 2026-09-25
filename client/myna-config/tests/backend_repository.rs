@@ -12,9 +12,7 @@ use myna_config::command::{
     FakeCommandRunner,
 };
 use myna_config::diagnostics::BACKEND_REFRESH_PROCESS_BUDGET;
-use myna_config::domain::{
-    ActiveBackendState, BackendIdentity, BackendSurface, ConfigScope, ConfigValue,
-};
+use myna_config::domain::{ActiveBackendState, BackendIdentity, BackendSurface, ConfigValue};
 use myna_config::ports::BackendRepository;
 
 const CONNECTIONS: &str = include_str!("fixtures/snap-connections.txt");
@@ -189,9 +187,7 @@ fn reads_the_installed_parakeet_shape_without_per_setting_commands() {
     );
     assert_eq!(snapshot.engines().unwrap().active(), Some("cpu"));
     assert_eq!(
-        snapshot
-            .configuration()
-            .get(ConfigScope::User, "ws.unix-socket"),
+        snapshot.configuration().get("ws.unix-socket"),
         Some(&ConfigValue::Text(
             "/var/snap/myna-parakeet/common/share/provider/myna.sock".into()
         ))
@@ -255,13 +251,13 @@ fn reads_multi_engine_model_shape() {
     assert_eq!(snapshot.models().unwrap().options().len(), 3);
     assert_eq!(snapshot.engines().unwrap().options().len(), 2);
     assert_eq!(
-        snapshot.configuration().effective("shared"),
+        snapshot.configuration().get("shared"),
         Some(&ConfigValue::Text("user".into()))
     );
 }
 
 #[test]
-fn modelctl_values_are_the_user_scope_and_the_effective_configuration() {
+fn modelctl_values_are_the_configuration() {
     let modelctl = "\
 stream-arm-seconds: 21
 streaming: false
@@ -284,25 +280,19 @@ ws.unix-socket: /var/snap/myna-parakeet/common/share/provider/custom.sock
     let configuration = snapshot.configuration();
 
     assert_eq!(
-        configuration.get(ConfigScope::User, "streaming"),
+        configuration.get("streaming"),
         Some(&ConfigValue::Boolean(false))
     );
     assert_eq!(
-        configuration.effective("stream-arm-seconds"),
+        configuration.get("stream-arm-seconds"),
         Some(&ConfigValue::Integer(21))
     );
     assert_eq!(
-        configuration.effective("ws.unix-socket"),
+        configuration.get("ws.unix-socket"),
         Some(&ConfigValue::Text(
             "/var/snap/myna-parakeet/common/share/provider/custom.sock".into()
         ))
     );
-    assert!(configuration
-        .get(ConfigScope::Engine, "streaming")
-        .is_none());
-    assert!(configuration
-        .get(ConfigScope::Package, "streaming")
-        .is_none());
 }
 
 #[test]

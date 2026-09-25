@@ -1,8 +1,6 @@
 //! GTK-independent metadata used to render backend configuration.
 
-use std::collections::{BTreeMap, BTreeSet};
-
-use crate::domain::{BackendConfiguration, ConfigScope, ConfigValue, EngineOptions, ModelOptions};
+use crate::domain::{BackendConfiguration, ConfigValue, EngineOptions, ModelOptions};
 
 const METADATA_UNAVAILABLE: &str =
     "This backend does not provide presentation metadata for this setting.";
@@ -151,19 +149,11 @@ impl PresentationMetadata {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PresentationSource {
-    Model,
-    Engine,
-    Configuration(ConfigScope),
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct PresentationRow {
     key: String,
     value: ConfigValue,
     choices: Vec<String>,
-    source: PresentationSource,
     metadata: PresentationMetadata,
 }
 
@@ -178,10 +168,6 @@ impl PresentationRow {
 
     pub fn choices(&self) -> &[String] {
         &self.choices
-    }
-
-    pub fn source(&self) -> PresentationSource {
-        self.source
     }
 
     pub fn metadata(&self) -> &PresentationMetadata {
@@ -430,7 +416,6 @@ pub fn present_configuration(
                     ConfigValue::Text(active.to_owned())
                 }),
                 choices,
-                source: PresentationSource::Model,
                 metadata,
             });
         }
@@ -452,33 +437,17 @@ pub fn present_configuration(
                     ConfigValue::Text(active.to_owned())
                 }),
                 choices,
-                source: PresentationSource::Engine,
                 metadata,
             });
         }
     }
 
-    let mut effective = BTreeMap::new();
-    let keys: BTreeSet<_> = configuration.iter().map(|(_, key, _)| key).collect();
-    for key in keys {
-        for scope in [ConfigScope::User, ConfigScope::Engine, ConfigScope::Package] {
-            if let Some(value) = configuration.get(scope, key) {
-                effective.insert(key, (scope, value));
-                break;
-            }
-        }
-    }
-    rows.extend(
-        effective
-            .into_iter()
-            .map(|(key, (scope, value))| PresentationRow {
-                key: key.to_owned(),
-                value: value.clone(),
-                choices: Vec::new(),
-                source: PresentationSource::Configuration(scope),
-                metadata: metadata_for(key, value),
-            }),
-    );
+    rows.extend(configuration.iter().map(|(key, value)| PresentationRow {
+        key: key.to_owned(),
+        value: value.clone(),
+        choices: Vec::new(),
+        metadata: metadata_for(key, value),
+    }));
 
     rows.sort_by(|left, right| {
         left.metadata

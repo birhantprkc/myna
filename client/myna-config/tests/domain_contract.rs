@@ -1,7 +1,7 @@
 use myna_config::domain::{
     parse_connections, parse_engine_options, parse_model_options, parse_modelctl_config,
     parse_status, ActiveBackendState, BackendIdentity, ClientSetting, ClientSettingKey,
-    ClientSettingValue, ConfigScope, ConfigValue, StagedChange,
+    ClientSettingValue, ConfigValue, StagedChange,
 };
 
 const CONNECTIONS: &str = include_str!("fixtures/snap-connections.txt");
@@ -207,18 +207,15 @@ fn connections_resolve_a_slot_named_like_the_interface() {
 }
 
 #[test]
-fn modelctl_get_preserves_scoped_scalar_values() {
+fn modelctl_get_preserves_scalar_values() {
     let config = parse_modelctl_config(MODELCTL_GET).unwrap();
     assert_eq!(
-        config.get(ConfigScope::User, "ws.unix-socket"),
+        config.get("ws.unix-socket"),
         Some(&ConfigValue::Text(
             "/var/snap/myna-parakeet/common/share/provider/myna.sock".into()
         ))
     );
-    assert_eq!(
-        config.get(ConfigScope::User, "streaming"),
-        Some(&ConfigValue::Boolean(true))
-    );
+    assert_eq!(config.get("streaming"), Some(&ConfigValue::Boolean(true)));
 
     assert!(parse_modelctl_config("").unwrap().is_empty());
     assert!(parse_modelctl_config("indented:\n  nested: value\n").is_err());
@@ -266,7 +263,6 @@ fn option_lists_handle_partial_and_empty_payloads_and_reject_malformed_json() {
 #[test]
 fn staged_changes_reject_noops() {
     assert!(StagedChange::new(
-        ConfigScope::Engine,
         "stream-arm-seconds",
         ConfigValue::Integer(15),
         ConfigValue::Integer(20),
@@ -274,7 +270,6 @@ fn staged_changes_reject_noops() {
     .is_ok());
 
     let error = StagedChange::new(
-        ConfigScope::Package,
         "streaming",
         ConfigValue::Boolean(true),
         ConfigValue::Boolean(true),

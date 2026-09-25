@@ -179,49 +179,23 @@ pub enum ConfigValue {
     Text(String),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ConfigScope {
-    Engine,
-    Package,
-    User,
-}
-
+/// The user layer of a backend's configuration, as `modelctl get` prints it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BackendConfiguration {
-    values: BTreeMap<(ConfigScope, String), ConfigValue>,
+    values: BTreeMap<String, ConfigValue>,
 }
 
 impl BackendConfiguration {
-    pub fn get(&self, scope: ConfigScope, key: &str) -> Option<&ConfigValue> {
-        self.values.get(&(scope, key.to_owned()))
+    pub fn get(&self, key: &str) -> Option<&ConfigValue> {
+        self.values.get(key)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (ConfigScope, &str, &ConfigValue)> {
-        self.values
-            .iter()
-            .map(|((scope, key), value)| (*scope, key.as_str(), value))
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &ConfigValue)> {
+        self.values.iter().map(|(key, value)| (key.as_str(), value))
     }
 
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
-    }
-
-    /// Returns the value a backend will observe when scopes overlap.
-    ///
-    /// User overrides from modelctl are most specific, followed by engine and
-    /// package configuration.
-    pub fn effective(&self, key: &str) -> Option<&ConfigValue> {
-        [ConfigScope::User, ConfigScope::Engine, ConfigScope::Package]
-            .into_iter()
-            .find_map(|scope| self.get(scope, key))
-    }
-
-    fn insert(&mut self, scope: ConfigScope, key: String, value: ConfigValue) {
-        self.values.insert((scope, key), value);
-    }
-
-    pub(crate) fn merge(&mut self, other: BackendConfiguration) {
-        self.values.extend(other.values);
     }
 }
 
@@ -391,7 +365,9 @@ pub fn parse_modelctl_config(input: &str) -> Result<BackendConfiguration, ParseE
                 format!("empty key on line {}", index + 1),
             ));
         }
-        output.insert(ConfigScope::User, key.to_owned(), parse_scalar(raw.trim()));
+        output
+            .values
+            .insert(key.to_owned(), parse_scalar(raw.trim()));
     }
     Ok(output)
 }
@@ -712,7 +688,7 @@ impl BackendSnapshot {
     }
 
     pub(crate) fn set_modelctl_config(&mut self, configuration: BackendConfiguration) {
-        self.configuration.merge(configuration);
+        self.configuration = configuration;
     }
 
     pub(crate) fn set_status(&mut self, status: BackendStatus) {
@@ -734,7 +710,6 @@ impl BackendSnapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StagedChange {
-    scope: ConfigScope,
     key: String,
     original: ConfigValue,
     proposed: ConfigValue,
@@ -742,7 +717,6 @@ pub struct StagedChange {
 
 impl StagedChange {
     pub fn new(
-        scope: ConfigScope,
         key: impl Into<String>,
         original: ConfigValue,
         proposed: ConfigValue,
@@ -755,15 +729,10 @@ impl StagedChange {
             return Err(ValidationError::new(&key, "staged value is unchanged"));
         }
         Ok(Self {
-            scope,
             key,
             original,
             proposed,
         })
-    }
-
-    pub fn scope(&self) -> ConfigScope {
-        self.scope
     }
 
     pub fn key(&self) -> &str {

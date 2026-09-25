@@ -629,9 +629,7 @@ mod tests {
     use crate::apply_plan::plan_output;
     use crate::backend_apply::RestartImpact;
     use crate::command::{CommandOutput, FakeCommandRunner};
-    use crate::domain::{
-        parse_connections, BackendIdentity, ConfigScope, ConfigValue, StagedChange,
-    };
+    use crate::domain::{parse_connections, BackendIdentity, ConfigValue, StagedChange};
 
     fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
         MainContext::new().block_on(future)
@@ -642,7 +640,6 @@ mod tests {
             BackendIdentity::new("myna-parakeet", "provider")
                 .with_modelctl_app("myna-parakeet.parakeet"),
             vec![StagedChange::new(
-                ConfigScope::Package,
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
