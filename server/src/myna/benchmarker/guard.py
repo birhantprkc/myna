@@ -237,55 +237,6 @@ def check_core_homogeneity(cpus: set[int] | None = None) -> list[Violation]:
     ]
 
 
-def cpu_max_mhz(cpus: set[int] | None = None) -> float | None:
-    """Nominal max clock of the affinity set, in MHz."""
-    if cpus is None:
-        try:
-            cpus = os.sched_getaffinity(0)
-        except (AttributeError, OSError):
-            return None
-    khz = []
-    for cpu in cpus:
-        try:
-            khz.append(
-                int(Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/cpuinfo_max_freq").read_text())
-            )
-        except (OSError, ValueError):
-            continue
-    return max(khz) / 1000 if khz else None
-
-
-def sample_cpu_mhz(cpus: set[int] | None = None) -> float | None:
-    """Achieved clock right now, median over the affinity set, in MHz.
-
-    The governor check above says the machine is *allowed* to boost; it says
-    nothing about whether it did. On a laptop under sustained load it does
-    not: measured 2026-09-02, the same benchmark that ran at 201 ms on a cool
-    machine ran at 272 ms an hour later (**35% slower**) at 3.4% CV both
-    times, with cpu0 sagging from ~4.9 GHz idle to 3.9-4.2 GHz mid-run. A
-    tight CV proves a run was internally steady; it cannot see that the whole
-    machine has moved. Record this alongside every number so cross-session
-    comparisons are auditable instead of merely plausible.
-    """
-    if cpus is None:
-        try:
-            cpus = os.sched_getaffinity(0)
-        except (AttributeError, OSError):
-            return None
-    khz = []
-    for cpu in cpus:
-        try:
-            khz.append(
-                int(Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_cur_freq").read_text())
-            )
-        except (OSError, ValueError):
-            continue
-    if not khz:
-        return None
-    khz.sort()
-    return khz[len(khz) // 2] / 1000
-
-
 def check_competing_service(profile: Profile) -> list[Violation]:
     if profile.competing_snap is None or profile.competing_service is None:
         return []
