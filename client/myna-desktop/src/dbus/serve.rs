@@ -61,6 +61,9 @@ struct ServedState {
     /// The portal's trigger description for the dictation shortcut, empty
     /// while nothing is bound.
     shortcut: String,
+    /// How the dictation key reaches the daemon: `portal`, `control`, or
+    /// empty while undecided.
+    activation: String,
     audio_dropped_not_active: u64,
 }
 
@@ -294,6 +297,17 @@ impl DictationObject {
             .lock()
             .expect("served state poisoned")
             .shortcut
+            .clone()
+    }
+
+    /// `Activation`: `portal` when the key is the portal's binding, `control`
+    /// when a desktop shortcut pokes the control socket, empty until decided.
+    #[zbus(property)]
+    async fn activation(&self) -> String {
+        self.served
+            .lock()
+            .expect("served state poisoned")
+            .activation
             .clone()
     }
 
@@ -565,6 +579,7 @@ impl Bus for ZbusBus {
                     ("AudioPeak", PropertyValue::F64(d)) => served.audio_peak = *d,
                     ("HudStyle", PropertyValue::Str(s)) => served.hud_style = s.clone(),
                     ("Shortcut", PropertyValue::Str(s)) => served.shortcut = s.clone(),
+                    ("Activation", PropertyValue::Str(s)) => served.activation = s.clone(),
                     ("AudioDroppedNotActive", PropertyValue::U64(v)) => {
                         served.audio_dropped_not_active = *v
                     }
@@ -588,6 +603,7 @@ impl Bus for ZbusBus {
                 "AudioPeak" => iface.audio_peak_changed(emitter).await,
                 "HudStyle" => iface.hud_style_changed(emitter).await,
                 "Shortcut" => iface.shortcut_changed(emitter).await,
+                "Activation" => iface.activation_changed(emitter).await,
                 "AudioDroppedNotActive" => iface.audio_dropped_not_active_changed(emitter).await,
                 _ => Ok(()),
             }

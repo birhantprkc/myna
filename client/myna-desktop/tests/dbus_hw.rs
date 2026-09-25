@@ -245,3 +245,41 @@ async fn the_published_shortcut_is_readable_on_the_bus() {
         .expect("Shortcut after publish");
     assert_eq!(read(published), "Press <Super>j");
 }
+
+/// `Activation` tells Myna Settings which way the dictation key reaches the
+/// daemon: the portal's binding, or a desktop shortcut to the control socket.
+#[tokio::test]
+async fn the_published_activation_is_readable_on_the_bus() {
+    use myna_desktop::dbus::{Bus, PropertyValue, OBJECT_PATH};
+
+    skip_unless_dbus!();
+    let _serial = exclusive().await;
+    name_is_free().await;
+    let mut owner = ZbusBus::serve().await.expect("serve owns the name");
+    let conn = zbus::Connection::session().await.expect("session bus");
+    let properties = zbus::fdo::PropertiesProxy::builder(&conn)
+        .destination(BUS_NAME)
+        .unwrap()
+        .path(OBJECT_PATH)
+        .unwrap()
+        .build()
+        .await
+        .expect("properties proxy");
+    let interface = zbus::names::InterfaceName::try_from(BUS_NAME).unwrap();
+    let read = |value: zbus::zvariant::OwnedValue| String::try_from(value).unwrap();
+
+    let initial = properties
+        .get(interface.clone(), "Activation")
+        .await
+        .expect("Activation is served");
+    assert_eq!(read(initial), "");
+
+    owner
+        .set_property("Activation", PropertyValue::Str("control".into()))
+        .await;
+    let published = properties
+        .get(interface, "Activation")
+        .await
+        .expect("Activation after publish");
+    assert_eq!(read(published), "control");
+}
