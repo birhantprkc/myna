@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 
 from _ie115_client import Ie115Decoder, WsUnixIe115Client, pcm_to_append
+from _silence import SilenceSource
 
 from myna.core import (
     AudioFormat,
@@ -31,7 +32,7 @@ from myna.core import (
     serve_unix,
 )
 from myna.core import wire_ie115 as w
-from myna.testbed import FakeAdapter, Harness, ScriptStep, SilenceSource
+from myna.testbed import FakeAdapter, Harness, ScriptStep
 
 TERMINAL = ("transcription.done", "transcription.error")
 

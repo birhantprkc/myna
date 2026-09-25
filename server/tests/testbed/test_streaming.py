@@ -7,6 +7,7 @@ concatenation matches the final transcript (the append-only invariant, FR-005).
 """
 
 import pytest
+from _silence import SilenceSource
 
 from myna.core import (
     Disposition,
@@ -17,7 +18,6 @@ from myna.core import (
 )
 from myna.testbed import Harness
 from myna.testbed.fake import FakeAdapter, ScriptStep
-from myna.testbed.sources import SilenceSource
 
 
 def streaming_script() -> tuple[ScriptStep, ...]:

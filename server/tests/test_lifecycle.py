@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from _silence import SilenceSource
 
 from myna.core import SessionConfig, WsUnixClient, serve_unix, systemd_socket
 from myna.server import lifecycle
@@ -19,7 +20,7 @@ from myna.server.lifecycle import (
     idle_monitor,
     sample_majflt,
 )
-from myna.testbed import FakeAdapter, Harness, SilenceSource
+from myna.testbed import FakeAdapter, Harness
 from myna.testbed.adapter import Candidate
 
 

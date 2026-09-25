@@ -12,6 +12,7 @@ import threading
 from collections.abc import AsyncIterator
 
 import pytest
+from _silence import SilenceSource
 
 from myna.core import (
     EventSink,
@@ -23,7 +24,7 @@ from myna.core import (
     WsUnixClient,
     serve_unix,
 )
-from myna.testbed import FakeAdapter, Harness, ScriptStep, SilenceSource
+from myna.testbed import FakeAdapter, Harness, ScriptStep
 
 TERMINAL = ("transcription.done", "transcription.error")
 
