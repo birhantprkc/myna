@@ -255,10 +255,6 @@ class SilenceCut:
         self._scanned = 0  # absolute samples; audio before this was VAD-fed
 
     @property
-    def force_cut_seconds(self) -> float:
-        return self._force_cut
-
-    @property
     def heard_since_cut(self) -> bool:
         """Whether the VAD judged any frame since the last cut active."""
         return self._heard_since_cut
