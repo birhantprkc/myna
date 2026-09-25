@@ -173,6 +173,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in [
         "onboarding-start: advanced",
+        "onboarding-layout: forward in view",
         "onboarding-gate: held",
         "onboarding-copy: commands on the clipboard",
         "onboarding-extension: instructions copy the command",

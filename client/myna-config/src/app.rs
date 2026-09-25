@@ -412,6 +412,15 @@ fn onboarding_probe() -> glib::ExitCode {
     println!("onboarding-start: advanced");
 
     let forward = window.forward_button();
+    // GTK 4.14 let an unscrolled page grow past the window, out of this bar.
+    let in_view = forward.compute_bounds(&window).is_some_and(|bounds| {
+        bounds.y() >= 0.0 && bounds.y() + bounds.height() <= window.height() as f32
+    });
+    if !in_view {
+        eprintln!("the forward button lies outside the window");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-layout: forward in view");
     if forward.is_sensitive() {
         eprintln!("the component step offered to advance with required components missing");
         return glib::ExitCode::FAILURE;
