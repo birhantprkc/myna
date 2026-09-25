@@ -24,15 +24,6 @@ pub struct InputDevice {
     pub label: String,
 }
 
-/// A live enumeration event.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DeviceChange {
-    /// A new input device appeared (name + label).
-    Added(InputDevice),
-    /// A device disappeared (by stable name).
-    Removed { node_name: String },
-}
-
 /// Live input-device enumerator (FR-008/FR-008a).
 ///
 /// A dedicated PipeWire main-loop thread watches the registry and maintains the

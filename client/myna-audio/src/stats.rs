@@ -31,7 +31,7 @@ pub struct AudioStats {
     /// until voice has been heard.
     pub speech_level: f32,
     /// Capture time at which sustained voice was last heard (see
-    /// [`crate::VoiceTracker`]); `None` until it has been. Measured in
+    /// [`crate::voice::VoiceTracker`]); `None` until it has been. Measured in
     /// captured audio, not wall-clock, so a stalled device does not read as
     /// a silent user.
     pub last_voice: Option<Duration>,

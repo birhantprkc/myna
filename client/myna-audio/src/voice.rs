@@ -105,12 +105,6 @@ impl VoiceTracker {
     pub fn last_voice(&self) -> Option<Duration> {
         self.last_voice
     }
-
-    /// The adaptive floor the speech and silence thresholds derive from.
-    /// Diagnostic: the tests pin its dynamics, nothing else reads it.
-    pub fn adaptive_floor(&self) -> f32 {
-        self.adaptive_floor
-    }
 }
 
 #[cfg(test)]
@@ -190,24 +184,20 @@ mod tests {
         // Down: a fifth of the way per frame.
         let mut t = VoiceTracker::default();
         t.observe(0.001, FRAME);
-        assert!(close(t.adaptive_floor(), 0.0026), "{}", t.adaptive_floor());
+        assert!(close(t.adaptive_floor, 0.0026), "{}", t.adaptive_floor);
 
         // Up, while the signal is within 10x of the floor: half a percent.
         let mut t = VoiceTracker::default();
         t.observe(0.02, FRAME);
-        assert!(
-            close(t.adaptive_floor(), 0.003_085),
-            "{}",
-            t.adaptive_floor()
-        );
+        assert!(close(t.adaptive_floor, 0.003_085), "{}", t.adaptive_floor);
 
         // Not at all for a signal further above it: that is speech, not noise.
         let mut t = VoiceTracker::default();
         t.observe(0.05, FRAME);
         assert!(
-            close(t.adaptive_floor(), INITIAL_FLOOR),
+            close(t.adaptive_floor, INITIAL_FLOOR),
             "{}",
-            t.adaptive_floor()
+            t.adaptive_floor
         );
     }
 
@@ -217,10 +207,10 @@ mod tests {
         // a floor that settled far below it does not climb on -34 dBFS speech.
         let mut t = VoiceTracker::default();
         feed(&mut t, 1e-4, Duration::from_secs(3));
-        let settled = t.adaptive_floor();
+        let settled = t.adaptive_floor;
         assert!(settled < 2e-4, "{settled}");
         feed(&mut t, 0.02, Duration::from_secs(1));
-        assert!(close(t.adaptive_floor(), settled), "{}", t.adaptive_floor());
+        assert!(close(t.adaptive_floor, settled), "{}", t.adaptive_floor);
     }
 
     #[test]
@@ -281,7 +271,7 @@ mod tests {
         // speech at 0.055 still keeps voice going.
         let mut t = VoiceTracker::default();
         feed(&mut t, 0.02, Duration::from_secs(20));
-        assert!(t.adaptive_floor() > 0.019, "{}", t.adaptive_floor());
+        assert!(t.adaptive_floor > 0.019, "{}", t.adaptive_floor);
         feed(&mut t, 0.1, Duration::from_millis(300));
         feed(&mut t, 0.055, Duration::from_secs(1));
         assert_eq!(t.last_voice(), Some(Duration::from_millis(21_300)));
