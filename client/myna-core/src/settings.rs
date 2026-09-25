@@ -48,9 +48,6 @@ pub const KEY_LANGUAGE: &str = "language";
 /// `vumeter` (segmented bar) or `progress` (plain GtkProgressBar).
 pub const KEY_HUD_STYLE: &str = "hud-style";
 
-/// The accepted HUD style nicks.
-pub const HUD_STYLES: &[&str] = &["bar", "ribbon", "vumeter", "progress"];
-
 /// The `hud-style` the schema defaults to. Duplicated from the schema so the
 /// value survives a machine with no schema installed, which is exactly when
 /// [`Settings::hud_style`] reads `None`.
@@ -136,12 +133,6 @@ impl Store {
         Some(Self {
             settings: gio::Settings::new_full(&schema, Some(&backend), None),
         })
-    }
-
-    /// The backed `gio::Settings`, for a caller that needs `connect_changed`
-    /// on the same store this reads.
-    pub fn settings(&self) -> &gio::Settings {
-        &self.settings
     }
 
     /// Wrap the `gio::Settings` a signal handed back. The same GObject, one
