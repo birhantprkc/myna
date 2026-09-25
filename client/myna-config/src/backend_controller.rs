@@ -164,10 +164,6 @@ impl DiscoveryRequest {
     pub fn token(&self) -> CancellationToken {
         self.token.clone()
     }
-
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
 }
 
 /// Handle for an in-flight per-backend snapshot request.
@@ -181,14 +177,6 @@ pub struct SnapshotRequest {
 impl SnapshotRequest {
     pub fn token(&self) -> CancellationToken {
         self.token.clone()
-    }
-
-    pub fn snap(&self) -> &str {
-        &self.snap
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.generation
     }
 }
 
@@ -269,10 +257,6 @@ impl BackendController {
 
     pub fn page(&self, snap: &str) -> Option<BackendPage> {
         self.inner.borrow().pages.get(snap).map(build_page)
-    }
-
-    pub fn active_state(&self) -> ActiveBackendState {
-        self.inner.borrow().active.clone()
     }
 
     pub fn connection_snapshot(&self) -> ConnectionSnapshot {
@@ -936,7 +920,7 @@ mod tests {
             .iter()
             .all(|page| page.connection() == ConnectionKind::Contested));
         assert!(matches!(
-            controller.active_state(),
+            controller.connection_snapshot().active_state(),
             ActiveBackendState::MultiplyConnected(_)
         ));
     }
