@@ -615,18 +615,35 @@ struct PortalRebind {
     /// and notifies `bound`, so that wait ends the moment it succeeds.
     awaiting_binding: bool,
     bound: Arc<tokio::sync::Notify>,
-    /// Where `Shortcut` is published.
+    /// Where `Shortcut` and `Activation` are published.
     shortcut: Option<SharedBus>,
 }
 
 impl PortalRebind {
     async fn clear_shortcut(&self) {
-        if let Some(bus) = &self.shortcut {
-            bus.lock()
-                .await
-                .set_property("Shortcut", PropertyValue::Str(String::new()))
-                .await;
-        }
+        publish(self.shortcut.as_ref(), "Shortcut", "").await;
+    }
+}
+
+async fn publish(bus: Option<&SharedBus>, name: &str, value: &str) {
+    if let Some(bus) = bus {
+        bus.lock()
+            .await
+            .set_property(name, PropertyValue::Str(value.to_owned()))
+            .await;
+    }
+}
+
+/// The `Activation` an attach settles: `portal` once a portal with
+/// GlobalShortcuts answered, `control` when it has none, else undecided.
+fn activation_after<T>(attached: &Result<T, TriggerError>) -> Option<&'static str> {
+    match attached {
+        Ok(_)
+        | Err(TriggerError::NoShortcutBound(_))
+        | Err(TriggerError::BindRejected(_))
+        | Err(TriggerError::BindUnanswered(_)) => Some("portal"),
+        Err(TriggerError::NoGlobalShortcuts(_)) => Some("control"),
+        Err(TriggerError::PortalNotRunning(_)) | Err(TriggerError::PortalUnavailable(_)) => None,
     }
 }
 
@@ -654,7 +671,11 @@ impl Rebind for PortalRebind {
         self.awaiting_portal = false;
         self.awaiting_new_backend = false;
         self.awaiting_binding = false;
-        match GlobalShortcutTrigger::attach("dictate", self.mode).await {
+        let attached = GlobalShortcutTrigger::attach("dictate", self.mode).await;
+        if let Some(activation) = activation_after(&attached) {
+            publish(self.shortcut.as_ref(), "Activation", activation).await;
+        }
+        match attached {
             Ok(trigger) => Ok(match self.shortcut.clone() {
                 Some(bus) => Box::new(trigger.publish_shortcut_on(bus).await),
                 None => Box::new(trigger),
@@ -797,6 +818,7 @@ async fn run_controller(
             builder.trigger(with_status(trigger, pump_bus)).build()
         }
         Activation::Control => {
+            publish(pump_bus.as_ref(), "Activation", "control").await;
             let trigger = RetryingTrigger::new(ControlRebind {
                 path: control_path(&args),
             });
@@ -1452,6 +1474,34 @@ async fn run_headless_dbus(args: Args, resolved: Resolved) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_attach_that_reached_global_shortcuts_is_portal_activation() {
+        assert_eq!(activation_after::<()>(&Ok(())), Some("portal"));
+        for e in [
+            TriggerError::NoShortcutBound(String::new()),
+            TriggerError::BindRejected(String::new()),
+            TriggerError::BindUnanswered(String::new()),
+        ] {
+            assert_eq!(activation_after::<()>(&Err(e)), Some("portal"));
+        }
+    }
+
+    #[test]
+    fn a_portal_without_global_shortcuts_is_control_activation() {
+        let e = TriggerError::NoGlobalShortcuts(String::new());
+        assert_eq!(activation_after::<()>(&Err(e)), Some("control"));
+    }
+
+    #[test]
+    fn an_absent_or_failing_portal_decides_nothing() {
+        for e in [
+            TriggerError::PortalNotRunning(String::new()),
+            TriggerError::PortalUnavailable(String::new()),
+        ] {
+            assert_eq!(activation_after::<()>(&Err(e)), None);
+        }
+    }
 
     fn tmpdir(tag: &str) -> PathBuf {
         let base = std::env::temp_dir().join(format!(
