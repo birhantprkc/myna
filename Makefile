@@ -43,6 +43,7 @@ BRANCH := $(shell git branch --show-current)
 # same actions CI runs, so green here is green there.
 WS := workshop run myna
 WS_SHELL := workshop run myna-shell
+WS_NOBLE := workshop run myna-noble
 
 .PHONY: help
 help: ## List targets, grouped as in this file
@@ -62,7 +63,7 @@ preflight: check test coverage ## Everything CI blocks a merge on: check + test 
 check: lint-client lint-server lint-snaps lint-shell lint-workflows lint-client-deps i18n-check ## Static gates (CI `static` job)
 
 .PHONY: test
-test: test-client test-server test-extension ## Every blocking suite (CI `workshop` + `extension` jobs)
+test: test-client test-server test-extension test-noble ## Every blocking suite (CI `workshop`, `extension` and `noble` jobs)
 
 # The measured suites are `test` under instrumentation, plus the use-case
 # exercise and the reports built on the merged exports. The patch gate at the
@@ -158,6 +159,10 @@ test-server: ## Python offline suite, scoped by TEST (workshop: py-test)
 # Its own workshop, not `myna`: the Shell version a test can reach comes from
 # the workshop's base, and the extension targets a newer one than the core24
 # snap does. See .workshop/myna-shell.yaml.
+.PHONY: test-noble
+test-noble: ## Myna Settings suites on Noble's GTK and libadwaita (workshop myna-noble: config-check)
+	$(WS_NOBLE) config-check
+
 .PHONY: test-extension
 test-extension: ## GNOME Shell extension suites, incl. the headless-Shell presentation check (workshop myna-shell: gjs-test)
 	$(WS_SHELL) gjs-test

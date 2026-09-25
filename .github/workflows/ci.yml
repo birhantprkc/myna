@@ -48,6 +48,22 @@ jobs:
         run: make test-client test-server
 
 
+  # Myna Settings on Noble's GTK and libadwaita, the oldest it ships against.
+  # See .workshop/myna-noble.yaml.
+  noble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # TODO(security): pin to a commit SHA before relying on this in anger -
+      # @v1 tracks the latest v1.* and can move under us.
+      - uses: canonical/launch-workshop@v1
+        with:
+          workshop: myna-noble
+
+      - name: Myna Settings suites on Noble
+        run: make test-noble
+
   # The GNOME Shell extension, in its own workshop and so its own job: the
   # Shell version a test can reach comes from the workshop's base, and the
   # extension targets a newer one than the core24 snap does. The pure GJS

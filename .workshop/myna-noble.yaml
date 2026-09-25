@@ -1,0 +1,26 @@
+# Workshop for Myna Settings on Noble, separate from the main `myna` workshop.
+#
+# Myna Settings ships as a deb built against each series' own GTK and
+# libadwaita, and Noble's (GTK 4.14, libadwaita 1.5) are the oldest it
+# supports. The main workshop's 26.04 base cannot show what breaks there.
+name: myna-noble
+base: ubuntu@24.04
+sdks:
+  - name: rust
+
+  # GTK4/libadwaita headers, blueprint-compiler, xvfb and D-Bus. See
+  # .workshop/desktop/sdk.yaml.
+  - name: project-desktop
+
+actions:
+  # Myna Settings' suites, GTK ones included, on this base's toolkit.
+  config-check: |
+    set -uo pipefail
+    export RUST_BACKTRACE=1 GIO_USE_VFS=local
+    # Its own target dir: /project is shared with the 26.04 workshop, and
+    # cargo does not rebuild when the system libraries under it change.
+    export CARGO_TARGET_DIR=$HOME/target
+    cd /project/client
+    MYNA_CONFIG_TEMPLATE_TESTS=1 MYNA_CONFIG_GTK_TESTS=1 \
+      dbus-run-session -- xvfb-run -a -s "-screen 0 1024x768x24" \
+      cargo test -p myna-config -- --test-threads=1

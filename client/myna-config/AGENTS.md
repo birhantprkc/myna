@@ -20,6 +20,7 @@ Myna Settings is a host application, not a snap. It talks to snapd on the user's
 - Every user-visible string goes through gettext. Adding or changing one requires `make i18n` and committing the template; `make check` fails while it drifts.
 - Strict confinement was measured and rejected (`docs/confinement.md`). Do not reopen it without new evidence.
 - The GSettings schema this application writes is owned by `client/data/` and shared with the daemon.
+- The deb builds against each series' own GTK and libadwaita, Noble's being the oldest. `make test-noble` runs this crate's suites there; the main workshop's newer toolkit hides what breaks on it.
 
 # Architecture
 
