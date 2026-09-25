@@ -193,7 +193,7 @@ pub struct PersistenceRequest {
 #[derive(Clone, Debug)]
 pub enum PersistenceCompletion {
     Written(ClientSettingValue),
-    Superseded(ClientSettingValue),
+    Superseded,
 }
 
 impl PersistenceRequest {
@@ -208,7 +208,7 @@ impl PersistenceRequest {
                 message: "the settings persistence queue is unavailable".into(),
             })?;
         if self.gate.revision.load(Ordering::Acquire) != self.revision {
-            return Ok(PersistenceCompletion::Superseded(self.requested.clone()));
+            return Ok(PersistenceCompletion::Superseded);
         }
         settings.set(&self.key, self.requested.clone())?;
         *self
@@ -448,7 +448,7 @@ impl MynaSettingsController {
             Ok(PersistenceCompletion::Written(value)) => {
                 self.update_row(&request.key, value, false)
             }
-            Ok(PersistenceCompletion::Superseded(_)) => {}
+            Ok(PersistenceCompletion::Superseded) => {}
             Err(error) => {
                 self.update_row(&request.key, request.rollback_value(), false);
                 self.emit(SettingsEvent::SaveFailed {
