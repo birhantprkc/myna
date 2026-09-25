@@ -3,22 +3,21 @@
 //! A [`TierAssessment`] is a measured RTF for one model on one machine,
 //! recorded in `results/streaming-tiers.json` by the lab (myna-bench run) and
 //! shipped as a static data file. The gate (FR-002): streaming is viable only
-//! when the recorded RTF for the active model is below the threshold (~1.0);
-//! no measurement → batch (safe default, FR-010).
+//! when an RTF recorded on this hardware is below the threshold (~1.0); no
+//! measurement → batch (safe default, FR-010).
 
 use serde::Deserialize;
 
 /// Default RTF threshold: the model must process audio faster than it arrives.
 pub const DEFAULT_RTF_THRESHOLD: f64 = 1.0;
 
-/// One measured model×hardware data point (data-model.md, feature 007).
+/// One measured model×hardware data point (data-model.md, feature 007). The
+/// file's other fields (`model`, `strategy`, `measured_at`) are not read: the
+/// gate is per hardware.
 #[derive(Debug, Deserialize)]
 pub struct TierAssessment {
-    pub model: String,
     pub hardware: String,
     pub rtf: f64,
-    pub strategy: String,
-    pub measured_at: String,
 }
 
 /// The tier table: assessments loaded from the shipped baseline file.
@@ -56,18 +55,12 @@ mod tests {
         TierTable {
             assessments: vec![
                 TierAssessment {
-                    model: "whisper-small".into(),
                     hardware: "gpu-rtx".into(),
                     rtf: 0.3,
-                    strategy: "streaming".into(),
-                    measured_at: "2026-07-27T00:00:00Z".into(),
                 },
                 TierAssessment {
-                    model: "whisper-small".into(),
                     hardware: "cpu-i5".into(),
                     rtf: 1.4,
-                    strategy: "batch".into(),
-                    measured_at: "2026-07-27T00:00:00Z".into(),
                 },
             ],
         }
@@ -80,11 +73,8 @@ mod tests {
         // committed frontier to stay ahead. Batch.
         let t = TierTable {
             assessments: vec![TierAssessment {
-                model: "m".into(),
                 hardware: "h".into(),
                 rtf: 1.0,
-                strategy: "batch".into(),
-                measured_at: "2026-07-27T00:00:00Z".into(),
             }],
         };
         assert!(!streaming_viable_here(&t, "h", DEFAULT_RTF_THRESHOLD));
@@ -97,8 +87,7 @@ mod tests {
 
     #[test]
     fn any_measured_model_on_this_hardware_opens_the_gate() {
-        // whisper-small is batch on cpu-i5 but streaming on gpu-rtx; with the
-        // model unknown, gpu-rtx is viable and cpu-i5 is not.
+        // gpu-rtx measured under the threshold, cpu-i5 over it.
         assert!(streaming_viable_here(
             &table(),
             "gpu-rtx",
