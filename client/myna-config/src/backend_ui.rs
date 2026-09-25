@@ -30,7 +30,7 @@ use crate::backend_controller::{
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::diagnostics::{
     self, present_diagnostics, BackendDiagnostic, DiagnosticConnection, DiagnosticInput,
-    InstalledSnap, OnboardingState, RefreshPolicy, RefreshReason,
+    InstalledSnap, OnboardingState, REFRESH_DEBOUNCE,
 };
 use crate::domain::{ActiveBackendState, BackendIdentity, ConfigValue, ServiceState};
 use crate::markup::escape_markup;
@@ -39,12 +39,6 @@ use crate::performance::PerformanceFacts;
 use crate::ports::{BackendRepository, SystemConfigurator};
 use crate::presentation::{ControlType, Sensitivity};
 use crate::ui;
-
-/// Pure refresh policy shared by every event-driven refresh. Never installs a
-/// periodic timer; see [`crate::diagnostics::RefreshPolicy`].
-fn refresh_policy() -> RefreshPolicy {
-    RefreshPolicy::default()
-}
 
 /// Runtime coordinator that keeps the Backend/Diagnostics tabs in sync with a
 /// [`BackendController`]. The Backend tab always shows the single active
@@ -257,9 +251,6 @@ impl BackendUi {
             }
         });
 
-        // Event-driven refresh only — no perpetual polling. See
-        // `crate::diagnostics::RefreshPolicy`.
-        debug_assert!(refresh_policy().periodic_interval().is_none());
         ui.trigger_discovery();
 
         ui
@@ -1362,8 +1353,7 @@ impl BackendUi {
     }
 
     fn on_diagnostics_page_shown(self: &Rc<Self>) {
-        // Selecting Diagnostics performs an on-demand refresh consistent with
-        // `RefreshReason::DiagnosticsRequested`.
+        // Selecting Diagnostics performs an on-demand refresh.
         self.on_diagnostics_requested();
     }
 
@@ -1446,22 +1436,11 @@ impl BackendUi {
         if self
             .last_diagnostics_refresh
             .get()
-            .is_some_and(|last| now.saturating_duration_since(last) < refresh_policy().debounce())
+            .is_some_and(|last| now.saturating_duration_since(last) < REFRESH_DEBOUNCE)
         {
             return;
         }
         self.last_diagnostics_refresh.set(Some(now));
-        // Refresh policy budget for a user-initiated diagnostics request:
-        // one inventory refresh plus one snapshot per visible backend.
-        let plan = refresh_policy().plan(
-            RefreshReason::DiagnosticsRequested,
-            self.controller.pages().len(),
-        );
-        debug_assert!(
-            plan.processes()
-                <= diagnostics::APP_REFRESH_PROCESS_BUDGET
-                    + self.controller.pages().len() * diagnostics::BACKEND_REFRESH_PROCESS_BUDGET
-        );
         if !self.controller.discovery_loading() {
             self.trigger_discovery();
         }

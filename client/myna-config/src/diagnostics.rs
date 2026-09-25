@@ -1,5 +1,4 @@
-//! Pure presenter for the About/Diagnostics page and the associated refresh
-//! policy.
+//! Pure presenter for the About/Diagnostics page and the refresh budgets.
 //!
 //! GTK-independent so it can be exercised headlessly. The report is built from
 //! facts this crate produces itself - machine shape, process memory, engine and
@@ -21,9 +20,6 @@ pub const NO_MYNA_COMMAND: &str = crate::onboarding::MYNA_INSTALL_COMMAND;
 /// backend has been chosen yet.
 pub const NO_BACKEND_COMMAND: &str = crate::onboarding::MODEL_INSTALL_COMMAND;
 
-/// Upper bound on subprocess spawns required for a single application-level
-/// refresh: `snap list`, `snap connections` and `snap interface content`.
-pub const APP_REFRESH_PROCESS_BUDGET: usize = 3;
 /// Upper bound on subprocess spawns required to refresh a single backend
 /// snapshot: `snap info`, at most four prioritized modelctl candidate probes,
 /// and the four modelctl data commands (status, get, list-models,
@@ -216,77 +212,8 @@ pub fn parse_snap_list(input: &str) -> Result<Vec<InstalledSnap>, SnapListError>
     Ok(snaps)
 }
 
-/// The dominant reason to trigger a refresh cycle. Each variant maps to a
-/// documented process budget so the UI can never regress into perpetual
-/// broad polling.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RefreshReason {
-    /// The application is idle (no user interaction, no focus, no visible
-    /// diagnostics page). No processes must be spawned.
-    Idle,
-    /// The application is starting up and needs an initial inventory refresh.
-    Startup,
-    /// The user selected a specific backend page.
-    BackendSelected,
-    /// The user opened or explicitly refreshed the diagnostics page.
-    DiagnosticsRequested,
-}
-
-/// A planned refresh work item and its associated process budget.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RefreshPlan {
-    processes: usize,
-}
-
-impl RefreshPlan {
-    pub const fn processes(self) -> usize {
-        self.processes
-    }
-}
-
-/// Pure refresh policy. Deliberately does not schedule background polling —
-/// refreshes must be event-driven (startup, tab selection, explicit
-/// user request) so that idle sessions produce zero subprocess churn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RefreshPolicy {
-    debounce: Duration,
-}
-
-impl Default for RefreshPolicy {
-    fn default() -> Self {
-        Self {
-            debounce: Duration::from_millis(250),
-        }
-    }
-}
-
-impl RefreshPolicy {
-    /// Interval between periodic refreshes. Always `None` — periodic broad
-    /// polling is explicitly forbidden.
-    pub fn periodic_interval(&self) -> Option<Duration> {
-        None
-    }
-
-    /// Debounce window for coalescing user-initiated refresh requests.
-    pub fn debounce(&self) -> Duration {
-        self.debounce
-    }
-
-    /// Plans the number of subprocesses a single refresh cycle may spawn.
-    pub fn plan(&self, reason: RefreshReason, visible_backends: usize) -> RefreshPlan {
-        let processes = match reason {
-            RefreshReason::Idle => 0,
-            RefreshReason::Startup => APP_REFRESH_PROCESS_BUDGET,
-            RefreshReason::BackendSelected => {
-                BACKEND_REFRESH_PROCESS_BUDGET * visible_backends.min(1)
-            }
-            RefreshReason::DiagnosticsRequested => {
-                APP_REFRESH_PROCESS_BUDGET + visible_backends * BACKEND_REFRESH_PROCESS_BUDGET
-            }
-        };
-        RefreshPlan { processes }
-    }
-}
+/// Coalesces user-initiated refreshes. There is no periodic refresh.
+pub const REFRESH_DEBOUNCE: Duration = Duration::from_millis(250);
 
 /// Produce the diagnostics report for the given input.
 pub fn present_diagnostics(input: DiagnosticInput) -> DiagnosticReport {
@@ -835,27 +762,6 @@ mod tests {
         assert_eq!(snaps.len(), 1);
         assert_eq!(snaps[0].name, "myna");
         assert_eq!(snaps[0].version, "1.2.3");
-    }
-
-    #[test]
-    fn refresh_policy_matches_documented_budgets() {
-        let policy = RefreshPolicy::default();
-        assert!(policy.periodic_interval().is_none());
-        assert_eq!(policy.plan(RefreshReason::Idle, 4).processes(), 0);
-        assert_eq!(
-            policy.plan(RefreshReason::Startup, 4).processes(),
-            APP_REFRESH_PROCESS_BUDGET
-        );
-        assert_eq!(
-            policy.plan(RefreshReason::BackendSelected, 3).processes(),
-            BACKEND_REFRESH_PROCESS_BUDGET
-        );
-        assert_eq!(
-            policy
-                .plan(RefreshReason::DiagnosticsRequested, 3)
-                .processes(),
-            APP_REFRESH_PROCESS_BUDGET + 3 * BACKEND_REFRESH_PROCESS_BUDGET
-        );
     }
 
     #[test]

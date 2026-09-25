@@ -1,9 +1,6 @@
-use std::time::Duration;
-
 use myna_config::diagnostics::{
     parse_snap_list, present_diagnostics, BackendDiagnostic, DiagnosticConnection, DiagnosticInput,
-    OnboardingState, RefreshPolicy, RefreshReason, APP_REFRESH_PROCESS_BUDGET,
-    BACKEND_REFRESH_PROCESS_BUDGET, NO_BACKEND_COMMAND, NO_MYNA_COMMAND,
+    OnboardingState, NO_BACKEND_COMMAND, NO_MYNA_COMMAND,
 };
 
 #[test]
@@ -180,25 +177,6 @@ fn failed_backend_discovery_does_not_claim_onboarding_is_complete() {
     });
     assert_eq!(report.onboarding(), OnboardingState::Unavailable);
     assert_eq!(report.onboarding_command(), None);
-}
-
-#[test]
-fn refresh_policy_has_no_idle_poll_and_enforces_process_budgets() {
-    let policy = RefreshPolicy::default();
-    assert_eq!(policy.plan(RefreshReason::Idle, 4).processes(), 0);
-    assert_eq!(policy.periodic_interval(), None);
-    assert!(policy.plan(RefreshReason::Startup, 4).processes() <= APP_REFRESH_PROCESS_BUDGET);
-    assert!(
-        policy.plan(RefreshReason::BackendSelected, 1).processes()
-            <= BACKEND_REFRESH_PROCESS_BUDGET
-    );
-    assert_eq!(
-        policy
-            .plan(RefreshReason::DiagnosticsRequested, 3)
-            .processes(),
-        APP_REFRESH_PROCESS_BUDGET + 3 * BACKEND_REFRESH_PROCESS_BUDGET
-    );
-    assert_eq!(policy.debounce(), Duration::from_millis(250));
 }
 
 mod performance_warnings {

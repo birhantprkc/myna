@@ -98,7 +98,7 @@ Change captures a key in a dialog that:
 
 ## Cost
 
-The startup assessment is the same two subprocesses as a `RefreshReason::Startup`
+The startup assessment is the same two subprocesses as a startup
 refresh, run before any window exists, and it is handed to the wizard rather
 than repeated there. The shortcut proxy spawns nothing: it is one D-Bus match
 per surface. Regaining focus on the component step costs another `snap list`
