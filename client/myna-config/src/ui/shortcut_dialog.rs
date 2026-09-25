@@ -47,7 +47,24 @@ mod imp {
                     })
             });
             self.obj().add_controller(keys);
+            // The desktop grabs the keys it uses (Super+L, the Calculator
+            // key) before any window sees them, so it pauses those while
+            // capturing, as GNOME Settings does.
+            self.obj().connect_map(|dialog| {
+                if let Some(toplevel) = toplevel(dialog) {
+                    toplevel.inhibit_system_shortcuts(None::<&gdk::Event>);
+                }
+            });
+            self.obj().connect_unmap(|dialog| {
+                if let Some(toplevel) = toplevel(dialog) {
+                    toplevel.restore_system_shortcuts();
+                }
+            });
         }
+    }
+
+    fn toplevel(dialog: &super::ShortcutDialog) -> Option<gdk::Toplevel> {
+        dialog.root()?.surface()?.downcast::<gdk::Toplevel>().ok()
     }
     impl WidgetImpl for ShortcutDialog {}
     impl AdwDialogImpl for ShortcutDialog {}
