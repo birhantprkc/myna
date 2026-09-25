@@ -1,8 +1,9 @@
 //! The dictation shortcut as Myna Settings sees it, without GTK.
 //!
-//! The portal owns the key. The daemon republishes the portal's own
-//! description of it as `Shortcut` on `com.canonical.Myna.Dictation`, and that
-//! description is all anything outside the daemon can know.
+//! The portal owns the key, and the daemon republishes the portal's own
+//! description of it as `Shortcut` on `com.canonical.Myna.Dictation`. Where the
+//! portal has no GlobalShortcuts the daemon says `Activation` is `control`, and
+//! the key is a desktop custom shortcut instead.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShortcutState {
@@ -25,6 +26,35 @@ impl ShortcutState {
             (true, None) => Self::Unpublished,
             (true, Some(shortcut)) if shortcut.trim().is_empty() => Self::Unbound,
             (true, Some(shortcut)) => Self::Bound(shortcut.to_owned()),
+        }
+    }
+
+    /// The control path's state: `binding` is the desktop shortcut's
+    /// accelerator, when one is installed.
+    pub fn observe_control(owned: bool, binding: Option<&str>) -> Self {
+        match (owned, binding) {
+            (false, _) => Self::NotRunning,
+            (true, Some(binding)) if !binding.trim().is_empty() => Self::Bound(binding.to_owned()),
+            (true, _) => Self::Unbound,
+        }
+    }
+}
+
+/// How the key reaches the daemon, from its `Activation` property.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShortcutPath {
+    /// The portal's binding. Also a daemon that has not decided yet.
+    Portal,
+    /// A desktop custom shortcut that pokes the control socket, where the
+    /// portal has no GlobalShortcuts.
+    Control,
+}
+
+impl ShortcutPath {
+    pub fn from_activation(activation: Option<&str>) -> Self {
+        match activation {
+            Some("control") => Self::Control,
+            _ => Self::Portal,
         }
     }
 }

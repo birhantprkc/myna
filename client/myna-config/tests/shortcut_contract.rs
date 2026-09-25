@@ -1,4 +1,4 @@
-use myna_config::shortcut::{accelerators, ShortcutState};
+use myna_config::shortcut::{accelerators, ShortcutPath, ShortcutState};
 
 #[test]
 fn gnome_trigger_descriptions_yield_their_accelerator() {
@@ -61,5 +61,39 @@ fn a_published_shortcut_is_bound() {
     assert_eq!(
         ShortcutState::observe(true, Some("Press <Super>j")),
         ShortcutState::Bound("Press <Super>j".into())
+    );
+}
+
+#[test]
+fn only_control_activation_takes_the_desktop_shortcut_path() {
+    assert_eq!(
+        ShortcutPath::from_activation(Some("control")),
+        ShortcutPath::Control
+    );
+    for activation in [Some("portal"), Some(""), None] {
+        assert_eq!(
+            ShortcutPath::from_activation(activation),
+            ShortcutPath::Portal
+        );
+    }
+}
+
+#[test]
+fn a_desktop_binding_is_the_control_paths_shortcut() {
+    assert_eq!(
+        ShortcutState::observe_control(true, Some("<Super>j")),
+        ShortcutState::Bound("<Super>j".into())
+    );
+    assert_eq!(
+        ShortcutState::observe_control(true, Some("")),
+        ShortcutState::Unbound
+    );
+    assert_eq!(
+        ShortcutState::observe_control(true, None),
+        ShortcutState::Unbound
+    );
+    assert_eq!(
+        ShortcutState::observe_control(false, Some("<Super>j")),
+        ShortcutState::NotRunning
     );
 }
