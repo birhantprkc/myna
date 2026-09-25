@@ -259,6 +259,50 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
     }
 }
 
+/// The real application against a fixture machine: still running once it has
+/// started, and not a single GTK or libadwaita warning on the way.
+#[test]
+fn the_application_starts_without_toolkit_warnings() {
+    if std::env::var_os("MYNA_CONFIG_GTK_TESTS").is_none() {
+        eprintln!("skipped: set MYNA_CONFIG_GTK_TESTS=1 under Xvfb");
+        return;
+    }
+
+    let (store, schemas) = scratch_store("startup");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bin");
+    let path = format!(
+        "{}:{}",
+        fixtures.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    // `timeout` ends it: 124 means it was still up when time ran out.
+    let output = Command::new("dbus-run-session")
+        .args(["--", "timeout", "4"])
+        .arg(env!("CARGO_BIN_EXE_myna-config"))
+        .env("GSETTINGS_BACKEND", "memory")
+        .env("GSETTINGS_SCHEMA_DIR", &schemas)
+        .env("XDG_CONFIG_HOME", &store)
+        .env("GDK_DEBUG", "no-portals")
+        // The private bus has no accessibility bus to find.
+        .env("GTK_A11Y", "none")
+        .env("PATH", path)
+        .output()
+        .expect("run myna-config under dbus-run-session");
+    std::fs::remove_dir_all(&store).ok();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(124),
+        "myna-config exited: {stderr}"
+    );
+    let warnings: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.starts_with("(myna-config:"))
+        .filter(|line| line.contains("-WARNING **") || line.contains("-CRITICAL **"))
+        .collect();
+    assert!(warnings.is_empty(), "toolkit warnings: {warnings:#?}");
+}
+
 /// The backend pages end to end through the real repository adapter, against a
 /// fixture machine: discovery, a page's snapshot, staging an edit, and a
 /// confirmed apply that is written and read back.
