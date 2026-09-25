@@ -37,7 +37,7 @@ pub use events::{
     Disposition, ErrorData, Progress, Segment, StreamingMode, TranscriptionEvent,
     TranscriptionFinal, WireError, PHASE_PREPARING, PHASE_READY, PHASE_TRANSCRIBING,
 };
-pub use protocol::{is_supported, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS};
+pub use protocol::PROTOCOL_VERSION;
 pub use session::SessionConfig;
 pub use settings::{effective_mode, hardware_tier, tier_table, Settings, SettingsWatch};
 pub use tier::{streaming_viable_here, TierAssessment, TierTable, DEFAULT_RTF_THRESHOLD};
