@@ -201,11 +201,24 @@ impl ShortcutControl {
         let dialog = crate::ui::ShortcutDialog::new();
         let control = Rc::downgrade(self);
         dialog.connect_captured(move |accelerator| {
-            if let Some(control) = control.upgrade() {
-                control.claim(accelerator);
+            let control = control.upgrade()?;
+            if let Some(reason) = control.reserved(accelerator) {
+                return Some(reason);
             }
+            control.claim(accelerator);
+            None
         });
         dialog.present(self.overlay.root().as_ref());
+    }
+
+    /// Why `accelerator` cannot be taken, when the desktop reserves it.
+    fn reserved(&self, accelerator: &str) -> Option<String> {
+        let conflict = self.desktop.as_ref()?.conflict(accelerator)?;
+        conflict.reserved.then(|| {
+            gettextrs::gettext("{keys} is reserved for “{action}”. Press a different shortcut.")
+                .replace("{keys}", &key_label(accelerator))
+                .replace("{action}", &conflict.action)
+        })
     }
 
     /// Install `accelerator`, first asking to take it from whatever desktop
@@ -219,6 +232,10 @@ impl ShortcutControl {
             self.install(accelerator);
             return;
         };
+        if let Some(reason) = self.reserved(accelerator) {
+            self.overlay.add_toast(adw::Toast::new(&reason));
+            return;
+        }
         let body = gettextrs::gettext(
             "{keys} is already used for “{action}”. Replacing it removes it from there.",
         )

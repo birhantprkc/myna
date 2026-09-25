@@ -256,6 +256,7 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
         "shortcut-bound: Super+J",
         "shortcut-changed: Ctrl+Alt+D",
         "shortcut-special-key: Calculator",
+        "shortcut-reserved: Super+O refused",
         "shortcut-replaced: Super+L",
     ] {
         assert!(

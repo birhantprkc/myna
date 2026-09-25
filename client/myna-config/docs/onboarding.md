@@ -105,6 +105,9 @@ inhibits the desktop's shortcuts, as GNOME Settings does, so keys GNOME already
 uses reach it; GNOME asks once whether to allow that. A key already bound to a
 desktop action or another custom shortcut is taken only after the user agrees to
 replace it, which removes it from there.
+Keys gsd-media-keys binds as `-static` (the hardware-key defaults, such as
+Super+O for rotation lock) are refused instead: it grabs them at login and keeps
+them until logout whatever the setting says, so a replaced one never fires.
 
 ## Cost
 

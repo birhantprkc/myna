@@ -1326,6 +1326,18 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             eprintln!("Change Shortcut opened no capture dialog the third time");
             return glib::ExitCode::FAILURE;
         };
+        // Super+O is rotation lock's -static key, which cannot be taken.
+        dialog.press(gtk::gdk::Key::o, gtk::gdk::ModifierType::SUPER_MASK);
+        let refusal = dialog.refusal();
+        if window.visible_dialog().as_ref() != Some(dialog.upcast_ref())
+            || !refusal
+                .as_deref()
+                .is_some_and(|text| text.contains("Toggle automatic screen orientation"))
+        {
+            eprintln!("a reserved key was not refused in the dialog: {refusal:?}");
+            return glib::ExitCode::FAILURE;
+        }
+        println!("shortcut-reserved: Super+O refused");
         dialog.press(gtk::gdk::Key::l, gtk::gdk::ModifierType::SUPER_MASK);
         settles(&|| {
             window

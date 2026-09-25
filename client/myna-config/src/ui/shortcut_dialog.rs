@@ -7,7 +7,8 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-type Captured = Box<dyn Fn(&str)>;
+/// Takes a captured accelerator, or refuses it with the reason to show.
+type Captured = Box<dyn Fn(&str) -> Option<String>>;
 
 mod imp {
     use super::*;
@@ -15,6 +16,8 @@ mod imp {
     #[derive(Default, CompositeTemplate)]
     #[template(resource = "/com/canonical/Myna/Config/ui/shortcut-dialog.ui")]
     pub struct ShortcutDialog {
+        #[template_child]
+        pub refusal: gtk::TemplateChild<gtk::Label>,
         pub captured: RefCell<Option<Captured>>,
     }
 
@@ -83,8 +86,9 @@ impl ShortcutDialog {
         glib::Object::builder().build()
     }
 
-    /// Run `captured` with the accelerator the user presses.
-    pub fn connect_captured(&self, captured: impl Fn(&str) + 'static) {
+    /// Run `captured` with the accelerator the user presses. A reason it
+    /// returns keeps the dialog open and is shown there.
+    pub fn connect_captured(&self, captured: impl Fn(&str) -> Option<String> + 'static) {
         self.imp().captured.replace(Some(Box::new(captured)));
     }
 
@@ -106,11 +110,29 @@ impl ShortcutDialog {
         {
             return glib::Propagation::Proceed;
         }
-        if let Some(captured) = self.imp().captured.borrow().as_ref() {
-            captured(&accelerator_name(key, modifiers));
+        let refusal = self
+            .imp()
+            .captured
+            .borrow()
+            .as_ref()
+            .and_then(|captured| captured(&accelerator_name(key, modifiers)));
+        match refusal {
+            Some(reason) => {
+                let label = self.imp().refusal.get();
+                label.set_label(&reason);
+                label.set_visible(true);
+            }
+            None => {
+                self.close();
+            }
         }
-        self.close();
         glib::Propagation::Stop
+    }
+
+    /// The reason the last key was refused, while it is shown.
+    pub fn refusal(&self) -> Option<String> {
+        let label = self.imp().refusal.get();
+        label.is_visible().then(|| label.label().to_string())
     }
 }
 

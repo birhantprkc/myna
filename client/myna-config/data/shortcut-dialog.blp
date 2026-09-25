@@ -27,6 +27,16 @@ template $ShortcutDialog: Adw.Dialog {
         wrap: true;
       }
 
+      Gtk.Label refusal {
+        visible: false;
+        justify: center;
+        wrap: true;
+
+        styles [
+          "error",
+        ]
+      }
+
       Gtk.Label {
         label: _("Press Escape to cancel.");
         justify: center;

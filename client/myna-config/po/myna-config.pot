@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-27 13:15+0100\n"
+"POT-Creation-Date: 2026-09-27 13:30+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -222,11 +222,11 @@ msgstr ""
 msgid "Copy the full failure details to the clipboard"
 msgstr ""
 
-#: data/status-page.blp:12 src/app.rs:868 src/app.rs:1819
+#: data/status-page.blp:12 src/app.rs:868 src/app.rs:1831
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:13 src/app.rs:869 src/app.rs:1820
+#: data/status-page.blp:13 src/app.rs:869 src/app.rs:1832
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -254,19 +254,19 @@ msgstr ""
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:1824
+#: src/app.rs:1836
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:1825
+#: src/app.rs:1837
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:1841
+#: src/app.rs:1853
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:2194
+#: src/app.rs:2206
 msgid "Could not save the setting"
 msgstr ""
 
