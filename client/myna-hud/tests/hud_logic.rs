@@ -6,10 +6,30 @@
 
 use myna_hud::hud_logic::{
     icon_for_severity, indicator_state, pill_color_class, pulse_position,
-    ribbon_phase_for_state_key, ribbon_visible_for_severity, smooth_level, PILL_COLOR_CLASSES,
+    ribbon_phase_for_state_key, ribbon_visible_for_severity, smooth_level, HudStyle,
+    PILL_COLOR_CLASSES,
 };
 use myna_hud::ribbon::RibbonPhase;
 use myna_hud::states::{DictationState, Severity};
+
+// --- hud-style: the published nick picks the indicator ---------------------
+
+#[test]
+fn every_style_nick_round_trips() {
+    for style in [HudStyle::Bar, HudStyle::Vumeter] {
+        assert_eq!(HudStyle::from_nick(style.nick()), style);
+    }
+    assert_eq!(HudStyle::default(), HudStyle::Bar);
+}
+
+#[test]
+fn a_retired_or_unknown_nick_draws_the_default_bar() {
+    // `progress` was a style once, so a stored or published value may
+    // still carry it; an older publisher sends "".
+    for nick in ["progress", "hologram", ""] {
+        assert_eq!(HudStyle::from_nick(nick), HudStyle::Bar, "{nick:?}");
+    }
+}
 
 // --- RC19: mic vs. mic-slash icon, contextual on severity -------------------
 
@@ -129,7 +149,7 @@ fn ribbon_visibility_by_severity() {
     );
 }
 
-// --- Simple-indicator state animation (bar / vumeter / progress) -----------
+// --- Simple-indicator state animation (bar / vumeter) ----------------------
 
 #[test]
 fn plain_level_states_report_the_raw_level() {

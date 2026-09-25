@@ -1,4 +1,4 @@
-//! indicator — the state the simple level views (bar, vumeter, progress)
+//! indicator — the state the simple level views (bar, vumeter)
 //! share: the latest level push, the dictation state and the eased level.
 //!
 //! Each view owns one [`Indicator`] and asks it for a [`Frame`] when it

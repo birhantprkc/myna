@@ -44,8 +44,8 @@ pub const KEY_STREAMING_MODE: &str = "streaming-mode";
 /// The spoken language passed to the backend; empty means "backend decides".
 pub const KEY_LANGUAGE: &str = "language";
 
-/// The HUD indicator style: `bar` (accent level bar), `ribbon` (GPU wave),
-/// `vumeter` (segmented bar) or `progress` (plain GtkProgressBar).
+/// The HUD indicator style: `bar` (accent level bar), `ribbon` (GPU wave) or
+/// `vumeter` (segmented bar).
 pub const KEY_HUD_STYLE: &str = "hud-style";
 
 /// The `hud-style` the schema defaults to. Duplicated from the schema so the
@@ -515,6 +515,23 @@ mod tests {
             mode_from_nick("supersonic").unwrap_or_default(),
             StreamingMode::Auto
         );
+    }
+
+    /// A style retired from the schema can still sit in a user's keyfile, and
+    /// a hand edit can put anything there; either must read as the default
+    /// rather than reach the HUD as a nick the schema no longer has.
+    #[test]
+    fn a_hud_style_outside_the_schema_reads_the_default() {
+        let path = std::env::temp_dir().join(format!("myna-hud-style-{}.ini", std::process::id()));
+        for retired in ["progress", "hologram"] {
+            std::fs::write(&path, format!("[dictation]\nhud-style='{retired}'\n")).unwrap();
+            assert_eq!(
+                Settings::from_store(&store_on(&path)).hud_style.as_deref(),
+                Some(DEFAULT_HUD_STYLE),
+                "{retired}"
+            );
+        }
+        std::fs::remove_file(&path).ok();
     }
 
     /// `Store::open` must answer `None` rather than aborting when the schema is

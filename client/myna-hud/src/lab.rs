@@ -289,14 +289,13 @@ fn build_lab(app: &adw::Application, publishing: bool) {
     accent_row.set_selected(0);
 
     // Indicator style: what the publisher sends on `HudStyle` (bar / ribbon /
-    // vumeter / progress), overridable here for previewing each. `default`
+    // vumeter), overridable here for previewing each. `default`
     // releases the override and also makes the served publisher advertise the
     // schema default, so `--serve-dbus` drives a real HUD down the real path.
-    let hud_style_model =
-        gtk::StringList::new(&["default", "bar", "ribbon", "vumeter", "progress"]);
+    let hud_style_model = gtk::StringList::new(&["default", "bar", "ribbon", "vumeter"]);
     let hud_style_row = adw::ComboRow::builder()
         .title("Indicator style")
-        .subtitle("bar (accent level), ribbon (GPU wave), vumeter (segmented meter) or progress (GtkProgressBar)")
+        .subtitle("bar (accent level), ribbon (GPU wave) or vumeter (segmented meter)")
         .model(&hud_style_model)
         .build();
     hud_style_row.set_selected(0);
@@ -327,7 +326,6 @@ fn build_lab(app: &adw::Application, publishing: bool) {
                 1 => Some(crate::hud_logic::HudStyle::Bar),
                 2 => Some(crate::hud_logic::HudStyle::Ribbon),
                 3 => Some(crate::hud_logic::HudStyle::Vumeter),
-                4 => Some(crate::hud_logic::HudStyle::Progress),
                 _ => None,
             };
             controls.borrow_mut().hud_style = style;

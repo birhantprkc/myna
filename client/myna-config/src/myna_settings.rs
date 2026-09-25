@@ -71,7 +71,6 @@ pub fn choice_display_label(choice: &str) -> String {
         "ribbon" => gettextrs::gettext("Ribbon"),
         "vumeter" => gettextrs::gettext("VU meter"),
         "bar" => gettextrs::gettext("Default"),
-        "progress" => gettextrs::gettext("Progress"),
         unknown => unknown.to_owned(),
     }
 }

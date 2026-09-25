@@ -40,7 +40,6 @@ pub mod motion;
 pub mod notice_slot;
 pub mod pill;
 pub mod platform;
-pub mod progress;
 pub mod ribbon;
 pub mod segmented_meter;
 #[cfg(dev_lab)]

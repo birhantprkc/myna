@@ -27,8 +27,6 @@ pub enum HudStyle {
     Ribbon,
     /// The classic segmented bar meter (the pre-ribbon `BarMeterActor`).
     Vumeter,
-    /// A plain `GtkProgressBar`.
-    Progress,
 }
 
 impl HudStyle {
@@ -39,7 +37,6 @@ impl HudStyle {
         match nick {
             "ribbon" => HudStyle::Ribbon,
             "vumeter" => HudStyle::Vumeter,
-            "progress" => HudStyle::Progress,
             _ => HudStyle::Bar,
         }
     }
@@ -51,7 +48,6 @@ impl HudStyle {
             HudStyle::Bar => "bar",
             HudStyle::Ribbon => "ribbon",
             HudStyle::Vumeter => "vumeter",
-            HudStyle::Progress => "progress",
         }
     }
 }
@@ -137,13 +133,11 @@ pub fn ribbon_visible_for_severity(severity: Option<Severity>) -> bool {
     severity != Some(Severity::Critical)
 }
 
-// ── Non-ribbon indicator animation (bar / vumeter / progress) ───────────────
+// ── Non-ribbon indicator animation (bar / vumeter) ──────────────────────────
 
 /// The indeterminate "activity" pulse shown by the simple indicators while the
 /// session is working: a little block that travels back and forth (à la pong).
-/// The bar and the segmented meter draw it themselves from the shared
-/// [`pulse_position`]; the progress view maps it onto the stock
-/// `GtkProgressBar::pulse()`.
+/// The bar and the segmented meter draw it from the shared [`pulse_position`].
 #[derive(Clone, Copy, Debug)]
 pub struct Pulse {
     /// The block's width as a fraction of the indicator (`[0,1]`).
@@ -154,7 +148,7 @@ pub struct Pulse {
     pub alpha: f64,
 }
 
-/// How the simple indicators (bar / vumeter / progress) render the current
+/// How the simple indicators (bar / vumeter) render the current
 /// state, mirroring the ribbon's phase-driven motion with their own
 /// primitives:
 ///

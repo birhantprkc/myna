@@ -451,19 +451,14 @@ fn a_choice_row_lists_the_schema_default_first_then_schema_order() {
         Some("Indicator style".into()),
         None,
         ClientSettingValue::Choice("bar".into()),
-        SettingRange::Choices(vec![
-            "ribbon".into(),
-            "vumeter".into(),
-            "bar".into(),
-            "progress".into(),
-        ]),
+        SettingRange::Choices(vec!["ribbon".into(), "vumeter".into(), "bar".into()]),
         ClientSettingValue::Choice("ribbon".into()),
         true,
     );
 
     assert_eq!(
         widget_plan(&hud_style).choices,
-        ["bar", "ribbon", "vumeter", "progress"]
+        ["bar", "ribbon", "vumeter"]
     );
 }
 
@@ -476,7 +471,6 @@ fn schema_choices_have_translated_labels_but_keep_raw_index_mapping() {
         "ribbon",
         "vumeter",
         "bar",
-        "progress",
         "future-mode",
     ];
     let labels: Vec<_> = raw
@@ -493,7 +487,6 @@ fn schema_choices_have_translated_labels_but_keep_raw_index_mapping() {
             "Ribbon",
             "VU meter",
             "Default",
-            "Progress",
             "future-mode",
         ]
     );
@@ -511,7 +504,6 @@ fn enum_display_labels_are_extracted_into_the_gettext_template() {
         "Ribbon",
         "VU meter",
         "Default",
-        "Progress",
     ] {
         assert!(pot.contains(&format!("msgid \"{label}\"")), "{label}");
     }

@@ -116,22 +116,6 @@ window.myna-hud-window {
     color: var(--warning-bg-color);
 }
 
-/* The plain GtkProgressBar (the `hud-style: progress` alternative). Its fill
- * is the themed `progress` sub-node; the recoverable class drives it to the
- * warning colour. */
-.myna-hud-progress {
-    min-height: 8px;
-    min-width: 160px;
-}
-
-.myna-hud-progress progress {
-    background-color: var(--accent-bg-color);
-}
-
-.myna-hud-progress.myna-hud-severity-recoverable progress {
-    background-color: var(--warning-bg-color);
-}
-
 .myna-hud-dismiss {
     color: rgba(255, 255, 255, 0.75);
     background: none;
