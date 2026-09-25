@@ -1,7 +1,7 @@
 use myna_config::domain::{
     parse_connections, parse_engine_options, parse_model_options, parse_modelctl_config,
     parse_status, ActiveBackendState, BackendIdentity, ClientSetting, ClientSettingKey,
-    ClientSettingValue, ConfigScope, ConfigValue, ConnectionState, StagedChange, SwitchFailure,
+    ClientSettingValue, ConfigScope, ConfigValue, StagedChange,
 };
 
 const CONNECTIONS: &str = include_str!("fixtures/snap-connections.txt");
@@ -60,25 +60,6 @@ fn connections_express_every_honest_active_backend_state() {
     assert!(matches!(
         multiple.active_state(),
         ActiveBackendState::MultiplyConnected(backends) if backends.len() == 2
-    ));
-
-    let failed = ActiveBackendState::failed_switch(
-        Some(BackendIdentity::new("myna-parakeet", "provider")),
-        BackendIdentity::new("myna-whisper", "provider"),
-        ConnectionState::MultiplyConnected(vec![
-            BackendIdentity::new("myna-parakeet", "provider"),
-            BackendIdentity::new("myna-other", "provider"),
-        ]),
-        SwitchFailure::Connect {
-            message: "permission denied".into(),
-        },
-    );
-    assert!(matches!(
-        failed,
-        ActiveBackendState::FailedSwitch {
-            observed: ConnectionState::MultiplyConnected(backends),
-            ..
-        } if backends.len() == 2
     ));
 }
 

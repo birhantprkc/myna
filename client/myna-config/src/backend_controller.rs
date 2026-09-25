@@ -568,7 +568,7 @@ fn apply_discovery(
             .iter()
             .map(|identity| identity.snap_name().to_owned())
             .collect(),
-        ActiveBackendState::Disconnected | ActiveBackendState::FailedSwitch { .. } => Vec::new(),
+        ActiveBackendState::Disconnected => Vec::new(),
     };
     let contested = matches!(active, ActiveBackendState::MultiplyConnected(_));
 

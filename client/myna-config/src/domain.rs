@@ -227,45 +227,10 @@ impl BackendConfiguration {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SwitchFailure {
-    Disconnect { message: String },
-    Connect { message: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActiveBackendState {
     Disconnected,
     Connected(BackendIdentity),
     MultiplyConnected(Vec<BackendIdentity>),
-    FailedSwitch {
-        previous: Option<BackendIdentity>,
-        requested: BackendIdentity,
-        observed: ConnectionState,
-        failure: SwitchFailure,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ConnectionState {
-    Disconnected,
-    Connected(BackendIdentity),
-    MultiplyConnected(Vec<BackendIdentity>),
-}
-
-impl ActiveBackendState {
-    pub fn failed_switch(
-        previous: Option<BackendIdentity>,
-        requested: BackendIdentity,
-        observed: ConnectionState,
-        failure: SwitchFailure,
-    ) -> Self {
-        Self::FailedSwitch {
-            previous,
-            requested,
-            observed,
-            failure,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -179,11 +179,6 @@ fn connected_backends(snapshot: &ConnectionSnapshot) -> Vec<BackendIdentity> {
         ActiveBackendState::Disconnected => Vec::new(),
         ActiveBackendState::Connected(backend) => vec![backend],
         ActiveBackendState::MultiplyConnected(backends) => backends,
-        ActiveBackendState::FailedSwitch { observed, .. } => match observed {
-            crate::domain::ConnectionState::Disconnected => Vec::new(),
-            crate::domain::ConnectionState::Connected(backend) => vec![backend],
-            crate::domain::ConnectionState::MultiplyConnected(backends) => backends,
-        },
     }
 }
 

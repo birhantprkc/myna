@@ -488,9 +488,6 @@ impl BackendUi {
                 ActiveBackendState::Connected(_) => gettextrs::gettext(
                     "Choose which installed backend Myna uses for dictation.",
                 ),
-                ActiveBackendState::FailedSwitch { .. } => gettextrs::gettext(
-                    "The previous switch did not complete. The displayed connections are the actual refreshed state.",
-                ),
             }
         };
         page.active_backend_row()
@@ -1084,10 +1081,6 @@ impl BackendUi {
             ActiveBackendState::MultiplyConnected(_) => (
                 gettextrs::gettext("Multiple Backends Connected"),
                 gettextrs::gettext("Choose a single backend on the General tab to make it active."),
-            ),
-            ActiveBackendState::FailedSwitch { .. } => (
-                gettextrs::gettext("Backend Switch Unresolved"),
-                gettextrs::gettext("The previous switch did not complete. Check the General tab."),
             ),
         };
         let page = model_status_page(&title, &description, "audio-x-generic-symbolic");
@@ -2552,9 +2545,6 @@ fn connection_state_summary(snapshot: &crate::domain::ConnectionSnapshot) -> Str
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{}: {}", gettextrs::gettext("multiple backends"), names)
-        }
-        crate::domain::ActiveBackendState::FailedSwitch { .. } => {
-            gettextrs::gettext("previous switch is unresolved")
         }
     }
 }
