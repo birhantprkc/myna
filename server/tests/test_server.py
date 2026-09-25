@@ -34,7 +34,8 @@ def tiny_model_cached():
         pytest.skip(f"whisper-tiny model unavailable: {exc}")
 
 
-async def test_server_subprocess_end_to_end(tiny_model_cached, tmp_path):
+@pytest.mark.usefixtures("tiny_model_cached")
+async def test_server_subprocess_end_to_end(tmp_path):
     socket_path = tmp_path / "myna.sock"
     proc = await asyncio.create_subprocess_exec(
         sys.executable,

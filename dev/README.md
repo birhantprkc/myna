@@ -34,6 +34,6 @@ Only the two configs stayed here:
 | `parakeet/collapse_probe.py` | Sliding-window encoder collapse probe: the methodology behind the collapse figures in `myna.testbed.parakeet`. |
 | `model-pin.sh`, `lint-packages.sh`, `version.sh`, `stage-version.sh` | Snap staging, packaging checks, and the git-derived version every build carries. |
 | `spread-build.sh`, `spread-image.sh` | Confined end-to-end (spread) harness. |
-| `adapter_coverage.py`, `coverage_populations.py`, `coverage_lib.py`, `gjs_coverage.py`, `patch_cov.py`, `vulture_allowlist.py` | Coverage reports and gates behind `make coverage`. |
+| `adapter_coverage.py`, `coverage_populations.py`, `coverage_lib.py`, `gjs_coverage.py`, `patch_cov.py` | Coverage reports and gates behind `make coverage`. |
 | `exercise.sh`, `gated-tests.sh`, `transcribe.py`, `capabilities.py` | Manual drivers for a running server. |
 | `i18n.sh`, `ibus-doctor.sh` | Translation templates, IBus diagnosis. |
