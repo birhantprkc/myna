@@ -88,14 +88,6 @@ impl ApplyPreview {
     pub fn new(
         backend: BackendIdentity,
         changes: Vec<StagedChange>,
-    ) -> Result<Self, PrepareApplyError> {
-        let restart_impact = restart_impact(&changes);
-        Self::with_restart_impact(backend, changes, restart_impact)
-    }
-
-    fn with_restart_impact(
-        backend: BackendIdentity,
-        changes: Vec<StagedChange>,
         restart_impact: RestartImpact,
     ) -> Result<Self, PrepareApplyError> {
         if changes.is_empty() {
@@ -335,7 +327,6 @@ pub fn prepare_backend_apply(page: &BackendPage) -> Result<ApplyPreview, Prepare
             row.presentation().key(),
             row.presentation().value().clone(),
             row.effective_value().clone(),
-            metadata.restart_behavior() == RestartBehavior::Required,
         ) {
             Ok(change) => changes.push(change),
             Err(error) => issues.push(ValidationIssue::new(
@@ -353,7 +344,7 @@ pub fn prepare_backend_apply(page: &BackendPage) -> Result<ApplyPreview, Prepare
         .snapshot()
         .map(|snapshot| snapshot.identity().clone())
         .unwrap_or_else(|| page.identity().clone());
-    ApplyPreview::with_restart_impact(
+    ApplyPreview::new(
         identity,
         changes,
         restart_impact_from_behaviors(&restart_behaviors),
@@ -635,17 +626,6 @@ fn config_scalar_to_json(value: &ConfigValue) -> Result<serde_json::Value, Strin
         }
         ConfigValue::Text(value) => Ok(serde_json::Value::String(value.clone())),
         ConfigValue::List(values) => Ok(serde_json::Value::Array(config_value_to_json(values)?)),
-    }
-}
-
-fn restart_impact(changes: &[StagedChange]) -> RestartImpact {
-    let required = changes.iter().any(|change| change.restart_required());
-    let not_required = changes.iter().any(|change| !change.restart_required());
-    match (required, not_required) {
-        (false, true) => RestartImpact::None,
-        (true, false) => RestartImpact::Required,
-        (true, true) => RestartImpact::Mixed,
-        (false, false) => RestartImpact::Unknown,
     }
 }
 
@@ -1033,7 +1013,6 @@ mod tests {
                     "zeta",
                     ConfigValue::Boolean(false),
                     ConfigValue::Boolean(true),
-                    true,
                 )
                 .unwrap(),
                 StagedChange::new(
@@ -1041,7 +1020,6 @@ mod tests {
                     "alpha",
                     ConfigValue::Text("old".into()),
                     ConfigValue::Text(" spaced ; $(rm -rf /) ".into()),
-                    true,
                 )
                 .unwrap(),
                 StagedChange::new(
@@ -1053,7 +1031,6 @@ mod tests {
                         ConfigValue::Text("--leading".into()),
                         ConfigValue::Text("two words".into()),
                     ]),
-                    true,
                 )
                 .unwrap(),
                 StagedChange::new(
@@ -1061,10 +1038,10 @@ mod tests {
                     "ratio",
                     ConfigValue::Number(0.25),
                     ConfigValue::Number(0.5),
-                    false,
                 )
                 .unwrap(),
             ],
+            RestartImpact::Mixed,
         )
         .unwrap();
 
@@ -1103,7 +1080,6 @@ mod tests {
                     "model",
                     ConfigValue::Text("old-model".into()),
                     ConfigValue::Text("new model; untouched".into()),
-                    true,
                 )
                 .unwrap(),
                 StagedChange::new(
@@ -1111,7 +1087,6 @@ mod tests {
                     "engine",
                     ConfigValue::Text("cpu".into()),
                     ConfigValue::Text("auto".into()),
-                    true,
                 )
                 .unwrap(),
                 StagedChange::new(
@@ -1119,10 +1094,10 @@ mod tests {
                     "verbose",
                     ConfigValue::Boolean(false),
                     ConfigValue::Boolean(true),
-                    false,
                 )
                 .unwrap(),
             ],
+            RestartImpact::Mixed,
         )
         .unwrap();
 
@@ -1165,9 +1140,9 @@ mod tests {
                 "model",
                 ConfigValue::Text("old".into()),
                 ConfigValue::Text("new".into()),
-                false,
             )
             .unwrap()],
+            RestartImpact::None,
         )
         .unwrap_err();
 
@@ -1183,9 +1158,9 @@ mod tests {
                 "engine",
                 ConfigValue::Text("cpu".into()),
                 ConfigValue::Text("tensorrt".into()),
-                false,
             )
             .unwrap()],
+            RestartImpact::None,
         )
         .unwrap();
 
@@ -1212,7 +1187,6 @@ mod tests {
                     "model",
                     ConfigValue::Text("old".into()),
                     ConfigValue::Text("parakeet-tdt-0.6b-v3".into()),
-                    false,
                 )
                 .unwrap(),
                 StagedChange::new(
@@ -1220,10 +1194,10 @@ mod tests {
                     "engine",
                     ConfigValue::Text("old".into()),
                     ConfigValue::Text("cpu".into()),
-                    false,
                 )
                 .unwrap(),
             ],
+            RestartImpact::None,
         )
         .unwrap();
         let snapshot = snapshot_with_configuration("");
@@ -1240,9 +1214,9 @@ mod tests {
                 "engine",
                 ConfigValue::Text("tensorrt".into()),
                 ConfigValue::Text("auto".into()),
-                false,
             )
             .unwrap()],
+            RestartImpact::None,
         )
         .unwrap();
         let snapshot = snapshot_with_configuration("");
@@ -1298,9 +1272,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
 
@@ -1382,9 +1356,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([]);
@@ -1413,9 +1387,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator =
@@ -1458,9 +1432,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator =
@@ -1500,9 +1474,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([Err(SystemConfiguratorError::Cancelled)]);
@@ -1531,9 +1505,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
@@ -1565,9 +1539,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
@@ -1607,9 +1581,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
@@ -1657,9 +1631,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
@@ -1695,9 +1669,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
@@ -1734,9 +1708,9 @@ mod tests {
                 "ratio",
                 ConfigValue::Number(0.25),
                 ConfigValue::Number(0.5),
-                false,
             )
             .unwrap()],
+            RestartImpact::None,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
@@ -1775,9 +1749,9 @@ mod tests {
                 "ratio",
                 ConfigValue::Number(0.25),
                 ConfigValue::Number(0.5),
-                false,
             )
             .unwrap()],
+            RestartImpact::None,
         )
         .unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
@@ -1908,9 +1882,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let runner = FakeCommandRunner::scripted([ok(&plan_output(preview.operations(), None))]);
@@ -2008,9 +1982,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let runner = FakeCommandRunner::scripted([Err(CommandError::Cancelled)]);
@@ -2042,9 +2016,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let runner = FakeCommandRunner::scripted([Err(CommandError::NonZero {
@@ -2079,9 +2053,9 @@ mod tests {
                 "verbose",
                 ConfigValue::Boolean(false),
                 ConfigValue::Boolean(true),
-                true,
             )
             .unwrap()],
+            RestartImpact::Required,
         )
         .unwrap();
         let incomplete = vec![successful_results(&preview)[0].clone()];

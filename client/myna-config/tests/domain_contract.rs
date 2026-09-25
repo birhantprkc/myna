@@ -264,23 +264,20 @@ fn option_lists_handle_partial_and_empty_payloads_and_reject_malformed_json() {
 }
 
 #[test]
-fn staged_changes_reject_noops_and_retain_restart_requirements() {
-    let change = StagedChange::new(
+fn staged_changes_reject_noops() {
+    assert!(StagedChange::new(
         ConfigScope::Engine,
         "stream-arm-seconds",
         ConfigValue::Integer(15),
         ConfigValue::Integer(20),
-        true,
     )
-    .unwrap();
-    assert!(change.restart_required());
+    .is_ok());
 
     let error = StagedChange::new(
         ConfigScope::Package,
         "streaming",
         ConfigValue::Boolean(true),
         ConfigValue::Boolean(true),
-        false,
     )
     .unwrap_err();
     assert_eq!(error.to_string(), "streaming: staged value is unchanged");

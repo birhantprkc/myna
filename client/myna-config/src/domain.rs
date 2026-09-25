@@ -739,7 +739,6 @@ pub struct StagedChange {
     key: String,
     original: ConfigValue,
     proposed: ConfigValue,
-    restart_required: bool,
 }
 
 impl StagedChange {
@@ -748,7 +747,6 @@ impl StagedChange {
         key: impl Into<String>,
         original: ConfigValue,
         proposed: ConfigValue,
-        restart_required: bool,
     ) -> Result<Self, ValidationError> {
         let key = key.into();
         if key.trim().is_empty() {
@@ -762,7 +760,6 @@ impl StagedChange {
             key,
             original,
             proposed,
-            restart_required,
         })
     }
 
@@ -780,10 +777,6 @@ impl StagedChange {
 
     pub fn proposed(&self) -> &ConfigValue {
         &self.proposed
-    }
-
-    pub fn restart_required(&self) -> bool {
-        self.restart_required
     }
 }
 
