@@ -175,16 +175,6 @@ pub struct Pulse {
     pub alpha: f64,
 }
 
-impl Default for Pulse {
-    fn default() -> Self {
-        Self {
-            width: 0.2,
-            period_ms: 1000.0,
-            alpha: 1.0,
-        }
-    }
-}
-
 /// How the simple indicators (bar / vumeter / progress) render the current
 /// state, mirroring the ribbon's phase-driven motion with their own
 /// primitives:
@@ -200,7 +190,7 @@ impl Default for Pulse {
 /// - anything else live (`recording`/`active`/`idle`) → the plain level.
 ///
 /// A `critical` error hides the indicator, so it reports a closed (0) fill.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct IndicatorState {
     /// Filled fraction for plain-level states (`[0,1]`).
     pub fraction: f64,
@@ -209,16 +199,6 @@ pub struct IndicatorState {
     pub pulse: Option<Pulse>,
     /// Warning (recoverable notice): use the warning colour and read full.
     pub warning: bool,
-}
-
-impl Default for IndicatorState {
-    fn default() -> Self {
-        Self {
-            fraction: 0.0,
-            pulse: None,
-            warning: false,
-        }
-    }
 }
 
 /// The animation state for the simple indicators.

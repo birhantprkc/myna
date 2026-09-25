@@ -8,8 +8,8 @@
 //! green → yellow → red zones and a slight per-segment taper.
 //!
 //! The pure envelope math it drives lives in [`crate::vumeter`]
-//! (the dBFS calibration + `levels_to_intensity` + the segment helpers); this
-//! module owns only the GTK drawing. The widget is a [`gtk::Widget`] subclass
+//! (the dBFS calibration + `levels_to_intensity` + the segment helpers) and
+//! its state in [`crate::indicator`]; this module owns only the GTK drawing. The widget is a [`gtk::Widget`] subclass
 //! painted through **Gsk** — it overrides
 //! [`snapshot`](gtk::subclass::widget::WidgetImpl::snapshot) and appends one
 //! coloured rectangle per segment. No cairo.
@@ -19,16 +19,16 @@
 //! visible, so a stalled publisher visibly falls to the floor rather than
 //! freezing (R16a).
 
-use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 use gtk::glib;
 use gtk::graphene;
 use gtk::prelude::*;
+use gtk::subclass::prelude::ObjectSubclassIsExt;
 use gtk4 as gtk;
 
-use crate::vumeter::{self, intensity_to_active_segments, segment_color, SegmentColor};
+use crate::indicator::Indicator;
+use crate::vumeter::{intensity_to_active_segments, segment_color, SegmentColor};
 
 /// The meter's height, matching the ribbon's (`crate::pill::RIBBON_HEIGHT`)
 /// and the bar's, so the `hud-style` options occupy the same footprint.
@@ -37,18 +37,6 @@ pub const METER_HEIGHT: i32 = 32;
 /// The number of segments in the classic meter (the GJS `BAR_COUNT`).
 pub const BAR_COUNT: usize = 24;
 
-/// The CSS class that switches the meter to the warning (recoverable) colour.
-/// Mirrors the pill's own `.myna-hud-severity-recoverable`.
-const WARNING_CLASS: &str = "myna-hud-severity-recoverable";
-
-/// A level push and when it arrived — the VU decays by *arrival age* (R16a).
-#[derive(Clone, Copy)]
-struct LevelSample {
-    rms: f64,
-    peak: f64,
-    at: Instant,
-}
-
 mod imp {
     use super::*;
     use gtk::subclass::prelude::*;
@@ -56,17 +44,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct SegmentedMeterView {
-        pub(super) level: RefCell<Option<LevelSample>>,
-        /// The current dictation state, for the state-driven animation
-        /// (loading pulse, notice amber, …).
-        pub(super) key: RefCell<Option<crate::states::DictationState>>,
-        pub(super) severity: RefCell<Option<crate::states::Severity>>,
-        pub(super) state_since: RefCell<Option<Instant>>,
-        /// The desktop's reduce-animation preference — makes the pulse static.
-        pub(super) reduced_motion: RefCell<bool>,
-        /// The last smoothed level and when it was computed.
-        pub(super) smoothed_level: RefCell<f64>,
-        pub(super) last_frame: RefCell<Option<Instant>>,
+        pub(super) indicator: Indicator,
     }
 
     #[glib::object_subclass]
@@ -92,26 +70,8 @@ mod imp {
                 return;
             }
 
-            let intensity = super::current_intensity(self);
-
-            let (key, severity, state_ms) = match *self.key.borrow() {
-                Some(key) => {
-                    let since = (*self.state_since.borrow()).unwrap_or_else(Instant::now);
-                    (
-                        key,
-                        *self.severity.borrow(),
-                        since.elapsed().as_secs_f64() * 1000.0,
-                    )
-                }
-                None => (crate::states::DictationState::Idle, None, 0.0),
-            };
-            let state = crate::hud_logic::indicator_state(
-                key,
-                severity,
-                intensity,
-                state_ms,
-                *self.reduced_motion.borrow(),
-            );
+            let frame = self.indicator.frame();
+            let state = frame.state;
             // The notice/warning colour comes from the widget's CSS-resolved
             // `color` (the recoverable class); the classic gauge still uses
             // its green/yellow/red scale. No hardcoded amber.
@@ -127,7 +87,7 @@ mod imp {
                 Some(pulse) => {
                     let count = (pulse.width * BAR_COUNT as f64).round().max(1.0) as usize;
                     let centre = crate::hud_logic::pulse_position(
-                        state_ms % pulse.period_ms.max(1.0),
+                        frame.state_ms % pulse.period_ms.max(1.0),
                         pulse.period_ms,
                     );
                     let centre_seg = (centre * BAR_COUNT as f64).round() as usize;
@@ -147,9 +107,9 @@ mod imp {
             let style = widget.style_context();
             for (i, position) in bar_positions().enumerate() {
                 let is_lit = lit(i);
-                let alpha = if is_lit { 1.0 } else { 0.16 };
+                let alpha: f32 = if is_lit { 1.0 } else { 0.16 };
                 let color = match warning_color {
-                    Some(c) => with_alpha(&c, alpha),
+                    Some(c) => c.with_alpha(alpha),
                     None => zone_color(style.as_ref(), position, alpha),
                 };
                 // Conventional VU: fixed-height segments light left-to-right;
@@ -161,38 +121,6 @@ mod imp {
                 snapshot.append_color(&color, &bounds);
             }
         }
-    }
-}
-
-/// The eased level for the current frame: the raw intensity smoothed toward
-/// the pushed sample by [`crate::hud_logic::smooth_level`] (slower under
-/// reduced motion). Advances the view's smoothed/last-frame state.
-fn current_intensity(imp: &imp::SegmentedMeterView) -> f64 {
-    let now = Instant::now();
-    let dt_ms = match *imp.last_frame.borrow() {
-        Some(prev) => now.duration_since(prev).as_secs_f64() * 1000.0,
-        None => 0.0,
-    };
-    let smoothed = crate::hud_logic::smooth_level(
-        *imp.smoothed_level.borrow(),
-        raw_intensity(&imp.level),
-        dt_ms,
-        *imp.reduced_motion.borrow(),
-    );
-    *imp.smoothed_level.borrow_mut() = smoothed;
-    *imp.last_frame.borrow_mut() = Some(now);
-    smoothed
-}
-
-/// The calibrated intensity for the current level, decaying with age.
-fn raw_intensity(level: &RefCell<Option<LevelSample>>) -> f64 {
-    let sample = level.borrow();
-    match *sample {
-        Some(LevelSample { rms, peak, at }) => {
-            let age_ms = at.elapsed().as_secs_f64() * 1000.0;
-            vumeter::levels_to_intensity(rms, peak, age_ms)
-        }
-        None => 0.0,
     }
 }
 
@@ -219,17 +147,11 @@ impl SegmentedMeterView {
         self.upcast_ref()
     }
 
-    /// A level push from the publisher. Never deduplicated — the arrival time
-    /// is what keeps a steady voice from decaying (R16a).
+    /// A level push from the publisher.
     pub fn push_level(&self, rms: f64, peak: f64) {
-        use gtk::subclass::prelude::ObjectSubclassIsExt;
-        let imp = self.imp();
-        *imp.level.borrow_mut() = Some(LevelSample {
-            rms,
-            peak,
-            at: Instant::now(),
-        });
-        *imp.last_frame.borrow_mut() = None;
+        let indicator = &self.imp().indicator;
+        indicator.push_level(rms, peak);
+        indicator.restart_easing();
         self.queue_draw();
     }
 
@@ -240,40 +162,15 @@ impl SegmentedMeterView {
         key: crate::states::DictationState,
         severity: Option<crate::states::Severity>,
     ) {
-        use gtk::subclass::prelude::ObjectSubclassIsExt;
-        let imp = self.imp();
-        let changed = *imp.key.borrow() != Some(key) || *imp.severity.borrow() != severity;
-        *imp.key.borrow_mut() = Some(key);
-        *imp.severity.borrow_mut() = severity;
-        if changed {
-            *imp.state_since.borrow_mut() = Some(Instant::now());
-            // Mirror the pill's recoverable CSS class so the theme colour
-            // (warning vs gauge scale) tracks the severity.
-            let is_warning = severity == Some(crate::states::Severity::Recoverable);
-            let widget = self.widget();
-            if is_warning {
-                widget.add_css_class(WARNING_CLASS);
-            } else {
-                widget.remove_css_class(WARNING_CLASS);
-            }
-        }
+        self.imp().indicator.set_state(self.widget(), key, severity);
         self.queue_draw();
     }
 
-    /// Set the reduce-animation preference (static, unanimated pulse).
+    /// Set the reduce-animation preference (a slower pulse).
     pub fn set_reduced_motion(&self, reduced: bool) {
-        use gtk::subclass::prelude::ObjectSubclassIsExt;
-        let imp = self.imp();
-        if *imp.reduced_motion.borrow() == reduced {
-            return;
+        if self.imp().indicator.set_reduced_motion(reduced) {
+            self.queue_draw();
         }
-        *imp.reduced_motion.borrow_mut() = reduced;
-        self.queue_draw();
-    }
-
-    /// Queue a redraw — the pill's frame clock calls this while visible.
-    pub fn queue_draw(&self) {
-        WidgetExt::queue_draw(self);
     }
 }
 
@@ -286,7 +183,7 @@ impl SegmentedMeterView {
 /// read a CSS custom-property value at runtime in this GTK; there is no
 /// non-deprecated replacement, so it is explicitly allowed here.
 #[allow(deprecated)]
-fn zone_color(style: &gtk::StyleContext, position: f64, alpha: f64) -> gtk::gdk::RGBA {
+fn zone_color(style: &gtk::StyleContext, position: f64, alpha: f32) -> gtk::gdk::RGBA {
     let name = match segment_color(position) {
         SegmentColor::Red => "myna-vu-red",
         SegmentColor::Yellow => "myna-vu-yellow",
@@ -296,12 +193,7 @@ fn zone_color(style: &gtk::StyleContext, position: f64, alpha: f64) -> gtk::gdk:
         // Unresolvable: a neutral grey (never a hardcoded zone colour).
         gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0)
     });
-    with_alpha(&resolved, alpha)
-}
-
-/// A copy of `color` with the given alpha (the boxed RGBA).
-fn with_alpha(color: &gtk::gdk::RGBA, alpha: f64) -> gtk::gdk::RGBA {
-    gtk::gdk::RGBA::new(color.red(), color.green(), color.blue(), alpha as f32)
+    resolved.with_alpha(alpha)
 }
 
 /// The normalized place (`(i+1)/BAR_COUNT`) of each segment, left to right.

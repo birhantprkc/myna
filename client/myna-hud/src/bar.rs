@@ -10,21 +10,18 @@
 //! [`Widget::color`](gtk4::Widget::color). No hardcoded RGB and no colour
 //! probing in the view.
 //!
-//! The pure envelope lives in [`crate::vumeter`]; the state-driven animation
-//! (loading pulse, transcribing, finalizing, notice) comes from
-//! [`crate::hud_logic::indicator_state_fraction`].
+//! The level and state it draws come from [`crate::indicator`].
 
-use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 use gtk::glib;
 use gtk::graphene;
 use gtk::gsk;
 use gtk::prelude::*;
+use gtk::subclass::prelude::ObjectSubclassIsExt;
 use gtk4 as gtk;
 
-use crate::vumeter;
+use crate::indicator::Indicator;
 
 /// The bar's height: a thin rule under the label, not a tall box. Matches
 /// GNOME Shell's OSD level bar (`$osd_levelbar_height: 6px` in `_osd.scss`).
@@ -40,18 +37,6 @@ const TRACK_ALPHA: f64 = 0.1;
 /// made the fill harder to read.
 const TRACK_COLOR: gtk::gdk::RGBA = gtk::gdk::RGBA::new(1.0, 1.0, 1.0, TRACK_ALPHA as f32);
 
-/// The CSS class that switches the bar to the warning (recoverable) colour.
-/// Mirrors the pill's own `.myna-hud-severity-recoverable`.
-const WARNING_CLASS: &str = "myna-hud-severity-recoverable";
-
-/// A level push and when it arrived — the VU decays by *arrival age* (R16a).
-#[derive(Clone, Copy)]
-struct LevelSample {
-    rms: f64,
-    peak: f64,
-    at: Instant,
-}
-
 mod imp {
     use super::*;
     use gtk::subclass::prelude::*;
@@ -59,17 +44,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct BarView {
-        pub(super) level: RefCell<Option<LevelSample>>,
-        /// The current dictation state, for the state-driven animation.
-        pub(super) key: RefCell<Option<crate::states::DictationState>>,
-        pub(super) severity: RefCell<Option<crate::states::Severity>>,
-        pub(super) state_since: RefCell<Option<Instant>>,
-        /// The desktop's reduce-animation preference — makes the pulse static.
-        pub(super) reduced_motion: RefCell<bool>,
-        /// The last smoothed level and when it was computed (eased toward the
-        /// pushed sample by [`crate::hud_logic::smooth_level`]).
-        pub(super) smoothed_level: RefCell<f64>,
-        pub(super) last_frame: RefCell<Option<Instant>>,
+        pub(super) indicator: Indicator,
     }
 
     #[glib::object_subclass]
@@ -94,8 +69,7 @@ mod imp {
                 return;
             }
 
-            let intensity = super::current_intensity(self);
-            let state = super::indicator_state(self, intensity);
+            let frame = self.indicator.frame();
 
             // The theme-resolved colour: accent, or warning when a notice.
             let color = widget.color();
@@ -110,7 +84,7 @@ mod imp {
             let track = graphene::Rect::new(0.0, bar_y as f32, w as f32, bar_h as f32);
             snapshot.append_color(&TRACK_COLOR, &track);
 
-            match state.pulse {
+            match frame.state.pulse {
                 // Indeterminate activity: a little block travelling back and
                 // forth (pong), tinted with the accent at the pulse's alpha
                 // (semi-transparent for loading). The block gets its OWN
@@ -120,8 +94,10 @@ mod imp {
                     // A pong back-and-forth; the block gets its OWN rounded
                     // corners — the track clip alone would leave hard
                     // vertical edges on it.
-                    let (since, period) = super::state_elapsed(self, pulse.period_ms);
-                    let centre = crate::hud_logic::pulse_position(since, period);
+                    let centre = crate::hud_logic::pulse_position(
+                        frame.state_ms % pulse.period_ms.max(1.0),
+                        pulse.period_ms,
+                    );
                     let half = pulse.width / 2.0;
                     let x0 = w * (centre - half).clamp(0.0, 1.0);
                     let x1 = w * (centre + half).clamp(0.0, 1.0);
@@ -133,12 +109,12 @@ mod imp {
                     );
                     let block_rounded = gsk::RoundedRect::from_rect(block, radius);
                     snapshot.push_rounded_clip(&block_rounded);
-                    snapshot.append_color(&with_alpha(&color, pulse.alpha), &block);
+                    snapshot.append_color(&color.with_alpha(pulse.alpha as f32), &block);
                     snapshot.pop();
                 }
                 // A plain level (or a full warning fill): fraction of the bar.
                 None => {
-                    let fraction = state.fraction.clamp(0.0, 1.0);
+                    let fraction = frame.state.fraction.clamp(0.0, 1.0);
                     if fraction > 0.0 {
                         // Never narrower than the cap diameter, or a quiet
                         // moment draws a sliver with no rounded end.
@@ -146,7 +122,7 @@ mod imp {
                         let fill = graphene::Rect::new(0.0, bar_y as f32, fill_w, bar_h as f32);
                         let fill_rounded = gsk::RoundedRect::from_rect(fill, radius);
                         snapshot.push_rounded_clip(&fill_rounded);
-                        snapshot.append_color(&with_alpha(&color, 1.0), &fill);
+                        snapshot.append_color(&color.with_alpha(1.0), &fill);
                         snapshot.pop();
                     }
                 }
@@ -157,85 +133,11 @@ mod imp {
     }
 }
 
-/// A copy of `color` with the given alpha (the beta is a boxed RGBA).
-fn with_alpha(color: &gtk::gdk::RGBA, alpha: f64) -> gtk::gdk::RGBA {
-    gtk::gdk::RGBA::new(color.red(), color.green(), color.blue(), alpha as f32)
-}
-
 glib::wrapper! {
     /// A simple horizontal level bar.
     pub struct BarView(ObjectSubclass<imp::BarView>)
         @extends gtk::Widget,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
-}
-
-/// The calibrated intensity for the current level, decaying with age.
-fn raw_intensity(level: &RefCell<Option<LevelSample>>) -> f64 {
-    let sample = level.borrow();
-    match *sample {
-        Some(LevelSample { rms, peak, at }) => {
-            let age_ms = at.elapsed().as_secs_f64() * 1000.0;
-            vumeter::levels_to_intensity(rms, peak, age_ms)
-        }
-        None => 0.0,
-    }
-}
-
-/// The eased level for the current frame: the raw intensity smoothed toward
-/// the pushed sample by [`crate::hud_logic::smooth_level`] (slower under
-/// reduced motion). Advances the view's smoothed/last-frame state.
-fn current_intensity(imp: &imp::BarView) -> f64 {
-    let now = Instant::now();
-    let dt_ms = match *imp.last_frame.borrow() {
-        Some(prev) => now.duration_since(prev).as_secs_f64() * 1000.0,
-        None => 0.0,
-    };
-    let smoothed = crate::hud_logic::smooth_level(
-        *imp.smoothed_level.borrow(),
-        raw_intensity(&imp.level),
-        dt_ms,
-        *imp.reduced_motion.borrow(),
-    );
-    *imp.smoothed_level.borrow_mut() = smoothed;
-    *imp.last_frame.borrow_mut() = Some(now);
-    smoothed
-}
-
-/// The state-driven animation for the current state.
-fn indicator_state(imp: &imp::BarView, intensity: f64) -> crate::hud_logic::IndicatorState {
-    let (key, severity, state_ms) = state_parts(imp);
-    let reduced_motion = *imp.reduced_motion.borrow();
-    crate::hud_logic::indicator_state(key, severity, intensity, state_ms, reduced_motion)
-}
-
-/// The `(key, severity, state_ms)` the current state decodes to.
-fn state_parts(
-    imp: &imp::BarView,
-) -> (
-    crate::states::DictationState,
-    Option<crate::states::Severity>,
-    f64,
-) {
-    let (key, severity, state_ms) = match *imp.key.borrow() {
-        Some(key) => {
-            let since = (*imp.state_since.borrow()).unwrap_or_else(Instant::now);
-            (
-                key,
-                *imp.severity.borrow(),
-                since.elapsed().as_secs_f64() * 1000.0,
-            )
-        }
-        None => (crate::states::DictationState::Idle, None, 0.0),
-    };
-    (key, severity, state_ms)
-}
-
-/// The elapsed time in the current pulse state, cycling with `period_ms` so a
-/// long-lived state keeps animating (the `state_ms` keeps growing, but the
-/// pulse position wraps via `pulse_position`).
-fn state_elapsed(imp: &imp::BarView, period_ms: f64) -> (f64, f64) {
-    let (_, _, state_ms) = state_parts(imp);
-    (state_ms % period_ms.max(1.0), period_ms)
 }
 
 impl BarView {
@@ -254,19 +156,11 @@ impl BarView {
         self.upcast_ref()
     }
 
-    /// A level push from the publisher. Never deduplicated — the arrival time
-    /// is what keeps a steady voice from decaying (R16a).
+    /// A level push from the publisher. The frame timeline is deliberately
+    /// NOT reset: `smooth_level` snaps to the target on a zero dt, which
+    /// would jump the fill on every push instead of easing toward it.
     pub fn push_level(&self, rms: f64, peak: f64) {
-        use gtk::subclass::prelude::ObjectSubclassIsExt;
-        let imp = self.imp();
-        *imp.level.borrow_mut() = Some(LevelSample {
-            rms,
-            peak,
-            at: Instant::now(),
-        });
-        // The frame timeline is deliberately NOT reset here: `smooth_level`
-        // snaps to the target on a zero dt, which would jump the fill on
-        // every push instead of easing toward it.
+        self.imp().indicator.push_level(rms, peak);
         self.queue_draw();
     }
 
@@ -278,39 +172,14 @@ impl BarView {
         key: crate::states::DictationState,
         severity: Option<crate::states::Severity>,
     ) {
-        use gtk::subclass::prelude::ObjectSubclassIsExt;
-        let imp = self.imp();
-        let changed = *imp.key.borrow() != Some(key) || *imp.severity.borrow() != severity;
-        *imp.key.borrow_mut() = Some(key);
-        *imp.severity.borrow_mut() = severity;
-        if changed {
-            *imp.state_since.borrow_mut() = Some(Instant::now());
-            // Mirror the pill's recoverable CSS class so the theme colour
-            // (warning vs accent) tracks the severity.
-            let is_warning = severity == Some(crate::states::Severity::Recoverable);
-            let widget = self.widget();
-            if is_warning {
-                widget.add_css_class(WARNING_CLASS);
-            } else {
-                widget.remove_css_class(WARNING_CLASS);
-            }
-        }
+        self.imp().indicator.set_state(self.widget(), key, severity);
         self.queue_draw();
     }
 
-    /// Set the reduce-animation preference (static, unanimated pulse).
+    /// Set the reduce-animation preference (a slower pulse).
     pub fn set_reduced_motion(&self, reduced: bool) {
-        use gtk::subclass::prelude::ObjectSubclassIsExt;
-        let imp = self.imp();
-        if *imp.reduced_motion.borrow() == reduced {
-            return;
+        if self.imp().indicator.set_reduced_motion(reduced) {
+            self.queue_draw();
         }
-        *imp.reduced_motion.borrow_mut() = reduced;
-        self.queue_draw();
-    }
-
-    /// Queue a redraw — the pill's frame clock calls this while visible.
-    pub fn queue_draw(&self) {
-        WidgetExt::queue_draw(self);
     }
 }
