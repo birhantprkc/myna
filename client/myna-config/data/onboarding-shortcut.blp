@@ -2,43 +2,47 @@ using Gtk 4.0;
 using Adw 1;
 
 template $OnboardingShortcut: Adw.Bin {
-  child: Adw.Clamp {
-    maximum-size: 640;
-    valign: center;
+  child: Gtk.ScrolledWindow {
+    hscrollbar-policy: never;
 
-    child: Gtk.Box {
-      orientation: vertical;
-      spacing: 12;
-      margin-start: 24;
-      margin-end: 24;
+    child: Adw.Clamp {
+      maximum-size: 640;
+      valign: center;
 
-      Gtk.Label {
-        label: _("How to dictate");
-        justify: center;
-        wrap: true;
+      child: Gtk.Box {
+        orientation: vertical;
+        spacing: 12;
+        margin-start: 24;
+        margin-end: 24;
 
-        styles [
-          "title-1",
-        ]
-      }
+        Gtk.Label {
+          label: _("How to dictate");
+          justify: center;
+          wrap: true;
 
-      Gtk.Label description {
-        justify: center;
-        wrap: true;
-        margin-bottom: 24;
-      }
+          styles [
+            "title-1",
+          ]
+        }
 
-      Gtk.Box shortcut_box {
-        halign: center;
-        spacing: 8;
-        margin-bottom: 24;
-      }
+        Gtk.Label description {
+          justify: center;
+          wrap: true;
+          margin-bottom: 24;
+        }
 
-      Gtk.Button shortcut_button {
-        label: _("Set Up Shortcut");
-        halign: center;
-        sensitive: false;
-      }
+        Gtk.Box shortcut_box {
+          halign: center;
+          spacing: 8;
+          margin-bottom: 24;
+        }
+
+        Gtk.Button shortcut_button {
+          label: _("Set Up Shortcut");
+          halign: center;
+          sensitive: false;
+        }
+      };
     };
   };
 }

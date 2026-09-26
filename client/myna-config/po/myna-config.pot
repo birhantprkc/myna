@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-24 10:30+0100\n"
+"POT-Creation-Date: 2026-09-26 23:32+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -158,23 +158,23 @@ msgstr ""
 msgid "Dictation"
 msgstr ""
 
-#: data/myna-page.blp:46 data/onboarding-shortcut.blp:38
+#: data/myna-page.blp:46 data/onboarding-shortcut.blp:41
 msgid "Set Up Shortcut"
 msgstr ""
 
-#: data/onboarding-components.blp:16 src/onboarding_ui.rs:485
+#: data/onboarding-components.blp:19 src/onboarding_ui.rs:485
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:26 src/onboarding_ui.rs:311
+#: data/onboarding-components.blp:29 src/onboarding_ui.rs:311
 msgid "You need to install some components for Dictation to work."
 msgstr ""
 
-#: data/onboarding-components.blp:40
+#: data/onboarding-components.blp:43
 msgid "Components to install"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:16 src/onboarding_ui.rs:486
+#: data/onboarding-shortcut.blp:19 src/onboarding_ui.rs:486
 msgid "How to dictate"
 msgstr ""
 
