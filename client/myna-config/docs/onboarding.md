@@ -4,6 +4,11 @@ The settings application ships separately from the `myna` snap, so it can be
 opened on a machine where dictation is not installed at all. When that is the
 case it opens a three-step wizard instead of the settings window.
 
+Every step leaves through one footer button: Next, and Done on the last step.
+The welcome step shows the application icon from the application's own
+resources, so it does not depend on the installed hicolor copy, which the
+headless probes lack.
+
 ## What opens it
 
 `myna_config::onboarding` assesses three components from the observations the
