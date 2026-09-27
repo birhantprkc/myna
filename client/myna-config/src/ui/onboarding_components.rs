@@ -14,6 +14,10 @@ mod imp {
         pub subtitle: gtk::TemplateChild<gtk::Label>,
         #[template_child]
         pub list: gtk::TemplateChild<gtk::ListBox>,
+        #[template_child]
+        pub commands: gtk::TemplateChild<gtk::Label>,
+        #[template_child]
+        pub copy_button: gtk::TemplateChild<gtk::Button>,
     }
 
     #[glib::object_subclass]
@@ -54,6 +58,14 @@ impl OnboardingComponents {
 
     pub fn list(&self) -> gtk::ListBox {
         self.imp().list.get()
+    }
+
+    pub fn commands(&self) -> gtk::Label {
+        self.imp().commands.get()
+    }
+
+    pub fn copy_button(&self) -> gtk::Button {
+        self.imp().copy_button.get()
     }
 }
 

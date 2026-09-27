@@ -43,6 +43,39 @@ template $OnboardingComponents: Adw.Bin {
             label: _("Components to install");
           }
         }
+
+        Gtk.Box {
+          spacing: 8;
+
+          styles [
+            "command-block",
+          ]
+
+          Gtk.Label commands {
+            hexpand: true;
+            xalign: 0;
+            wrap: true;
+            wrap-mode: word_char;
+
+            styles [
+              "monospace",
+            ]
+          }
+
+          Gtk.Button copy_button {
+            icon-name: "edit-copy-symbolic";
+            tooltip-text: _("Copy");
+            valign: center;
+
+            styles [
+              "flat",
+            ]
+
+            accessibility {
+              label: _("Copy install commands");
+            }
+          }
+        }
       };
     };
   };

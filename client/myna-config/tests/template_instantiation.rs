@@ -178,6 +178,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-start: advanced",
         "onboarding-layout: forward in view",
         "onboarding-gate: held",
+        "onboarding-commands: the block copies all three",
         "onboarding-copy: commands on the clipboard",
         "onboarding-extension: instructions copy the command",
         "onboarding-refresh: re-read on focus",

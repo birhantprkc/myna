@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-28 00:17+0100\n"
+"POT-Creation-Date: 2026-09-28 00:35+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,7 +46,7 @@ msgstr ""
 msgid "Revert"
 msgstr ""
 
-#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:876
+#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:914
 msgid "About and Diagnostics"
 msgstr ""
 
@@ -80,7 +80,7 @@ msgstr ""
 msgid "Re-read the machine, the daemon, and every backend."
 msgstr ""
 
-#: data/diagnostics-page.blp:40
+#: data/diagnostics-page.blp:40 data/onboarding-components.blp:67
 msgid "Copy"
 msgstr ""
 
@@ -116,7 +116,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:871
+#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:909
 msgid "Backend"
 msgstr ""
 
@@ -129,7 +129,7 @@ msgid "_About Myna Settings"
 msgstr ""
 
 #: data/myna-page.blp:5 data/myna-page.blp:8 data/status-page.blp:5
-#: src/onboarding_ui.rs:477
+#: src/onboarding_ui.rs:484
 msgid "Myna"
 msgstr ""
 
@@ -154,7 +154,7 @@ msgid "Keyboard Shortcut"
 msgstr ""
 
 #: data/myna-page.blp:36 data/myna-page.blp:54 data/onboarding-window.blp:7
-#: src/onboarding_ui.rs:469
+#: src/onboarding_ui.rs:476
 msgid "Dictation"
 msgstr ""
 
@@ -162,11 +162,11 @@ msgstr ""
 msgid "Set Up Shortcut"
 msgstr ""
 
-#: data/onboarding-components.blp:19 src/onboarding_ui.rs:470
+#: data/onboarding-components.blp:19 src/onboarding_ui.rs:477
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:29 src/onboarding_ui.rs:296
+#: data/onboarding-components.blp:29 src/onboarding_ui.rs:303
 msgid "You need to install some components for Dictation to work."
 msgstr ""
 
@@ -174,7 +174,11 @@ msgstr ""
 msgid "Components to install"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:19 src/onboarding_ui.rs:471
+#: data/onboarding-components.blp:75
+msgid "Copy install commands"
+msgstr ""
+
+#: data/onboarding-shortcut.blp:19 src/onboarding_ui.rs:478
 msgid "How to dictate"
 msgstr ""
 
@@ -186,7 +190,7 @@ msgstr ""
 msgid "Dictation runs locally, with no data leaving your computer."
 msgstr ""
 
-#: data/onboarding-window.blp:21 src/app.rs:391 src/onboarding_ui.rs:265
+#: data/onboarding-window.blp:21 src/app.rs:391 src/onboarding_ui.rs:272
 msgid "Next"
 msgstr ""
 
@@ -202,7 +206,7 @@ msgstr ""
 msgid "Full details are shown below. You can copy them to share with support."
 msgstr ""
 
-#: data/operation-error-dialog.blp:11 src/onboarding_ui.rs:375
+#: data/operation-error-dialog.blp:11 src/onboarding_ui.rs:382
 msgid "Close"
 msgstr ""
 
@@ -214,11 +218,11 @@ msgstr ""
 msgid "Copy the full failure details to the clipboard"
 msgstr ""
 
-#: data/status-page.blp:12 src/app.rs:866 src/app.rs:1857
+#: data/status-page.blp:12 src/app.rs:904 src/app.rs:1895
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:13 src/app.rs:867 src/app.rs:1858
+#: data/status-page.blp:13 src/app.rs:905 src/app.rs:1896
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -226,43 +230,43 @@ msgstr ""
 msgid "translator-credits"
 msgstr ""
 
-#: src/app.rs:452 src/onboarding_ui.rs:335
+#: src/app.rs:485 src/onboarding_ui.rs:342
 msgid "Copy Command"
 msgstr ""
 
-#: src/app.rs:479 src/onboarding_ui.rs:324
+#: src/app.rs:512 src/onboarding_ui.rs:331
 msgid "Install"
 msgstr ""
 
-#: src/app.rs:488 src/onboarding_ui.rs:344
+#: src/app.rs:521 src/onboarding_ui.rs:351
 msgid "How to install"
 msgstr ""
 
-#: src/app.rs:662 src/onboarding_ui.rs:268
+#: src/app.rs:695 src/onboarding_ui.rs:275
 msgid "Done"
 msgstr ""
 
-#: src/app.rs:872
+#: src/app.rs:910
 msgid "Backend details will appear after discovery."
 msgstr ""
 
-#: src/app.rs:877
+#: src/app.rs:915
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:1862
+#: src/app.rs:1900
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:1863
+#: src/app.rs:1901
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:1879
+#: src/app.rs:1917
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:2232
+#: src/app.rs:2270
 msgid "Could not save the setting"
 msgstr ""
 
@@ -513,7 +517,7 @@ msgstr ""
 msgid "Copy and run in a terminal"
 msgstr ""
 
-#: src/backend_ui.rs:1332 src/backend_ui.rs:1335 src/onboarding_ui.rs:318
+#: src/backend_ui.rs:1332 src/backend_ui.rs:1335 src/onboarding_ui.rs:325
 msgid "Copy install command"
 msgstr ""
 
@@ -835,49 +839,49 @@ msgstr ""
 msgid "multiple backends"
 msgstr ""
 
-#: src/onboarding_ui.rs:231
+#: src/onboarding_ui.rs:238
 msgid "Could not set up dictation"
 msgstr ""
 
-#: src/onboarding_ui.rs:289
+#: src/onboarding_ui.rs:296
 msgid "Everything Dictation needs is installed."
 msgstr ""
 
-#: src/onboarding_ui.rs:370
+#: src/onboarding_ui.rs:377
 msgid "Install the shell extension"
 msgstr ""
 
-#: src/onboarding_ui.rs:372
+#: src/onboarding_ui.rs:379
 msgid ""
 "The extension is not published in a store yet. Copy it into the extensions "
 "directory and enable it, then log out and back in."
 msgstr ""
 
-#: src/onboarding_ui.rs:376
+#: src/onboarding_ui.rs:383
 msgid "Copy command"
 msgstr ""
 
-#: src/onboarding_ui.rs:405
+#: src/onboarding_ui.rs:412
 msgid "Command copied. Paste it into a terminal."
 msgstr ""
 
-#: src/onboarding_ui.rs:478
+#: src/onboarding_ui.rs:485
 msgid "Recommended speech-to-text model"
 msgstr ""
 
-#: src/onboarding_ui.rs:479
+#: src/onboarding_ui.rs:486
 msgid "Shell extension"
 msgstr ""
 
-#: src/onboarding_ui.rs:485
+#: src/onboarding_ui.rs:492
 msgid "The dictation client itself"
 msgstr ""
 
-#: src/onboarding_ui.rs:488
+#: src/onboarding_ui.rs:495
 msgid "Parakeet · {size} MB"
 msgstr ""
 
-#: src/onboarding_ui.rs:492
+#: src/onboarding_ui.rs:499
 msgid "Needed to show dictation status in the desktop"
 msgstr ""
 

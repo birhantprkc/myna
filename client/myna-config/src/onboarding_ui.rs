@@ -92,6 +92,13 @@ impl OnboardingUi {
             ));
         }
 
+        let commands = crate::onboarding::install_commands();
+        components_page.commands().set_label(&commands);
+        components_page.copy_button().connect_clicked({
+            let window = window.clone();
+            move |_| copy_command(&window, &commands)
+        });
+
         let ui = Rc::new(Self {
             window: window.clone(),
             components_page,

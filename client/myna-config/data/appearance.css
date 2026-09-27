@@ -28,3 +28,10 @@
   font-size: 24px;
   font-weight: normal;
 }
+
+/* The install commands on the onboarding component step. */
+.command-block {
+  background-color: @sidebar_bg_color;
+  border-radius: 6px;
+  padding: 8px;
+}

@@ -447,6 +447,39 @@ fn onboarding_probe() -> glib::ExitCode {
             .flatten()
             .map(|text| text.to_string())
     };
+    let commands = crate::onboarding::install_commands();
+    let in_block = |widget: &gtk::Widget| {
+        widget
+            .parent()
+            .is_some_and(|parent| parent.has_css_class("command-block"))
+    };
+    let shown = find_descendant(window.upcast_ref(), &|widget| {
+        in_block(widget)
+            && widget.has_css_class("monospace")
+            && widget
+                .downcast_ref::<gtk::Label>()
+                .is_some_and(|label| label.is_mapped() && label.label() == commands)
+    });
+    if shown.is_none() {
+        eprintln!("the component step does not show the install commands in one block");
+        return glib::ExitCode::FAILURE;
+    }
+    let Some(copy) = button(&|button| {
+        in_block(button.upcast_ref())
+            && button.icon_name().as_deref() == Some("edit-copy-symbolic")
+            && button.has_css_class("flat")
+    }) else {
+        eprintln!("the command block offers no copy button");
+        return glib::ExitCode::FAILURE;
+    };
+    copy.emit_clicked();
+    settle_gtk();
+    if clipboard().as_deref() != Some(commands.as_str()) {
+        eprintln!("copying the block left {:?} on the clipboard", clipboard());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-commands: the block copies all three");
+
     let copies = [
         (
             gettextrs::gettext("Copy Command"),
@@ -768,7 +801,12 @@ fn template_probe() -> glib::ExitCode {
     ui::OnboardingWelcome::new();
     println!("OnboardingWelcome");
     let components = ui::OnboardingComponents::new();
-    let _ = (components.subtitle(), components.list());
+    let _ = (
+        components.subtitle(),
+        components.list(),
+        components.commands(),
+        components.copy_button(),
+    );
     println!("OnboardingComponents");
     let shortcut = ui::OnboardingShortcut::new();
     let _ = (
