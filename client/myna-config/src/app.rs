@@ -389,6 +389,7 @@ fn onboarding_probe() -> glib::ExitCode {
     if !forward.is_mapped()
         || !forward.is_sensitive()
         || forward.label().as_deref() != Some(gettextrs::gettext("Next").as_str())
+        || forward.has_css_class("suggested-action")
     {
         eprintln!("the welcome step offers no Next in the footer");
         return glib::ExitCode::FAILURE;
@@ -403,7 +404,10 @@ fn onboarding_probe() -> glib::ExitCode {
 
     // GTK 4.14 let an unscrolled page grow past the window, out of this bar.
     let in_view = forward.compute_bounds(&window).is_some_and(|bounds| {
-        bounds.y() >= 0.0 && bounds.y() + bounds.height() <= window.height() as f32
+        bounds.y() >= 0.0
+            && bounds.y() + bounds.height() <= window.height() as f32
+            && bounds.width() >= 136.0
+            && bounds.x() + bounds.width() == window.width() as f32 - 24.0
     });
     if !in_view {
         eprintln!("the forward button lies outside the window");
@@ -655,6 +659,12 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-shortcut: waits for the daemon");
+    if forward.label().as_deref() != Some(gettextrs::gettext("Done").as_str())
+        || !forward.has_css_class("suggested-action")
+    {
+        eprintln!("the last step does not finish with a suggested Done");
+        return glib::ExitCode::FAILURE;
+    }
 
     forward.emit_clicked();
     settle_gtk();

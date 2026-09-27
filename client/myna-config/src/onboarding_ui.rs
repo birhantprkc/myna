@@ -261,11 +261,13 @@ impl OnboardingUi {
         }
 
         let forward = self.window.forward_button();
-        forward.set_label(&if step.next().is_some() {
-            gettextrs::gettext("Next")
+        if step.next().is_some() {
+            forward.set_label(&gettextrs::gettext("Next"));
+            forward.remove_css_class("suggested-action");
         } else {
-            gettextrs::gettext("Done")
-        });
+            forward.set_label(&gettextrs::gettext("Done"));
+            forward.add_css_class("suggested-action");
+        }
         forward.set_sensitive(!self.busy.get() && can_advance(step, &components));
 
         if step == Step::Components {
