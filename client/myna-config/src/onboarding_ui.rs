@@ -26,7 +26,6 @@ use crate::ui;
 
 pub struct OnboardingUi {
     window: ui::OnboardingWindow,
-    components_page: ui::OnboardingComponents,
     shortcut_page: ui::OnboardingShortcut,
     repository: Rc<dyn BackendRepository>,
     configurator: Rc<dyn SystemConfigurator>,
@@ -100,7 +99,6 @@ impl OnboardingUi {
 
         let ui = Rc::new(Self {
             window: window.clone(),
-            components_page,
             shortcut_page: shortcut_page.clone(),
             repository,
             configurator,
@@ -278,20 +276,6 @@ impl OnboardingUi {
         self.window
             .installed_status()
             .set_visible(step == Step::Components && !needs_onboarding(&components));
-
-        if step == Step::Components {
-            self.render_components(&components);
-        }
-    }
-
-    fn render_components(self: &Rc<Self>, components: &[Component]) {
-        self.components_page
-            .subtitle()
-            .set_label(&if !needs_onboarding(components) {
-                gettextrs::gettext("Everything Dictation needs is installed.")
-            } else {
-                gettextrs::gettext("You need to install some components for Dictation to work.")
-            });
     }
 
     fn report_failure(self: &Rc<Self>, title: &str, details: &str) {

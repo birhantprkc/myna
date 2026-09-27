@@ -11,8 +11,6 @@ mod imp {
     #[template(resource = "/com/canonical/Myna/Config/ui/onboarding-components.ui")]
     pub struct OnboardingComponents {
         #[template_child]
-        pub subtitle: gtk::TemplateChild<gtk::Label>,
-        #[template_child]
         pub commands: gtk::TemplateChild<gtk::Label>,
         #[template_child]
         pub copy_button: gtk::TemplateChild<gtk::Button>,
@@ -48,10 +46,6 @@ impl OnboardingComponents {
     pub fn new() -> Self {
         super::register_resources();
         glib::Object::builder().build()
-    }
-
-    pub fn subtitle(&self) -> gtk::Label {
-        self.imp().subtitle.get()
     }
 
     pub fn commands(&self) -> gtk::Label {

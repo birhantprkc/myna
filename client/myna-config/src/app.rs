@@ -429,6 +429,10 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("the footer claims everything is installed on a bare machine");
         return glib::ExitCode::FAILURE;
     }
+    if !components_headed(&window) {
+        eprintln!("the component step is not headed as the design");
+        return glib::ExitCode::FAILURE;
+    }
 
     // One block holds every command, and its copy button puts them all on
     // the clipboard.
@@ -592,6 +596,10 @@ fn onboarding_probe() -> glib::ExitCode {
     }
     if installed_status(&window) != Some(true) {
         eprintln!("the footer does not say every component is installed, left of Next");
+        return glib::ExitCode::FAILURE;
+    }
+    if !components_headed(&window) {
+        eprintln!("the component step changed its heading once everything was installed");
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-installed: shown in the footer");
@@ -762,11 +770,7 @@ fn template_probe() -> glib::ExitCode {
     ui::OnboardingWelcome::new();
     println!("OnboardingWelcome");
     let components = ui::OnboardingComponents::new();
-    let _ = (
-        components.subtitle(),
-        components.commands(),
-        components.copy_button(),
-    );
+    let _ = (components.commands(), components.copy_button());
     println!("OnboardingComponents");
     let shortcut = ui::OnboardingShortcut::new();
     let _ = (
@@ -1812,6 +1816,30 @@ fn menu_actions(menu: &gio::MenuModel) -> Vec<String> {
             action.into_iter().chain(section)
         })
         .collect()
+}
+
+/// Whether the component step heads itself as the design: a regular 24 px
+/// title over the one paragraph, whatever is installed.
+fn components_headed(window: &ui::OnboardingWindow) -> bool {
+    let shown = |text: String, class: Option<&str>| {
+        find_descendant(window.upcast_ref(), &|widget| {
+            widget.downcast_ref::<gtk::Label>().is_some_and(|label| {
+                label.is_mapped()
+                    && label.label() == text.as_str()
+                    && class.is_none_or(|class| label.has_css_class(class))
+            })
+        })
+        .is_some()
+    };
+    shown(
+        gettextrs::gettext("Install components"),
+        Some("onboarding-title"),
+    ) && shown(
+        gettextrs::gettext(
+            "Copy the command below and enter them in the Terminal to install all necessary components.",
+        ),
+        None,
+    )
 }
 
 /// Whether the onboarding footer says everything is installed: a success

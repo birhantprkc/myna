@@ -6,27 +6,27 @@ template $OnboardingComponents: Adw.Bin {
     hscrollbar-policy: never;
 
     child: Adw.Clamp {
-      maximum-size: 640;
+      maximum-size: 540;
       valign: center;
+      margin-start: 24;
+      margin-end: 24;
 
       child: Gtk.Box {
         orientation: vertical;
-        spacing: 12;
-        margin-start: 24;
-        margin-end: 24;
 
         Gtk.Label {
           label: _("Install components");
           justify: center;
           wrap: true;
+          margin-bottom: 8;
 
           styles [
-            "title-1",
+            "onboarding-title",
           ]
         }
 
-        Gtk.Label subtitle {
-          label: _("You need to install some components for Dictation to work.");
+        Gtk.Label {
+          label: _("Copy the command below and enter them in the Terminal to install all necessary components.");
           justify: center;
           wrap: true;
           margin-bottom: 24;
