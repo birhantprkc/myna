@@ -291,7 +291,7 @@ fn copy_command(window: &ui::OnboardingWindow, command: &str) {
     window
         .overlay()
         .add_toast(adw::Toast::new(&gettextrs::gettext(
-            "Command copied. Paste it into a terminal.",
+            "Commands copied. Paste them into a terminal.",
         )));
 }
 
