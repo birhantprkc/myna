@@ -1,5 +1,4 @@
 use adw::subclass::prelude::*;
-use glib::subclass::types::ObjectSubclassIsExt;
 use gtk::{glib, CompositeTemplate};
 use gtk4 as gtk;
 use libadwaita as adw;
@@ -9,10 +8,7 @@ mod imp {
 
     #[derive(Default, CompositeTemplate)]
     #[template(resource = "/com/canonical/Myna/Config/ui/onboarding-welcome.ui")]
-    pub struct OnboardingWelcome {
-        #[template_child]
-        pub start_button: gtk::TemplateChild<gtk::Button>,
-    }
+    pub struct OnboardingWelcome {}
 
     #[glib::object_subclass]
     impl ObjectSubclass for OnboardingWelcome {
@@ -44,10 +40,6 @@ impl OnboardingWelcome {
     pub fn new() -> Self {
         super::register_resources();
         glib::Object::builder().build()
-    }
-
-    pub fn start_button(&self) -> gtk::Button {
-        self.imp().start_button.get()
     }
 }
 

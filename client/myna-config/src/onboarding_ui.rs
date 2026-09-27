@@ -27,7 +27,6 @@ use crate::ui;
 
 pub struct OnboardingUi {
     window: ui::OnboardingWindow,
-    welcome: ui::OnboardingWelcome,
     components_page: ui::OnboardingComponents,
     shortcut_page: ui::OnboardingShortcut,
     repository: Rc<dyn BackendRepository>,
@@ -95,7 +94,6 @@ impl OnboardingUi {
 
         let ui = Rc::new(Self {
             window: window.clone(),
-            welcome: welcome.clone(),
             components_page,
             shortcut_page: shortcut_page.clone(),
             repository,
@@ -106,14 +104,6 @@ impl OnboardingUi {
             finished: RefCell::new(Some(finished)),
         });
 
-        welcome.start_button().connect_clicked({
-            let ui = Rc::downgrade(&ui);
-            move |_| {
-                if let Some(ui) = ui.upgrade() {
-                    ui.advance();
-                }
-            }
-        });
         window.forward_button().connect_clicked({
             let ui = Rc::downgrade(&ui);
             move |_| {
@@ -250,10 +240,6 @@ impl OnboardingUi {
         self.window.clone()
     }
 
-    pub fn start_button(&self) -> gtk::Button {
-        self.welcome.start_button()
-    }
-
     pub fn shortcut_button(&self) -> gtk::Button {
         self.shortcut_page.shortcut_button()
     }
@@ -275,9 +261,6 @@ impl OnboardingUi {
         }
 
         let forward = self.window.forward_button();
-        // The welcome step has its own button in the middle of the page, so
-        // the action bar carries nothing there.
-        forward.set_visible(step != Step::Welcome);
         forward.set_label(&if step.next().is_some() {
             gettextrs::gettext("Next")
         } else {

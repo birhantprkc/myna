@@ -347,7 +347,7 @@ fn onboarding_probe() -> glib::ExitCode {
     // refuses to advance.
     // Every command fails, so a refresh on focus still sees a bare machine.
     let runner = std::sync::Arc::new(crate::command::FakeCommandRunner::default());
-    let (window, start_button) = {
+    let window = {
         let ui = OnboardingUi::present_with_ports(
             &application,
             assess(Machine::default()),
@@ -358,7 +358,7 @@ fn onboarding_probe() -> glib::ExitCode {
             None,
             Box::new(|| {}),
         );
-        (ui.window(), ui.start_button())
+        ui.window()
     };
     settle_gtk();
     if step(&window) != "welcome" {
@@ -384,15 +384,23 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-welcome: icon shown");
-    start_button.emit_clicked();
+
+    let forward = window.forward_button();
+    if !forward.is_mapped()
+        || !forward.is_sensitive()
+        || forward.label().as_deref() != Some(gettextrs::gettext("Next").as_str())
+    {
+        eprintln!("the welcome step offers no Next in the footer");
+        return glib::ExitCode::FAILURE;
+    }
+    forward.emit_clicked();
     settle_gtk();
     if step(&window) != "components" {
-        eprintln!("activating the welcome button did not reach the component step");
+        eprintln!("Next on the welcome step did not reach the component step");
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-start: advanced");
 
-    let forward = window.forward_button();
     // GTK 4.14 let an unscrolled page grow past the window, out of this bar.
     let in_view = forward.compute_bounds(&window).is_some_and(|bounds| {
         bounds.y() >= 0.0 && bounds.y() + bounds.height() <= window.height() as f32
@@ -526,7 +534,7 @@ fn onboarding_probe() -> glib::ExitCode {
         name: crate::onboarding::MYNA_SNAP.to_owned(),
         version: "1".to_owned(),
     }];
-    let (window, start_button) = {
+    let window = {
         let ui = OnboardingUi::present_with_ports(
             &application,
             assess(Machine::new(&installed, 1, true)),
@@ -537,10 +545,10 @@ fn onboarding_probe() -> glib::ExitCode {
             None,
             Box::new(|| {}),
         );
-        (ui.window(), ui.start_button())
+        ui.window()
     };
     settle_gtk();
-    start_button.emit_clicked();
+    window.forward_button().emit_clicked();
     settle_gtk();
     window.forward_button().emit_clicked();
     let failed = || {
@@ -569,7 +577,7 @@ fn onboarding_probe() -> glib::ExitCode {
         version: "1".to_owned(),
     }];
     let machine = ProbeMachine::new();
-    let (window, start_button, shortcut_button) = {
+    let (window, shortcut_button) = {
         let ui = OnboardingUi::present_with_ports(
             &application,
             assess(Machine::new(&installed, 1, false)),
@@ -583,12 +591,12 @@ fn onboarding_probe() -> glib::ExitCode {
                 move || build_settings_window(&application)
             }),
         );
-        (ui.window(), ui.start_button(), ui.shortcut_button())
+        (ui.window(), ui.shortcut_button())
     };
     settle_gtk();
-    start_button.emit_clicked();
-    settle_gtk();
     let forward = window.forward_button();
+    forward.emit_clicked();
+    settle_gtk();
     if !forward.is_sensitive() {
         eprintln!("the component step refused to advance with only the extension missing");
         return glib::ExitCode::FAILURE;
@@ -747,8 +755,7 @@ fn template_probe() -> glib::ExitCode {
         diagnostics.refresh_button(),
     );
     println!("DiagnosticsPage");
-    let welcome = ui::OnboardingWelcome::new();
-    let _ = welcome.start_button();
+    ui::OnboardingWelcome::new();
     println!("OnboardingWelcome");
     let components = ui::OnboardingComponents::new();
     let _ = (components.subtitle(), components.list());
