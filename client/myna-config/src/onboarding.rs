@@ -82,6 +82,12 @@ pub const MYNA_INSTALL_COMMAND: &str =
 /// Installs the recommended backend from a terminal.
 pub const MODEL_INSTALL_COMMAND: &str = "sudo snap install --edge myna-parakeet";
 
+/// Everything the component step asks the user to paste, one command per
+/// line. It always lists every command: rerunning one is harmless.
+pub fn install_commands() -> String {
+    format!("{MYNA_INSTALL_COMMAND}\n{MODEL_INSTALL_COMMAND}")
+}
+
 /// What the user can do about a component that is missing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Remedy {
@@ -313,6 +319,16 @@ mod tests {
         assert_eq!(
             StoreSnap::RecommendedModel.app_center_uri(),
             "snap://myna-parakeet"
+        );
+    }
+
+    #[test]
+    fn the_install_commands_are_the_three_lines_the_user_pastes() {
+        assert_eq!(
+            install_commands(),
+            "sudo snap set system experimental.user-daemons=true\n\
+             sudo snap install --edge myna\n\
+             sudo snap install --edge myna-parakeet"
         );
     }
 
