@@ -11,19 +11,20 @@ headless probes lack.
 
 ## What opens it
 
-`myna_config::onboarding` assesses three components from the observations the
+`myna_config::onboarding` assesses two components from the observations the
 application already makes at startup (`snap list`, `snap connections` and
-`snap interface content`) plus a directory probe:
+`snap interface content`):
 
-| Component       | Required | Satisfied when                             | Remedy       |
-| --------------- | -------- | ------------------------------------------ | ------------ |
-| Myna            | yes      | the `myna` snap is installed               | command      |
-| Model           | yes      | discovery reports at least one backend     | App Center   |
-| Shell extension | no       | `myna-shell@canonical.com` is in a data dir | instructions |
+| Component | Satisfied when                         |
+| --------- | -------------------------------------- |
+| Myna      | the `myna` snap is installed           |
+| Model     | discovery reports at least one backend |
 
-The wizard opens when a **required** component is missing. "Model" is satisfied
-by discovery rather than by a snap name: which snaps are backends is a property
-of the socket interface they publish, not of their name.
+The wizard opens when either is missing. "Model" is satisfied by discovery
+rather than by a snap name: which snaps are backends is a property of the
+socket interface they publish, not of their name. The GNOME Shell extension is
+not assessed: dictation works without it (the daemon falls back to desktop
+notifications), and it is not published anywhere snapd can reach.
 
 The settings window's main menu reopens the wizard (Set Up Dictation), modal
 over the window. It refuses while a backend operation is in flight: the wizard
@@ -32,27 +33,28 @@ not cover it. Closing the wizard rediscovers, since it may have changed both.
 
 ## Installing
 
-The application installs nothing itself. Both snaps come from the store, on
-`edge`, the only channel they are published to.
+The application installs nothing itself. The component step shows one block of
+three commands, always all three, with a copy button that puts them on the
+clipboard as they are shown:
 
-- **Model** - Install opens App Center at `snap://myna-parakeet`. The URI
-  carries no channel (App Center reads everything after the scheme as the
-  name), and App Center picks the only published one. A copy button gives the
-  equivalent `sudo snap install --edge myna-parakeet`. A plain install is a
-  working backend: the install hook selects an engine, and selecting one
-  installs its model component.
-- **Myna** - only a copyable command. snapd refuses to install a snap declaring
-  a user daemon unless `experimental.user-daemons` is set or its snap-id is on
-  the hardcoded allowlist in snapd's `overlord/snapstate/snapstate.go`, so an
-  App Center install fails on every stock machine. The command sets the flag
-  first.
-- **Shell extension** - not published anywhere snapd can reach; it is copied
-  into `~/.local/share/gnome-shell/extensions` by hand. It is also not required:
-  the daemon falls back to desktop notifications without it, and gating the flow
-  on a manual copy would strand anyone who cannot perform it.
+    sudo snap set system experimental.user-daemons=true
+    sudo snap install --edge myna
+    sudo snap install --edge myna-parakeet
+
+Both snaps come from the store on `edge`, the only channel they are published
+to. The flag comes first: snapd refuses to install a snap declaring a user
+daemon unless `experimental.user-daemons` is set or its snap-id is on the
+hardcoded allowlist in snapd's `overlord/snapstate/snapstate.go`, so an App
+Center install of Myna fails on every stock machine, and one terminal session
+beats splitting the install between a terminal and App Center. Rerunning a
+command for a snap already installed is harmless. A plain install of the model
+is a working backend: the install hook selects an engine, and selecting one
+installs its model component.
 
 The installs happen in another window, so the component step re-assesses the
-machine whenever the wizard regains focus.
+machine whenever the wizard regains focus. Next stays insensitive until both
+components are found; then the footer shows a success checkmark and "All
+components installed" left of it.
 
 ## Finishing setup
 

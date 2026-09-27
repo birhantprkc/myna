@@ -11,7 +11,7 @@ Myna Settings is a host application, not a snap. It talks to snapd on the user's
 # Important
 
 - One user action costs at most one polkit prompt. Two privilege paths exist and they are not interchangeable. Backend switching (`connect`, `disconnect`) goes straight to `/run/snapd.socket` as the user and snapd asks polkit itself; its `auth_admin_keep` is per action, so every call in one operation must use the same snapd action. The daemon restart that follows goes through `systemctl --user`, which needs no authorization. Backend configuration (`snap run <backend>.modelctl ...`) runs as root through one `pkexec myna-config --apply-plan` invocation, whose prompt shows the message of the polkit action in `data/com.canonical.Myna.Config.policy`. Do not route a new operation through `pkexec` when snapd's REST API can do it unprivileged.
-- The application installs no snaps. Onboarding sends the user to App Center or a copyable `snap install --edge` command (`docs/onboarding.md`).
+- The application installs no snaps. Onboarding shows the copyable `snap` commands that install dictation (`docs/onboarding.md`).
 - The `--apply-plan` executor is the trust boundary. It accepts only operations matching the exact shapes the UI produces (`apply_plan.rs`, `system_configurator.rs`). Extend the whitelist deliberately and with a test; never pass free-form argv through it.
 - Nothing runs through a shell. Build every subprocess as a `CommandRequest` and run it through the `CommandRunner` port so tests can substitute a fixture.
 - Subprocess spawning is budgeted per refresh reason (`docs/refresh-budget.md`). A new `snap` read must fit the budget or change it explicitly.
