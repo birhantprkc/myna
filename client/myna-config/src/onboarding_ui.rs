@@ -19,8 +19,7 @@ use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::onboarding::{
-    assess, can_advance, outstanding, Component, ComponentId, Machine, Remedy, Step, StoreSnap,
-    RECOMMENDED_BACKEND_SNAP, RECOMMENDED_MODEL_MEGABYTES, SHELL_EXTENSION_UUID,
+    assess, can_advance, outstanding, Component, Machine, Step, RECOMMENDED_BACKEND_SNAP,
 };
 use crate::ports::{BackendRepository, SystemConfigurator};
 use crate::ui;
@@ -283,117 +282,13 @@ impl OnboardingUi {
     }
 
     fn render_components(self: &Rc<Self>, components: &[Component]) {
-        let list = self.components_page.list();
-        while let Some(child) = list.first_child() {
-            list.remove(&child);
-        }
-
-        let missing = outstanding(components);
-        if missing.is_empty() {
-            self.components_page
-                .subtitle()
-                .set_label(&gettextrs::gettext(
-                    "Everything Dictation needs is installed.",
-                ));
-            return;
-        }
         self.components_page
             .subtitle()
-            .set_label(&gettextrs::gettext(
-                "You need to install some components for Dictation to work.",
-            ));
-
-        for component in missing {
-            list.append(&self.component_row(component));
-        }
-    }
-
-    fn component_row(self: &Rc<Self>, component: Component) -> adw::ActionRow {
-        let row = adw::ActionRow::builder()
-            .title(component_title(component.id))
-            .subtitle(component_detail(component.id))
-            .build();
-        let primary = match component.remedy {
-            Remedy::Store(snap) if snap.installs_from_app_center() => {
-                let copy = gtk::Button::builder()
-                    .icon_name("edit-copy-symbolic")
-                    .tooltip_text(snap.install_command())
-                    .valign(gtk::Align::Center)
-                    .css_classes(["flat"])
-                    .build();
-                copy.update_property(&[gtk::accessible::Property::Label(&gettextrs::gettext(
-                    "Copy install command",
-                ))]);
-                copy.connect_clicked(self.copy_handler(snap.install_command().to_owned()));
-                row.add_suffix(&copy);
-
-                let install = gtk::Button::builder()
-                    .label(gettextrs::gettext("Install"))
-                    .valign(gtk::Align::Center)
-                    .build();
-                install.connect_clicked({
-                    let window = self.window.clone();
-                    move |_| open_app_center(&window, snap)
-                });
-                install
-            }
-            Remedy::Store(snap) => {
-                let copy = gtk::Button::builder()
-                    .label(gettextrs::gettext("Copy Command"))
-                    .tooltip_text(snap.install_command())
-                    .valign(gtk::Align::Center)
-                    .build();
-                copy.connect_clicked(self.copy_handler(snap.install_command().to_owned()));
-                copy
-            }
-            Remedy::Explain => {
-                let button = gtk::Button::builder()
-                    .label(gettextrs::gettext("How to install"))
-                    .valign(gtk::Align::Center)
-                    .build();
-                button.connect_clicked({
-                    let ui = Rc::downgrade(self);
-                    move |_| {
-                        if let Some(ui) = ui.upgrade() {
-                            ui.show_extension_instructions();
-                        }
-                    }
-                });
-                button
-            }
-        };
-        row.add_suffix(&primary);
-        row.set_activatable_widget(Some(&primary));
-        row
-    }
-
-    fn copy_handler(&self, command: String) -> impl Fn(&gtk::Button) + 'static {
-        let window = self.window.clone();
-        move |_| copy_command(&window, &command)
-    }
-
-    fn show_extension_instructions(self: &Rc<Self>) {
-        let dialog = adw::AlertDialog::new(
-            Some(&gettextrs::gettext("Install the shell extension")),
-            Some(&gettextrs::gettext(
-                "The extension is not published in a store yet. Copy it into the extensions directory and enable it, then log out and back in.",
-            )),
-        );
-        dialog.add_response("close", &gettextrs::gettext("Close"));
-        dialog.add_response("copy", &gettextrs::gettext("Copy command"));
-        dialog.set_response_appearance("copy", adw::ResponseAppearance::Suggested);
-        dialog.connect_response(None, {
-            let window = self.window.clone();
-            move |_, response| {
-                if response == "copy" {
-                    copy_command(
-                        &window,
-                        &format!("gnome-extensions enable {SHELL_EXTENSION_UUID}"),
-                    );
-                }
-            }
-        });
-        dialog.present(Some(&self.window));
+            .set_label(&if outstanding(components).is_empty() {
+                gettextrs::gettext("Everything Dictation needs is installed.")
+            } else {
+                gettextrs::gettext("You need to install some components for Dictation to work.")
+            });
     }
 
     fn report_failure(self: &Rc<Self>, title: &str, details: &str) {
@@ -411,18 +306,6 @@ fn copy_command(window: &ui::OnboardingWindow, command: &str) {
         .add_toast(adw::Toast::new(&gettextrs::gettext(
             "Command copied. Paste it into a terminal.",
         )));
-}
-
-fn open_app_center(window: &ui::OnboardingWindow, snap: StoreSnap) {
-    let launcher = gtk::UriLauncher::new(&snap.app_center_uri());
-    launcher.launch(Some(window), None::<&gio::Cancellable>, {
-        let window = window.clone();
-        move |result| {
-            if result.is_err() {
-                copy_command(&window, snap.install_command());
-            }
-        }
-    });
 }
 
 /// One assessment of what dictation is missing on this machine: one `snap
@@ -476,27 +359,5 @@ fn step_title(step: Step) -> String {
         Step::Welcome => gettextrs::gettext("Dictation"),
         Step::Components => gettextrs::gettext("Install components"),
         Step::Shortcut => gettextrs::gettext("How to dictate"),
-    }
-}
-
-fn component_title(id: ComponentId) -> String {
-    match id {
-        ComponentId::Myna => gettextrs::gettext("Myna"),
-        ComponentId::Model => gettextrs::gettext("Recommended speech-to-text model"),
-        ComponentId::ShellExtension => gettextrs::gettext("Shell extension"),
-    }
-}
-
-fn component_detail(id: ComponentId) -> String {
-    match id {
-        ComponentId::Myna => gettextrs::gettext("The dictation client itself"),
-        ComponentId::Model => {
-            // Translators: the model name, then its installed size.
-            gettextrs::gettext("Parakeet · {size} MB")
-                .replace("{size}", &RECOMMENDED_MODEL_MEGABYTES.to_string())
-        }
-        ComponentId::ShellExtension => {
-            gettextrs::gettext("Needed to show dictation status in the desktop")
-        }
     }
 }

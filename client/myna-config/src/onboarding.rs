@@ -16,9 +16,6 @@ pub const MYNA_SNAP: &str = "myna";
 /// the matching model component, so a plain install is a working backend.
 pub const RECOMMENDED_BACKEND_SNAP: &str = "myna-parakeet";
 
-/// Snap plus model component as installed, rounded to the nearest 10 MB.
-pub const RECOMMENDED_MODEL_MEGABYTES: u32 = 690;
-
 /// The GNOME Shell extension that hosts the HUD.
 pub const SHELL_EXTENSION_UUID: &str = "myna-shell@canonical.com";
 
@@ -33,49 +30,9 @@ pub enum ComponentId {
     ShellExtension,
 }
 
-/// A snap the user installs from the store, through App Center or a terminal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StoreSnap {
-    Myna,
-    RecommendedModel,
-}
-
-impl StoreSnap {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Myna => MYNA_SNAP,
-            Self::RecommendedModel => RECOMMENDED_BACKEND_SNAP,
-        }
-    }
-
-    /// App Center cannot install Myna: snapd refuses a snap declaring a user
-    /// daemon unless `experimental.user-daemons` is set or its snap-id is on
-    /// snapd's hardcoded allowlist, and App Center sets neither.
-    pub const fn installs_from_app_center(self) -> bool {
-        match self {
-            Self::Myna => false,
-            Self::RecommendedModel => true,
-        }
-    }
-
-    /// App Center's `snap://` handler takes everything after the scheme as the
-    /// name, so no channel can be passed; it falls back to the only one
-    /// published.
-    pub fn app_center_uri(self) -> String {
-        format!("snap://{}", self.name())
-    }
-
-    /// The terminal command, one line per step.
-    pub const fn install_command(self) -> &'static str {
-        match self {
-            Self::Myna => MYNA_INSTALL_COMMAND,
-            Self::RecommendedModel => MODEL_INSTALL_COMMAND,
-        }
-    }
-}
-
-/// Installs Myna from a terminal. The flag comes first: see
-/// [`StoreSnap::installs_from_app_center`].
+/// Installs Myna from a terminal. The flag comes first: snapd refuses a snap
+/// declaring a user daemon unless `experimental.user-daemons` is set or its
+/// snap-id is on snapd's hardcoded allowlist.
 pub const MYNA_INSTALL_COMMAND: &str =
     "sudo snap set system experimental.user-daemons=true\nsudo snap install --edge myna";
 
@@ -88,15 +45,6 @@ pub fn install_commands() -> String {
     format!("{MYNA_INSTALL_COMMAND}\n{MODEL_INSTALL_COMMAND}")
 }
 
-/// What the user can do about a component that is missing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Remedy {
-    /// Install it from the store.
-    Store(StoreSnap),
-    /// Not published anywhere snapd can reach; the application explains how.
-    Explain,
-}
-
 /// One assessed component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Component {
@@ -104,7 +52,6 @@ pub struct Component {
     /// Whether onboarding may finish without it.
     pub required: bool,
     pub satisfied: bool,
-    pub remedy: Remedy,
 }
 
 /// The observations onboarding is assessed from. `backend_discovered` is
@@ -142,19 +89,16 @@ pub fn assess(machine: Machine) -> Vec<Component> {
             id: ComponentId::Myna,
             required: true,
             satisfied: machine.myna_installed,
-            remedy: Remedy::Store(StoreSnap::Myna),
         },
         Component {
             id: ComponentId::Model,
             required: true,
             satisfied: machine.backend_discovered,
-            remedy: Remedy::Store(StoreSnap::RecommendedModel),
         },
         Component {
             id: ComponentId::ShellExtension,
             required: false,
             satisfied: machine.shell_extension_installed,
-            remedy: Remedy::Explain,
         },
     ]
 }
@@ -271,18 +215,6 @@ mod tests {
     }
 
     #[test]
-    fn only_the_model_opens_in_app_center() {
-        let from_app_center: Vec<ComponentId> = assess(Machine::default())
-            .into_iter()
-            .filter(|component| {
-                matches!(component.remedy, Remedy::Store(snap) if snap.installs_from_app_center())
-            })
-            .map(|component| component.id)
-            .collect();
-        assert_eq!(from_app_center, vec![ComponentId::Model]);
-    }
-
-    #[test]
     fn the_component_step_gates_on_required_components_only() {
         let bare = assess(Machine::default());
         assert!(can_advance(Step::Welcome, &bare));
@@ -303,22 +235,6 @@ mod tests {
         assert_eq!(
             walked,
             vec![Step::Welcome, Step::Components, Step::Shortcut]
-        );
-    }
-
-    #[test]
-    fn install_commands_name_the_edge_channel() {
-        assert_eq!(
-            StoreSnap::RecommendedModel.install_command(),
-            "sudo snap install --edge myna-parakeet"
-        );
-        assert_eq!(
-            StoreSnap::Myna.install_command(),
-            "sudo snap set system experimental.user-daemons=true\nsudo snap install --edge myna"
-        );
-        assert_eq!(
-            StoreSnap::RecommendedModel.app_center_uri(),
-            "snap://myna-parakeet"
         );
     }
 

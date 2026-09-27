@@ -426,8 +426,8 @@ fn onboarding_probe() -> glib::ExitCode {
     }
     println!("onboarding-gate: held");
 
-    // Each missing component offers its install path, and a copy puts the
-    // exact command on the clipboard.
+    // One block holds every command, and its copy button puts them all on
+    // the clipboard.
     let button = |matches: &dyn Fn(&gtk::Button) -> bool| {
         find_descendant(window.upcast_ref(), &|widget| {
             widget
@@ -479,70 +479,14 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-commands: the block copies all three");
-
-    let copies = [
-        (
-            gettextrs::gettext("Copy Command"),
-            crate::onboarding::StoreSnap::Myna,
-        ),
-        (
-            String::new(),
-            crate::onboarding::StoreSnap::RecommendedModel,
-        ),
-    ];
-    for (label, snap) in copies {
-        let command = snap.install_command();
-        let Some(copy) = button(&|button| {
-            button.tooltip_text().as_deref() == Some(command)
-                && button.label().unwrap_or_default() == label.as_str()
-        }) else {
-            eprintln!("no copy button offers `{command}`");
-            return glib::ExitCode::FAILURE;
-        };
-        copy.emit_clicked();
-        settle_gtk();
-        if clipboard().as_deref() != Some(command) {
-            eprintln!(
-                "copying left {:?} on the clipboard, not `{command}`",
-                clipboard()
-            );
-            return glib::ExitCode::FAILURE;
-        }
-    }
-    if button(&|button| button.label().as_deref() == Some(gettextrs::gettext("Install").as_str()))
-        .is_none()
-    {
-        eprintln!("the model offers no App Center install");
+    let rows = find_descendant(window.upcast_ref(), &|widget| {
+        widget.is_mapped() && (widget.is::<gtk::ListBox>() || widget.is::<adw::ActionRow>())
+    });
+    if rows.is_some() {
+        eprintln!("the component step still lists components one by one");
         return glib::ExitCode::FAILURE;
     }
-    println!("onboarding-copy: commands on the clipboard");
-
-    let Some(how) = button(&|button| {
-        button.label().as_deref() == Some(gettextrs::gettext("How to install").as_str())
-    }) else {
-        eprintln!("the shell extension offers no instructions");
-        return glib::ExitCode::FAILURE;
-    };
-    how.emit_clicked();
-    settle_gtk();
-    let Some(dialog) = window
-        .visible_dialog()
-        .and_then(|dialog| dialog.downcast::<adw::AlertDialog>().ok())
-    else {
-        eprintln!("the shell extension instructions did not open");
-        return glib::ExitCode::FAILURE;
-    };
-    dialog.emit_by_name::<()>("response", &[&"copy"]);
-    settle_gtk();
-    let enable = format!(
-        "gnome-extensions enable {}",
-        crate::onboarding::SHELL_EXTENSION_UUID
-    );
-    if clipboard().as_deref() != Some(enable.as_str()) {
-        eprintln!("the extension instructions copied {:?}", clipboard());
-        return glib::ExitCode::FAILURE;
-    }
-    println!("onboarding-extension: instructions copy the command");
+    println!("onboarding-rows: none");
 
     // Installing happens in another window; coming back re-reads the machine.
     let elsewhere = gtk::Window::new();
@@ -803,7 +747,6 @@ fn template_probe() -> glib::ExitCode {
     let components = ui::OnboardingComponents::new();
     let _ = (
         components.subtitle(),
-        components.list(),
         components.commands(),
         components.copy_button(),
     );
