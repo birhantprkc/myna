@@ -12,16 +12,33 @@ template $OnboardingWindow: Adw.ApplicationWindow {
 
       [bottom]
       Gtk.Box actions {
+        halign: end;
+        spacing: 12;
         margin-start: 24;
         margin-end: 24;
         margin-top: 12;
         margin-bottom: 24;
 
+        Gtk.Box installed_status {
+          visible: false;
+          spacing: 6;
+
+          Gtk.Image {
+            icon-name: "object-select-symbolic";
+
+            styles [
+              "success",
+            ]
+          }
+
+          Gtk.Label {
+            label: _("All components installed");
+          }
+        }
+
         Gtk.Button forward_button {
           label: _("Next");
           sensitive: false;
-          halign: end;
-          hexpand: true;
           width-request: 136;
 
           accessibility {

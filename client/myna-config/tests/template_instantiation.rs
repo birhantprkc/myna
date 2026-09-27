@@ -182,6 +182,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-rows: none",
         "onboarding-refresh: re-read on focus",
         "onboarding-setup-failure: reported",
+        "onboarding-installed: shown in the footer",
         "onboarding-setup: restarted the daemon",
         "onboarding-walk: reached the last step",
         "onboarding-shortcut: waits for the daemon",

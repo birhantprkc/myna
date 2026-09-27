@@ -425,6 +425,10 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-gate: held");
+    if installed_status(&window).is_some() {
+        eprintln!("the footer claims everything is installed on a bare machine");
+        return glib::ExitCode::FAILURE;
+    }
 
     // One block holds every command, and its copy button puts them all on
     // the clipboard.
@@ -576,12 +580,21 @@ fn onboarding_probe() -> glib::ExitCode {
     };
     settle_gtk();
     let forward = window.forward_button();
+    if installed_status(&window).is_some() {
+        eprintln!("the footer status shows outside the component step");
+        return glib::ExitCode::FAILURE;
+    }
     forward.emit_clicked();
     settle_gtk();
     if !forward.is_sensitive() {
         eprintln!("the component step refused to advance with everything installed");
         return glib::ExitCode::FAILURE;
     }
+    if installed_status(&window) != Some(true) {
+        eprintln!("the footer does not say every component is installed, left of Next");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-installed: shown in the footer");
     let reaches = |name: &str| {
         for _ in 0..100 {
             if step(&window) == name {
@@ -629,6 +642,10 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-walk: reached the last step");
+    if installed_status(&window).is_some() {
+        eprintln!("the footer status stayed on the last step");
+        return glib::ExitCode::FAILURE;
+    }
 
     // No daemon runs under the probe, and nothing can bind a key without one.
     if shortcut_button.is_sensitive() {
@@ -762,6 +779,7 @@ fn template_probe() -> glib::ExitCode {
     let _ = (
         onboarding.overlay(),
         onboarding.navigation(),
+        onboarding.installed_status(),
         onboarding.forward_button(),
     );
     println!("OnboardingWindow");
@@ -1794,6 +1812,32 @@ fn menu_actions(menu: &gio::MenuModel) -> Vec<String> {
             action.into_iter().chain(section)
         })
         .collect()
+}
+
+/// Whether the onboarding footer says everything is installed: a success
+/// checkmark and the label, left of the forward button. `None` when it is not
+/// shown at all.
+fn installed_status(window: &ui::OnboardingWindow) -> Option<bool> {
+    let label = find_descendant(window.upcast_ref(), &|widget| {
+        widget.downcast_ref::<gtk::Label>().is_some_and(|label| {
+            label.is_mapped()
+                && label.label() == gettextrs::gettext("All components installed").as_str()
+        })
+    })?;
+    let check = label.parent().and_then(|status| {
+        find_descendant(&status, &|widget| {
+            widget.is_mapped()
+                && widget.has_css_class("success")
+                && widget.downcast_ref::<gtk::Image>().is_some_and(|image| {
+                    image.icon_name().as_deref() == Some("object-select-symbolic")
+                })
+        })
+    });
+    let forward = window.forward_button();
+    let left_of_forward = label
+        .compute_bounds(&forward)
+        .is_some_and(|bounds| bounds.x() + bounds.width() <= 0.0);
+    Some(check.is_some() && left_of_forward)
 }
 
 fn find_descendant(

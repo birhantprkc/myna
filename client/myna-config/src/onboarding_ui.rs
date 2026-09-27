@@ -275,6 +275,9 @@ impl OnboardingUi {
             forward.add_css_class("suggested-action");
         }
         forward.set_sensitive(!self.busy.get() && can_advance(step, &components));
+        self.window
+            .installed_status()
+            .set_visible(step == Step::Components && !needs_onboarding(&components));
 
         if step == Step::Components {
             self.render_components(&components);
