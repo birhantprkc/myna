@@ -5,8 +5,6 @@
 //! *what* is missing and how the user installs it; the strings the user reads
 //! live in `onboarding_ui`.
 
-use std::path::{Path, PathBuf};
-
 use crate::diagnostics::InstalledSnap;
 
 /// The client snap.
@@ -16,9 +14,6 @@ pub const MYNA_SNAP: &str = "myna";
 /// the matching model component, so a plain install is a working backend.
 pub const RECOMMENDED_BACKEND_SNAP: &str = "myna-parakeet";
 
-/// The GNOME Shell extension that hosts the HUD.
-pub const SHELL_EXTENSION_UUID: &str = "myna-shell@canonical.com";
-
 /// One thing onboarding checks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ComponentId {
@@ -26,8 +21,6 @@ pub enum ComponentId {
     Myna,
     /// A speech-to-text backend with its model.
     Model,
-    /// The GNOME Shell extension hosting the HUD.
-    ShellExtension,
 }
 
 /// Installs Myna from a terminal. The flag comes first: snapd refuses a snap
@@ -49,8 +42,6 @@ pub fn install_commands() -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Component {
     pub id: ComponentId,
-    /// Whether onboarding may finish without it.
-    pub required: bool,
     pub satisfied: bool,
 }
 
@@ -61,63 +52,34 @@ pub struct Component {
 pub struct Machine {
     pub myna_installed: bool,
     pub backend_discovered: bool,
-    pub shell_extension_installed: bool,
 }
 
 impl Machine {
-    pub fn new(
-        installed_snaps: &[InstalledSnap],
-        backends_discovered: usize,
-        shell_extension_installed: bool,
-    ) -> Self {
+    pub fn new(installed_snaps: &[InstalledSnap], backends_discovered: usize) -> Self {
         Self {
             myna_installed: installed_snaps.iter().any(|snap| snap.name == MYNA_SNAP),
             backend_discovered: backends_discovered > 0,
-            shell_extension_installed,
         }
     }
 }
 
-/// Assess every component, in the order the wizard lists them.
-///
-/// The extension is not required: dictation works without it (the daemon falls
-/// back to desktop notifications), and gating the flow on a manual
-/// `gnome-extensions` copy would strand every user who cannot perform it.
+/// Assess every component dictation needs.
 pub fn assess(machine: Machine) -> Vec<Component> {
     vec![
         Component {
             id: ComponentId::Myna,
-            required: true,
             satisfied: machine.myna_installed,
         },
         Component {
             id: ComponentId::Model,
-            required: true,
             satisfied: machine.backend_discovered,
-        },
-        Component {
-            id: ComponentId::ShellExtension,
-            required: false,
-            satisfied: machine.shell_extension_installed,
         },
     ]
 }
 
 /// Whether the wizard should open at all.
 pub fn needs_onboarding(components: &[Component]) -> bool {
-    components
-        .iter()
-        .any(|component| component.required && !component.satisfied)
-}
-
-/// A component the wizard should not list because there is nothing to do about
-/// it: a satisfied component whose row would only be reassurance.
-pub fn outstanding(components: &[Component]) -> Vec<Component> {
-    components
-        .iter()
-        .copied()
-        .filter(|component| !component.satisfied)
-        .collect()
+    components.iter().any(|component| !component.satisfied)
 }
 
 /// The wizard's steps, in order.
@@ -143,34 +105,13 @@ impl Step {
 }
 
 /// Whether the step's forward button is sensitive. Only the component step
-/// gates: every required component must be satisfied before the flow can
+/// gates: every component must be satisfied before the flow can
 /// claim dictation is set up.
 pub fn can_advance(step: Step, components: &[Component]) -> bool {
     match step {
         Step::Welcome | Step::Shortcut => true,
         Step::Components => !needs_onboarding(components),
     }
-}
-
-/// Where a GNOME Shell extension with [`SHELL_EXTENSION_UUID`] would be
-/// installed, per-user first.
-pub fn shell_extension_directories(data_home: &Path, system_data_dirs: &[PathBuf]) -> Vec<PathBuf> {
-    let mut directories: Vec<PathBuf> = Vec::new();
-    for directory in std::iter::once(data_home).chain(system_data_dirs.iter().map(PathBuf::as_path))
-    {
-        let candidate = extension_directory(directory);
-        if !directories.contains(&candidate) {
-            directories.push(candidate);
-        }
-    }
-    directories
-}
-
-fn extension_directory(data_directory: &Path) -> PathBuf {
-    data_directory
-        .join("gnome-shell")
-        .join("extensions")
-        .join(SHELL_EXTENSION_UUID)
 }
 
 #[cfg(test)]
@@ -186,42 +127,28 @@ mod tests {
 
     #[test]
     fn a_bare_machine_needs_onboarding() {
-        let components = assess(Machine::new(&[], 0, false));
-        assert!(needs_onboarding(&components));
-        assert_eq!(outstanding(&components).len(), 3);
-    }
-
-    #[test]
-    fn a_missing_shell_extension_alone_does_not_open_the_wizard() {
-        let machine = Machine::new(&[snap("myna")], 1, false);
-        let components = assess(machine);
-        assert!(!needs_onboarding(&components));
-        assert_eq!(
-            outstanding(&components)
-                .iter()
-                .map(|component| component.id)
-                .collect::<Vec<_>>(),
-            vec![ComponentId::ShellExtension]
-        );
+        assert!(needs_onboarding(&assess(Machine::new(&[], 0))));
     }
 
     #[test]
     fn an_installed_backend_snap_is_not_a_discovered_backend() {
         // The snap being on disk says nothing about it publishing the socket
         // interface; discovery is the only source for that.
-        let machine = Machine::new(&[snap("myna"), snap("myna-parakeet")], 0, true);
+        let machine = Machine::new(&[snap("myna"), snap("myna-parakeet")], 0);
         assert!(!machine.backend_discovered);
         assert!(needs_onboarding(&assess(machine)));
     }
 
     #[test]
-    fn the_component_step_gates_on_required_components_only() {
+    fn the_component_step_gates_on_every_component() {
         let bare = assess(Machine::default());
         assert!(can_advance(Step::Welcome, &bare));
         assert!(!can_advance(Step::Components, &bare));
 
-        let extension_missing = assess(Machine::new(&[snap("myna")], 1, false));
-        assert!(can_advance(Step::Components, &extension_missing));
+        let model_missing = assess(Machine::new(&[snap("myna")], 0));
+        assert!(!can_advance(Step::Components, &model_missing));
+        let ready = assess(Machine::new(&[snap("myna")], 1));
+        assert!(can_advance(Step::Components, &ready));
     }
 
     #[test]
@@ -245,26 +172,6 @@ mod tests {
             "sudo snap set system experimental.user-daemons=true\n\
              sudo snap install --edge myna\n\
              sudo snap install --edge myna-parakeet"
-        );
-    }
-
-    #[test]
-    fn extension_directories_are_user_first_and_deduplicated() {
-        let directories = shell_extension_directories(
-            Path::new("/home/user/.local/share"),
-            &[
-                PathBuf::from("/usr/share"),
-                PathBuf::from("/home/user/.local/share"),
-            ],
-        );
-        assert_eq!(
-            directories,
-            vec![
-                PathBuf::from(
-                    "/home/user/.local/share/gnome-shell/extensions/myna-shell@canonical.com"
-                ),
-                PathBuf::from("/usr/share/gnome-shell/extensions/myna-shell@canonical.com"),
-            ]
         );
     }
 }

@@ -518,7 +518,7 @@ fn onboarding_probe() -> glib::ExitCode {
     let window = {
         let ui = OnboardingUi::present_with_ports(
             &application,
-            assess(Machine::new(&installed, 1, true)),
+            assess(Machine::new(&installed, 1)),
             Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
                 std::sync::Arc::new(crate::command::FakeCommandRunner::default()),
             )),
@@ -551,7 +551,7 @@ fn onboarding_probe() -> glib::ExitCode {
     window.close();
     settle_gtk();
 
-    // A machine missing only the optional extension walks to the end, and
+    // A machine with everything installed walks to the end, and
     // finishing opens the settings window, as it does in production.
     let installed = [crate::diagnostics::InstalledSnap {
         name: crate::onboarding::MYNA_SNAP.to_owned(),
@@ -561,7 +561,7 @@ fn onboarding_probe() -> glib::ExitCode {
     let (window, shortcut_button) = {
         let ui = OnboardingUi::present_with_ports(
             &application,
-            assess(Machine::new(&installed, 1, false)),
+            assess(Machine::new(&installed, 1)),
             Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
                 std::sync::Arc::new(machine.clone()),
             )),
@@ -579,7 +579,7 @@ fn onboarding_probe() -> glib::ExitCode {
     forward.emit_clicked();
     settle_gtk();
     if !forward.is_sensitive() {
-        eprintln!("the component step refused to advance with only the extension missing");
+        eprintln!("the component step refused to advance with everything installed");
         return glib::ExitCode::FAILURE;
     }
     let reaches = |name: &str| {

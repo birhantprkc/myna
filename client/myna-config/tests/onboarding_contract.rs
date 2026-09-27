@@ -3,8 +3,8 @@
 
 use myna_config::diagnostics::InstalledSnap;
 use myna_config::onboarding::{
-    assess, can_advance, install_commands, needs_onboarding, outstanding, ComponentId, Machine,
-    Step, MYNA_INSTALL_COMMAND, MYNA_SNAP, RECOMMENDED_BACKEND_SNAP,
+    assess, can_advance, install_commands, needs_onboarding, ComponentId, Machine, Step, MYNA_SNAP,
+    RECOMMENDED_BACKEND_SNAP,
 };
 
 fn snap(name: &str) -> InstalledSnap {
@@ -16,16 +16,16 @@ fn snap(name: &str) -> InstalledSnap {
 
 #[test]
 fn a_machine_with_no_myna_opens_the_wizard() {
-    let components = assess(Machine::new(&[], 0, true));
+    let components = assess(Machine::new(&[], 1));
     assert!(needs_onboarding(&components));
-    assert!(outstanding(&components)
+    assert!(components
         .iter()
-        .any(|component| component.id == ComponentId::Myna));
+        .any(|component| component.id == ComponentId::Myna && !component.satisfied));
 }
 
 #[test]
 fn a_ready_machine_never_opens_the_wizard() {
-    let machine = Machine::new(&[snap(MYNA_SNAP)], 1, true);
+    let machine = Machine::new(&[snap(MYNA_SNAP)], 1);
     assert!(!needs_onboarding(&assess(machine)));
 }
 
@@ -33,30 +33,22 @@ fn a_ready_machine_never_opens_the_wizard() {
 /// so App Center's install would fail, and the command sets the flag first.
 #[test]
 fn myna_is_installed_from_a_terminal_with_user_daemons_enabled() {
-    let myna = assess(Machine::default())
-        .into_iter()
-        .find(|component| component.id == ComponentId::Myna)
-        .expect("the wizard assesses Myna");
-    assert!(myna.required);
-    let command = MYNA_INSTALL_COMMAND;
+    let command = install_commands();
     let flag = command
         .find("experimental.user-daemons=true")
         .expect("the command enables user daemons");
     assert!(flag < command.find("snap install").unwrap());
 }
 
-/// The extension is not published anywhere snapd can reach, and dictation
-/// works without it, so it must not block the flow.
+/// Dictation works without the shell extension, and onboarding no longer
+/// mentions it: only the two snaps are assessed.
 #[test]
-fn the_shell_extension_is_explained_and_does_not_gate_the_flow() {
-    let extension = assess(Machine::default())
-        .into_iter()
-        .find(|component| component.id == ComponentId::ShellExtension)
-        .expect("the wizard assesses the shell extension");
-    assert!(!extension.required);
-
-    let only_extension_missing = assess(Machine::new(&[snap(MYNA_SNAP)], 1, false));
-    assert!(can_advance(Step::Components, &only_extension_missing));
+fn the_wizard_assesses_only_the_two_snaps() {
+    let ids: Vec<ComponentId> = assess(Machine::default())
+        .iter()
+        .map(|component| component.id)
+        .collect();
+    assert_eq!(ids, [ComponentId::Myna, ComponentId::Model]);
 }
 
 #[test]

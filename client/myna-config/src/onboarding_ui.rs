@@ -19,7 +19,7 @@ use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::onboarding::{
-    assess, can_advance, outstanding, Component, Machine, Step, RECOMMENDED_BACKEND_SNAP,
+    assess, can_advance, needs_onboarding, Component, Machine, Step, RECOMMENDED_BACKEND_SNAP,
 };
 use crate::ports::{BackendRepository, SystemConfigurator};
 use crate::ui;
@@ -284,7 +284,7 @@ impl OnboardingUi {
     fn render_components(self: &Rc<Self>, components: &[Component]) {
         self.components_page
             .subtitle()
-            .set_label(&if outstanding(components).is_empty() {
+            .set_label(&if !needs_onboarding(components) {
                 gettextrs::gettext("Everything Dictation needs is installed.")
             } else {
                 gettextrs::gettext("You need to install some components for Dictation to work.")
@@ -323,21 +323,7 @@ pub async fn assess_machine(repository: &dyn BackendRepository) -> Vec<Component
         .await
         .map(|snapshot| snapshot.backends().len())
         .unwrap_or_default();
-    assess(Machine::new(
-        &installed,
-        backends,
-        shell_extension_installed(),
-    ))
-}
-
-/// Whether the HUD's GNOME Shell extension is installed for this user or
-/// system-wide.
-pub fn shell_extension_installed() -> bool {
-    let data_home = gio::glib::user_data_dir();
-    let system: Vec<std::path::PathBuf> = gio::glib::system_data_dirs();
-    crate::onboarding::shell_extension_directories(&data_home, &system)
-        .iter()
-        .any(|directory| directory.is_dir())
+    assess(Machine::new(&installed, backends))
 }
 
 fn step_name(step: Step) -> &'static str {
