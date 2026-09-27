@@ -46,7 +46,7 @@ msgstr ""
 msgid "Revert"
 msgstr ""
 
-#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:847
+#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:859
 msgid "About and Diagnostics"
 msgstr ""
 
@@ -116,7 +116,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:842
+#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:854
 msgid "Backend"
 msgstr ""
 
@@ -178,19 +178,19 @@ msgstr ""
 msgid "How to dictate"
 msgstr ""
 
-#: data/onboarding-welcome.blp:6
+#: data/onboarding-welcome.blp:24
 msgid "Set up Dictation"
 msgstr ""
 
-#: data/onboarding-welcome.blp:7
+#: data/onboarding-welcome.blp:35
 msgid "Dictation runs locally, with no data leaving your computer."
 msgstr ""
 
-#: data/onboarding-welcome.blp:10
+#: data/onboarding-welcome.blp:41
 msgid "Get started"
 msgstr ""
 
-#: data/onboarding-welcome.blp:14
+#: data/onboarding-welcome.blp:46
 msgid "Begin setting dictation up on this computer."
 msgstr ""
 
@@ -222,11 +222,11 @@ msgstr ""
 msgid "Copy the full failure details to the clipboard"
 msgstr ""
 
-#: data/status-page.blp:12 src/app.rs:837 src/app.rs:1828
+#: data/status-page.blp:12 src/app.rs:849 src/app.rs:1840
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:13 src/app.rs:838 src/app.rs:1829
+#: data/status-page.blp:13 src/app.rs:850 src/app.rs:1841
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -234,39 +234,39 @@ msgstr ""
 msgid "translator-credits"
 msgstr ""
 
-#: src/app.rs:428 src/onboarding_ui.rs:350
+#: src/app.rs:440 src/onboarding_ui.rs:350
 msgid "Copy Command"
 msgstr ""
 
-#: src/app.rs:455 src/onboarding_ui.rs:339
+#: src/app.rs:467 src/onboarding_ui.rs:339
 msgid "Install"
 msgstr ""
 
-#: src/app.rs:464 src/onboarding_ui.rs:359
+#: src/app.rs:476 src/onboarding_ui.rs:359
 msgid "How to install"
 msgstr ""
 
-#: src/app.rs:843
+#: src/app.rs:855
 msgid "Backend details will appear after discovery."
 msgstr ""
 
-#: src/app.rs:848
+#: src/app.rs:860
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:1833
+#: src/app.rs:1845
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:1834
+#: src/app.rs:1846
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:1850
+#: src/app.rs:1862
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:2203
+#: src/app.rs:2215
 msgid "Could not save the setting"
 msgstr ""
 

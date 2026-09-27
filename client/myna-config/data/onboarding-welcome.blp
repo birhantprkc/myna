@@ -2,17 +2,51 @@ using Gtk 4.0;
 using Adw 1;
 
 template $OnboardingWelcome: Adw.Bin {
-  child: Adw.StatusPage status {
-    title: _("Set up Dictation");
-    description: _("Dictation runs locally, with no data leaving your computer.");
+  child: Gtk.ScrolledWindow {
+    hscrollbar-policy: never;
 
-    child: Gtk.Button start_button {
-      label: _("Get started");
-      halign: center;
+    child: Adw.Clamp {
+      maximum-size: 540;
+      valign: center;
+      margin-start: 24;
+      margin-end: 24;
 
-      accessibility {
-        description: _("Begin setting dictation up on this computer.");
-      }
+      child: Gtk.Box {
+        orientation: vertical;
+
+        Gtk.Image {
+          icon-name: "com.canonical.Myna.Config";
+          pixel-size: 96;
+          margin-bottom: 12;
+        }
+
+        Gtk.Label {
+          label: _("Set up Dictation");
+          justify: center;
+          wrap: true;
+          margin-bottom: 8;
+
+          styles [
+            "onboarding-title",
+          ]
+        }
+
+        Gtk.Label {
+          label: _("Dictation runs locally, with no data leaving your computer.");
+          justify: center;
+          wrap: true;
+        }
+
+        Gtk.Button start_button {
+          label: _("Get started");
+          halign: center;
+          margin-top: 24;
+
+          accessibility {
+            description: _("Begin setting dictation up on this computer.");
+          }
+        }
+      };
     };
   };
 }

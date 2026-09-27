@@ -372,6 +372,18 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-icon: themed");
+    let icon = find_descendant(window.upcast_ref(), &|widget| {
+        widget.downcast_ref::<gtk::Image>().is_some_and(|image| {
+            image.is_mapped()
+                && image.icon_name().as_deref() == Some(APP_ID)
+                && image.pixel_size() == 96
+        })
+    });
+    if icon.is_none() {
+        eprintln!("the welcome step shows no 96 px application icon");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-welcome: icon shown");
     start_button.emit_clicked();
     settle_gtk();
     if step(&window) != "components" {
@@ -736,7 +748,7 @@ fn template_probe() -> glib::ExitCode {
     );
     println!("DiagnosticsPage");
     let welcome = ui::OnboardingWelcome::new();
-    let _ = (welcome.status(), welcome.start_button());
+    let _ = welcome.start_button();
     println!("OnboardingWelcome");
     let components = ui::OnboardingComponents::new();
     let _ = (components.subtitle(), components.list());

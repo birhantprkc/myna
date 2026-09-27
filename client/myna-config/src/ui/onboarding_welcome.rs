@@ -11,8 +11,6 @@ mod imp {
     #[template(resource = "/com/canonical/Myna/Config/ui/onboarding-welcome.ui")]
     pub struct OnboardingWelcome {
         #[template_child]
-        pub status: gtk::TemplateChild<adw::StatusPage>,
-        #[template_child]
         pub start_button: gtk::TemplateChild<gtk::Button>,
     }
 
@@ -46,10 +44,6 @@ impl OnboardingWelcome {
     pub fn new() -> Self {
         super::register_resources();
         glib::Object::builder().build()
-    }
-
-    pub fn status(&self) -> adw::StatusPage {
-        self.imp().status.get()
     }
 
     pub fn start_button(&self) -> gtk::Button {

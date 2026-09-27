@@ -22,3 +22,9 @@
   padding: 2px 8px;
   font-size: 1em;
 }
+
+/* Onboarding step titles: larger than body text, but regular weight. */
+.onboarding-title {
+  font-size: 24px;
+  font-weight: normal;
+}
