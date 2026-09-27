@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-27 23:40+0100\n"
+"POT-Creation-Date: 2026-09-28 00:15+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,7 +46,7 @@ msgstr ""
 msgid "Revert"
 msgstr ""
 
-#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:839
+#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:847
 msgid "About and Diagnostics"
 msgstr ""
 
@@ -102,7 +102,7 @@ msgstr ""
 msgid "Read-only privacy-safe diagnostic text."
 msgstr ""
 
-#: data/main-window.blp:9 src/app.rs:115 src/diagnostics.rs:385
+#: data/main-window.blp:9 src/app.rs:116 src/diagnostics.rs:385
 #: data/com.canonical.Myna.Config.metainfo.xml:8
 #: data/com.canonical.Myna.Config.desktop:3
 msgid "Myna Settings"
@@ -116,7 +116,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:834
+#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:842
 msgid "Backend"
 msgstr ""
 
@@ -222,51 +222,51 @@ msgstr ""
 msgid "Copy the full failure details to the clipboard"
 msgstr ""
 
-#: data/status-page.blp:12 src/app.rs:829 src/app.rs:1809
+#: data/status-page.blp:12 src/app.rs:837 src/app.rs:1828
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:13 src/app.rs:830 src/app.rs:1810
+#: data/status-page.blp:13 src/app.rs:838 src/app.rs:1829
 msgid "Reading the installed settings schema…"
 msgstr ""
 
-#: src/app.rs:123
+#: src/app.rs:124
 msgid "translator-credits"
 msgstr ""
 
-#: src/app.rs:420 src/onboarding_ui.rs:350
+#: src/app.rs:428 src/onboarding_ui.rs:350
 msgid "Copy Command"
 msgstr ""
 
-#: src/app.rs:447 src/onboarding_ui.rs:339
+#: src/app.rs:455 src/onboarding_ui.rs:339
 msgid "Install"
 msgstr ""
 
-#: src/app.rs:456 src/onboarding_ui.rs:359
+#: src/app.rs:464 src/onboarding_ui.rs:359
 msgid "How to install"
 msgstr ""
 
-#: src/app.rs:835
+#: src/app.rs:843
 msgid "Backend details will appear after discovery."
 msgstr ""
 
-#: src/app.rs:840
+#: src/app.rs:848
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:1814
+#: src/app.rs:1833
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:1815
+#: src/app.rs:1834
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:1831
+#: src/app.rs:1850
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:2184
+#: src/app.rs:2203
 msgid "Could not save the setting"
 msgstr ""
 

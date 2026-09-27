@@ -173,6 +173,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
     assert!(output.status.success(), "onboarding probe failed: {stderr}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in [
+        "onboarding-icon: themed",
         "onboarding-start: advanced",
         "onboarding-layout: forward in view",
         "onboarding-gate: held",

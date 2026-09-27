@@ -26,6 +26,7 @@ const ONBOARDING_ENV: &str = "MYNA_CONFIG_ONBOARDING_TEST";
 const SHORTCUT_ENV: &str = "MYNA_CONFIG_SHORTCUT_TEST";
 const SHORTCUT_CONTROL_ENV: &str = "MYNA_CONFIG_SHORTCUT_CONTROL_TEST";
 const BACKENDS_ENV: &str = "MYNA_CONFIG_BACKENDS_TEST";
+const ICON_RESOURCES: &str = "/com/canonical/Myna/Config/icons";
 /// The probes must never claim the real application id: registering it while a
 /// Myna Settings is already running takes the remote-instance path, and
 /// `gtk_window_set_application` then segfaults against an application that was
@@ -364,6 +365,13 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("the wizard did not open on its first step");
         return glib::ExitCode::FAILURE;
     }
+    // Headless runs have no hicolor copy, so the icon must come from the
+    // application's own resources.
+    if !gtk::IconTheme::for_display(&gtk::prelude::WidgetExt::display(&window)).has_icon(APP_ID) {
+        eprintln!("the icon theme does not find the application icon");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-icon: themed");
     start_button.emit_clicked();
     settle_gtk();
     if step(&window) != "components" {
@@ -916,11 +924,22 @@ fn apply_appearance_policy(window: &gtk::Widget) {
 pub(crate) fn install_appearance_policy(window: &gtk::Widget) {
     let provider = gtk::CssProvider::new();
     provider.load_from_resource("/com/canonical/Myna/Config/ui/appearance.css");
+    let display = gtk::prelude::WidgetExt::display(window);
     gtk::style_context_add_provider_for_display(
-        &gtk::prelude::WidgetExt::display(window),
+        &display,
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+    // The application id's resource path covers this only under that id, and
+    // the probes run under others.
+    let icons = gtk::IconTheme::for_display(&display);
+    if !icons
+        .resource_path()
+        .iter()
+        .any(|path| path == ICON_RESOURCES)
+    {
+        icons.add_resource_path(ICON_RESOURCES);
+    }
     apply_appearance_policy(window);
     if let Some(settings) = gtk::Settings::default() {
         settings.connect_gtk_enable_animations_notify(glib::clone!(

@@ -31,11 +31,16 @@ fn main() {
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     let data_dir = manifest_dir.join("data");
+    let icon_dir = manifest_dir.join("../data/icons/hicolor/scalable/apps");
     let typelib_paths = typelib_paths();
 
     println!(
         "cargo:rerun-if-changed={}",
         data_dir.join("myna-config.gresource.xml").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        icon_dir.join("com.canonical.Myna.Config.svg").display()
     );
     for (source, _) in BLUEPRINTS {
         println!("cargo:rerun-if-changed={}", data_dir.join(source).display());
@@ -54,7 +59,7 @@ fn main() {
     }
 
     glib_build_tools::compile_resources(
-        &[out_dir.as_path(), data_dir.as_path()],
+        &[out_dir.as_path(), data_dir.as_path(), icon_dir.as_path()],
         "data/myna-config.gresource.xml",
         "myna-config.gresource",
     );

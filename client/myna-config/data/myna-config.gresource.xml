@@ -17,4 +17,7 @@
     <file>shortcut-dialog.ui</file>
     <file>status-page.ui</file>
   </gresource>
+  <gresource prefix="/com/canonical/Myna/Config/icons/scalable/apps">
+    <file>com.canonical.Myna.Config.svg</file>
+  </gresource>
 </gresources>
