@@ -4,13 +4,8 @@ using Adw 1;
 template $StatusPage: Adw.NavigationPage {
   title: _("Myna");
 
-  child: Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar {}
-
-    content: Adw.StatusPage status {
-      title: _("Loading Myna Settings");
-      description: _("Reading the installed settings schema…");
-    };
+  child: Adw.StatusPage status {
+    title: _("Loading Myna Settings");
+    description: _("Reading the installed settings schema…");
   };
 }

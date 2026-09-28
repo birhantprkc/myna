@@ -64,3 +64,22 @@ impl Default for StatusPage {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_header_bar(widget: &gtk::Widget) -> bool {
+        widget.is::<adw::HeaderBar>()
+            || std::iter::successors(widget.first_child(), |child| child.next_sibling())
+                .any(|child| has_header_bar(&child))
+    }
+
+    #[test]
+    fn a_status_page_leaves_the_header_to_its_window() {
+        crate::ui::on_gtk_thread(|| {
+            let page = StatusPage::new();
+            assert!(!has_header_bar(page.upcast_ref()));
+        });
+    }
+}
