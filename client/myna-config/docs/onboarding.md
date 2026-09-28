@@ -5,6 +5,9 @@ opened on a machine where dictation is not installed at all. When that is the
 case it opens a three-step wizard instead of the settings window.
 
 Every step leaves through one footer button: Next, and Done on the last step.
+Done closes the wizard onto the settings window. The design quits the
+application instead; the window stays because it is where the key and the
+backend are changed later.
 The welcome step shows the application icon from the application's own
 resources, so it does not depend on the installed hicolor copy, which the
 headless probes lack.
@@ -86,7 +89,9 @@ The daemon publishes `Activation` (`portal` or `control`) and, under the portal,
 the portal's description of the binding as `Shortcut`. The last step and the Myna
 page follow both through a live proxy, so a rebind elsewhere shows up at once.
 Not running disables the button; no `Shortcut` from an older daemon is treated
-as bound.
+as bound. A bound key reads "You can trigger Dictation anytime by using the
+keyboard shortcut:" over its key caps on the last step; the other states say
+what is missing instead.
 
 **Portal.** Set up shortcut calls `BindShortcut("")`: the daemon offers `LOGO+j`
 (Super+J) to the portal's dialog, because the portal files a binding under the
