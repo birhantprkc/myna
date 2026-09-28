@@ -38,7 +38,9 @@ not cover it. Closing the wizard rediscovers, since it may have changed both.
 
 The application installs nothing itself. The component step shows one block of
 three commands, always all three, with a copy button that puts them on the
-clipboard as they are shown:
+clipboard as they are shown. Each command stays on one line; a window too
+narrow for one scrolls the block sideways, since a command broken across
+lines reads as two:
 
     sudo snap set system experimental.user-daemons=true
     sudo snap install --edge myna

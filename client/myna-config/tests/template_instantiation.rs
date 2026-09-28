@@ -181,6 +181,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-gate: held",
         "onboarding-wrap: components paragraph balanced",
         "onboarding-commands: the block copies all three",
+        "onboarding-commands: one line each when narrow",
         "onboarding-rows: none",
         "onboarding-refresh: re-read on focus",
         "onboarding-poll: found without focus",

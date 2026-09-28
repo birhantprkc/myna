@@ -35,15 +35,18 @@ template $OnboardingComponents: Adw.Bin {
             "command-block",
           ]
 
-          Gtk.Label commands {
+          Gtk.ScrolledWindow {
             hexpand: true;
-            xalign: 0;
-            wrap: true;
-            wrap-mode: word_char;
+            vscrollbar-policy: never;
+            propagate-natural-width: true;
 
-            styles [
-              "monospace",
-            ]
+            child: Gtk.Label commands {
+              xalign: 0;
+
+              styles [
+                "monospace",
+              ]
+            };
           }
 
           Gtk.Button copy_button {

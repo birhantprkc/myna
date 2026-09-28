@@ -496,9 +496,8 @@ fn onboarding_probe() -> glib::ExitCode {
     };
     let commands = crate::onboarding::install_commands();
     let in_block = |widget: &gtk::Widget| {
-        widget
-            .parent()
-            .is_some_and(|parent| parent.has_css_class("command-block"))
+        std::iter::successors(widget.parent(), |parent| parent.parent())
+            .any(|parent| parent.has_css_class("command-block"))
     };
     let shown = find_descendant(window.upcast_ref(), &|widget| {
         in_block(widget)
@@ -526,6 +525,24 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-commands: the block copies all three");
+    // A command broken across lines reads as two; a narrow window scrolls it.
+    let narrow = gtk::Window::builder()
+        .default_width(360)
+        .default_height(294)
+        .build();
+    let page = ui::OnboardingComponents::new();
+    page.commands().set_label(&commands);
+    narrow.set_child(Some(&page));
+    narrow.present();
+    settle_gtk();
+    let lines = page.commands().layout().line_count();
+    let width = narrow.width();
+    narrow.close();
+    if lines != 3 || width > 360 {
+        eprintln!("a 360 px window shows the commands on {lines} lines at {width} px");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-commands: one line each when narrow");
     let rows = find_descendant(window.upcast_ref(), &|widget| {
         widget.is_mapped() && (widget.is::<gtk::ListBox>() || widget.is::<adw::ActionRow>())
     });
