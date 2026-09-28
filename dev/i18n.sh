@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRATES=(
     "client/myna-desktop:"
     "client/myna-orchestrator:--keyword=tr"
-    "client/myna-config:--keyword=_"
+    "client/myna-config:--keyword=_ --keyword=ngettext:1,2 --keyword=pgettext:1c,2"
 )
 
 check=0

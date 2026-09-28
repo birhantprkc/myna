@@ -28,6 +28,172 @@ impl ModelFamily {
             .into_iter()
             .find(|family| family.snap_name() == snap_name)
     }
+
+    /// The languages the family transcribes, as its card lists them, the
+    /// most widely spoken first.
+    pub fn languages(self) -> &'static [&'static str] {
+        match self {
+            Self::Parakeet => PARAKEET_LANGUAGES,
+            Self::Whisper => WHISPER_LANGUAGES,
+            Self::FunAsr => FUNASR_LANGUAGES,
+        }
+    }
+}
+
+/// The parakeet-tdt-0.6b-v3 card's 25 languages.
+const PARAKEET_LANGUAGES: &[&str] = &[
+    "en", "de", "fr", "es", "it", "pt", "ru", "pl", "uk", "nl", "ro", "cs", "el", "hu", "sv", "bg",
+    "da", "fi", "sk", "hr", "lt", "sl", "lv", "et", "mt",
+];
+
+/// SenseVoice-Small, the model myna-funasr ships.
+const FUNASR_LANGUAGES: &[&str] = &["zh", "en", "yue", "ja", "ko"];
+
+/// Whisper's 99 languages in its tokenizer's order, which follows the
+/// training data. Whisper's own code for Javanese is `jw`; this is ISO `jv`.
+const WHISPER_LANGUAGES: &[&str] = &[
+    "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it",
+    "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur",
+    "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn",
+    "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si",
+    "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo",
+    "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln",
+    "ha", "ba", "jv", "su",
+];
+
+const ENDONYMS: &[(&str, &str)] = &[
+    ("af", "Afrikaans"),
+    ("am", "አማርኛ"),
+    ("ar", "العربية"),
+    ("as", "অসমীয়া"),
+    ("az", "Azərbaycan"),
+    ("ba", "Башҡорт"),
+    ("be", "Беларуская"),
+    ("bg", "Български"),
+    ("bn", "বাংলা"),
+    ("bo", "བོད་སྐད་"),
+    ("br", "Brezhoneg"),
+    ("bs", "Bosanski"),
+    ("ca", "Català"),
+    ("cs", "Čeština"),
+    ("cy", "Cymraeg"),
+    ("da", "Dansk"),
+    ("de", "Deutsch"),
+    ("el", "Ελληνικά"),
+    ("en", "English"),
+    ("es", "Español"),
+    ("et", "Eesti"),
+    ("eu", "Euskara"),
+    ("fa", "فارسی"),
+    ("fi", "Suomi"),
+    ("fo", "Føroyskt"),
+    ("fr", "Français"),
+    ("gl", "Galego"),
+    ("gu", "ગુજરાતી"),
+    ("ha", "Hausa"),
+    ("haw", "ʻŌlelo Hawaiʻi"),
+    ("he", "עברית"),
+    ("hi", "हिन्दी"),
+    ("hr", "Hrvatski"),
+    ("ht", "Kreyòl ayisyen"),
+    ("hu", "Magyar"),
+    ("hy", "Հայերեն"),
+    ("id", "Bahasa Indonesia"),
+    ("is", "Íslenska"),
+    ("it", "Italiano"),
+    ("ja", "日本語"),
+    ("jv", "Basa Jawa"),
+    ("ka", "ქართული"),
+    ("kk", "Қазақ тілі"),
+    ("km", "ខ្មែរ"),
+    ("kn", "ಕನ್ನಡ"),
+    ("ko", "한국어"),
+    ("la", "Latina"),
+    ("lb", "Lëtzebuergesch"),
+    ("ln", "Lingála"),
+    ("lo", "ລາວ"),
+    ("lt", "Lietuvių"),
+    ("lv", "Latviešu"),
+    ("mg", "Malagasy"),
+    ("mi", "Māori"),
+    ("mk", "Македонски"),
+    ("ml", "മലയാളം"),
+    ("mn", "Монгол"),
+    ("mr", "मराठी"),
+    ("ms", "Bahasa Melayu"),
+    ("mt", "Malti"),
+    ("my", "မြန်မာ"),
+    ("ne", "नेपाली"),
+    ("nl", "Nederlands"),
+    ("nn", "Nynorsk"),
+    ("no", "Norsk"),
+    ("oc", "Occitan"),
+    ("pa", "ਪੰਜਾਬੀ"),
+    ("pl", "Polski"),
+    ("ps", "پښتو"),
+    ("pt", "Português"),
+    ("ro", "Română"),
+    ("ru", "Русский"),
+    ("sa", "संस्कृतम्"),
+    ("sd", "سنڌي"),
+    ("si", "සිංහල"),
+    ("sk", "Slovenčina"),
+    ("sl", "Slovenščina"),
+    ("sn", "ChiShona"),
+    ("so", "Soomaali"),
+    ("sq", "Shqip"),
+    ("sr", "Српски"),
+    ("su", "Basa Sunda"),
+    ("sv", "Svenska"),
+    ("sw", "Kiswahili"),
+    ("ta", "தமிழ்"),
+    ("te", "తెలుగు"),
+    ("tg", "Тоҷикӣ"),
+    ("th", "ไทย"),
+    ("tk", "Türkmen"),
+    ("tl", "Tagalog"),
+    ("tr", "Türkçe"),
+    ("tt", "Татар"),
+    ("uk", "Українська"),
+    ("ur", "اردو"),
+    ("uz", "Oʻzbek"),
+    ("vi", "Tiếng Việt"),
+    ("yi", "ייִדיש"),
+    ("yo", "Yorùbá"),
+    ("yue", "粵語"),
+    ("zh", "中文"),
+];
+
+/// `language`'s name in itself, capitalised as a language chooser lists it.
+pub fn endonym(language: &str) -> Option<&'static str> {
+    ENDONYMS
+        .iter()
+        .find(|(code, _)| *code == language)
+        .map(|(_, name)| *name)
+}
+
+/// Locale language codes the model cards spell otherwise: glibc's Bokmål
+/// and Filipino, and the pre-1989 ISO codes some locale aliases still use.
+const ALIASES: &[(&str, &str)] = &[
+    ("nb", "no"),
+    ("fil", "tl"),
+    ("iw", "he"),
+    ("in", "id"),
+    ("ji", "yi"),
+];
+
+/// The bare code of the most preferred language, the one the recommendation
+/// is for, spelled as the model cards spell it.
+pub fn user_language<S: AsRef<str>>(preferred: &[S]) -> Option<String> {
+    let language = preferred
+        .iter()
+        .find_map(|locale| language_code(locale.as_ref()))?;
+    Some(
+        ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == language)
+            .map_or(language, |(_, code)| (*code).to_owned()),
+    )
 }
 
 /// A published error rate (WER or CER, percent) of one family on one
@@ -106,9 +272,7 @@ fn recommend_among<S: AsRef<str>>(
     preferred: &[S],
     candidates: &[ModelFamily],
 ) -> Option<ModelFamily> {
-    let language = preferred
-        .iter()
-        .find_map(|locale| language_code(locale.as_ref()));
+    let language = user_language(preferred);
     let measured = language.as_deref().and_then(|language| {
         TABLE
             .iter()
@@ -217,6 +381,86 @@ mod tests {
             );
             assert!(entry.error_rate > 0.0 && entry.error_rate < 100.0);
         }
+    }
+
+    #[test]
+    fn each_family_covers_what_its_card_lists() {
+        assert_eq!(Parakeet.languages().len(), 25);
+        assert_eq!(FunAsr.languages().len(), 5);
+        assert_eq!(Whisper.languages().len(), 99);
+        for family in [Parakeet, FunAsr] {
+            let mut measured: Vec<&str> = TABLE
+                .iter()
+                .filter(|entry| entry.family == family)
+                .map(|entry| entry.language)
+                .collect();
+            let mut covered = family.languages().to_vec();
+            measured.sort_unstable();
+            covered.sort_unstable();
+            assert_eq!(covered, measured, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn every_covered_language_has_one_endonym() {
+        for family in ModelFamily::ALL {
+            let languages = family.languages();
+            for (index, language) in languages.iter().enumerate() {
+                assert!(endonym(language).is_some(), "{language}");
+                assert_eq!(
+                    language_code(language).as_deref(),
+                    Some(*language),
+                    "{language}"
+                );
+                assert!(
+                    !languages[..index].contains(language),
+                    "{family:?} lists {language} twice"
+                );
+            }
+        }
+        for (index, (language, name)) in ENDONYMS.iter().enumerate() {
+            assert!(
+                ENDONYMS[..index].iter().all(|(other, _)| other != language),
+                "{language}"
+            );
+            assert_eq!(name.trim(), *name);
+            assert!(!name.is_empty());
+        }
+    }
+
+    #[test]
+    fn languages_are_named_in_themselves() {
+        assert_eq!(endonym("en"), Some("English"));
+        assert_eq!(endonym("de"), Some("Deutsch"));
+        assert_eq!(endonym("fr"), Some("Français"));
+        assert_eq!(endonym("zh"), Some("中文"));
+        assert_eq!(endonym("yue"), Some("粵語"));
+        assert_eq!(endonym("ja"), Some("日本語"));
+        assert_eq!(endonym("xx"), None);
+        assert_eq!(endonym("de_DE"), None, "a bare code, not a locale");
+    }
+
+    #[test]
+    fn the_user_language_is_the_most_preferred_one_bare() {
+        assert_eq!(user_language(&["de_CH.UTF-8", "en"]).as_deref(), Some("de"));
+        assert_eq!(user_language(&["C", "zh_TW"]).as_deref(), Some("zh"));
+        assert_eq!(user_language(&["C", "POSIX"]), None);
+        assert_eq!(user_language::<&str>(&[]), None);
+    }
+
+    #[test]
+    fn locale_codes_resolve_to_the_code_the_models_list() {
+        for (locale, language) in [
+            ("nb_NO.UTF-8", "no"),
+            ("fil_PH", "tl"),
+            ("iw_IL", "he"),
+            ("in_ID", "id"),
+            ("ji_US", "yi"),
+        ] {
+            assert_eq!(user_language(&[locale]).as_deref(), Some(language));
+            assert!(Whisper.languages().contains(&language), "{language}");
+        }
+        assert_eq!(user_language(&["nn_NO"]).as_deref(), Some("nn"));
     }
 
     #[test]

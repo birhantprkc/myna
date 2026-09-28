@@ -35,7 +35,9 @@ use crate::diagnostics::{
 use crate::domain::{ActiveBackendState, BackendIdentity, ConfigValue, ServiceState};
 use crate::markup::escape_markup;
 use crate::model_family::{
-    installable_families, is_recommended, model_family, recommended_first, store_uri,
+    coverage, coverage_cell, coverage_columns, coverage_count, coverage_summary,
+    installable_families, is_recommended, model_family, recommendation_label, recommended_first,
+    store_uri, Coverage, Named,
 };
 use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::performance::PerformanceFacts;
@@ -49,6 +51,8 @@ struct ModelRow {
     /// None when the row is the only model and already connected.
     radio: Option<gtk::CheckButton>,
     pill: gtk::Label,
+    /// None for a backend of no known family.
+    languages: Option<gtk::MenuButton>,
     spinner: gtk::Spinner,
 }
 
@@ -82,11 +86,128 @@ fn recommended_pill() -> gtk::Label {
         .build()
 }
 
+/// Shows `named` on `label`, each language name shaped as that language.
+fn set_named(label: &gtk::Label, named: &Named) {
+    label.set_label(&named.text);
+    let attributes = gtk::pango::AttrList::new();
+    for (range, endonym) in &named.names {
+        let Some(code) = endonym.pango_language() else {
+            continue;
+        };
+        let mut language = gtk::pango::AttrLanguage::new(&gtk::pango::Language::from_string(code));
+        language.set_start_index(range.start as u32);
+        language.set_end_index(range.end as u32);
+        attributes.insert(language);
+    }
+    label.set_attributes(Some(&attributes));
+}
+
+/// A flat, dimmed button summarising `family`'s languages that opens the
+/// full list, built afresh each time for the language `user_language` then
+/// returns. Its own label child keeps GTK from drawing a dropdown arrow.
+fn languages_button(
+    family: myna_core::language::ModelFamily,
+    user_language: impl Fn() -> Option<String> + 'static,
+) -> gtk::MenuButton {
+    let button = gtk::MenuButton::builder()
+        .valign(gtk::Align::Center)
+        .css_classes(["flat", "languages-button"])
+        .child(
+            &gtk::Label::builder()
+                .css_classes(["dim-label", "caption"])
+                .build(),
+        )
+        .build();
+    button.set_create_popup_func(move |button| {
+        let coverage = coverage(family, user_language().as_deref());
+        button.set_popover(Some(&languages_popover(&coverage)));
+    });
+    button.update_property(
+        &[gtk::accessible::Property::Description(&gettextrs::gettext(
+            "Languages",
+        ))],
+    );
+    show_languages(&button, family, None);
+    button
+}
+
+fn show_languages(
+    button: &gtk::MenuButton,
+    family: myna_core::language::ModelFamily,
+    user_language: Option<&str>,
+) {
+    let summary = coverage_summary(&coverage(family, user_language));
+    if let Some(label) = button.child().and_downcast::<gtk::Label>() {
+        set_named(&label, &summary);
+    }
+    // Otherwise the name takes in the open popover's text too.
+    button.update_property(&[gtk::accessible::Property::Label(&summary.text)]);
+}
+
+fn languages_popover(coverage: &Coverage) -> gtk::Popover {
+    let count = coverage.languages.len();
+    let columns: Vec<gtk::Box> = (0..coverage_columns(count))
+        .map(|_| {
+            gtk::Box::builder()
+                .orientation(gtk::Orientation::Vertical)
+                .spacing(6)
+                .build()
+        })
+        .collect();
+    let names = gtk::Box::builder()
+        .css_classes(["language-columns"])
+        .spacing(24)
+        .build();
+    for column in &columns {
+        names.append(column);
+    }
+    for (index, endonym) in coverage.languages.iter().enumerate() {
+        let label = gtk::Label::builder().xalign(0.0).build();
+        set_named(&label, &Named::of(*endonym));
+        if index == 0 && coverage.user_first {
+            label.add_css_class("heading");
+            label.add_css_class("accent");
+            label.update_property(
+                &[gtk::accessible::Property::Description(&gettextrs::gettext(
+                    "Your language",
+                ))],
+            );
+        }
+        let (column, _) = coverage_cell(index, count, columns.len());
+        columns[column].append(&label);
+    }
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .margin_top(6)
+        .margin_bottom(6)
+        .margin_start(6)
+        .margin_end(6)
+        .build();
+    content.append(
+        &gtk::Label::builder()
+            .label(coverage_count(coverage))
+            .xalign(0.0)
+            .css_classes(["heading"])
+            .build(),
+    );
+    content.append(
+        &gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .max_content_height(320)
+            .child(&names)
+            .build(),
+    );
+    gtk::Popover::builder().child(&content).build()
+}
+
 /// One activatable row per family, `recommended` with its pill; activating a
 /// row hands its family to `choose`.
 fn install_models_dialog(
     families: &[myna_core::language::ModelFamily],
     recommended: Option<myna_core::language::ModelFamily>,
+    user_language: Option<String>,
     choose: impl Fn(&ui::InstallModelsDialog, myna_core::language::ModelFamily) + 'static,
 ) -> ui::InstallModelsDialog {
     let dialog = ui::InstallModelsDialog::new();
@@ -101,10 +222,23 @@ fn install_models_dialog(
         if let Some(description) = &shown.description {
             row.set_subtitle(description);
         }
-        let pill = (recommended == Some(family)).then(recommended_pill);
+        let pill = (recommended == Some(family)).then(|| {
+            let pill = recommended_pill();
+            set_named(
+                &pill,
+                &recommendation_label(family, user_language.as_deref()),
+            );
+            pill
+        });
         if let Some(pill) = &pill {
             row.add_suffix(pill);
         }
+        let languages = languages_button(family, {
+            let user_language = user_language.clone();
+            move || user_language.clone()
+        });
+        show_languages(&languages, family, user_language.as_deref());
+        row.add_suffix(&languages);
         row.add_suffix(&gtk::Image::from_icon_name("adw-external-link-symbolic"));
         row.reset_relation(gtk::AccessibleRelation::DescribedBy);
         let pill_text = pill.as_ref().map(gtk::Label::label);
@@ -543,12 +677,23 @@ impl BackendUi {
 
         let chosen = self.active_backend.chosen();
         let switching_to = self.active_backend.switching_to();
+        let user_language = self.user_language();
         self.marking_models.set(true);
         for row in self.model_rows.borrow().iter() {
             if let Some(radio) = &row.radio {
                 radio.set_active(chosen.as_ref() == Some(&row.backend));
             }
+            let family = myna_core::language::ModelFamily::from_snap_name(row.backend.snap_name());
+            if let (Some(languages), Some(family)) = (&row.languages, family) {
+                show_languages(languages, family, user_language.as_deref());
+            }
             let recommended = is_recommended(&row.backend, recommended);
+            if let (true, Some(family)) = (recommended, family) {
+                set_named(
+                    &row.pill,
+                    &recommendation_label(family, user_language.as_deref()),
+                );
+            }
             row.pill.set_visible(recommended);
             let subtitle = row.row.subtitle();
             let pill = row.pill.label();
@@ -630,7 +775,17 @@ impl BackendUi {
             } else {
                 row.reset_relation(gtk::AccessibleRelation::DescribedBy);
             }
+            let languages = myna_core::language::ModelFamily::from_snap_name(backend.snap_name())
+                .map(|family| {
+                    let ui = self.this.clone();
+                    languages_button(family, move || {
+                        ui.upgrade().and_then(|ui| ui.user_language())
+                    })
+                });
             row.add_suffix(&pill);
+            if let Some(languages) = &languages {
+                row.add_suffix(languages);
+            }
             row.add_suffix(&spinner);
             group.add(&row);
             rows.push(ModelRow {
@@ -638,6 +793,7 @@ impl BackendUi {
                 row,
                 radio,
                 pill,
+                languages,
                 spinner,
             });
         }
@@ -650,6 +806,14 @@ impl BackendUi {
             .borrow()
             .as_deref()
             .map(myna_core::language::recommend)
+    }
+
+    /// The language the recommendation is for, once it is known.
+    fn user_language(&self) -> Option<String> {
+        self.preferred_languages
+            .borrow()
+            .as_deref()
+            .and_then(myna_core::language::user_language)
     }
 
     fn connect_install_button(self: &Rc<Self>) {
@@ -670,10 +834,15 @@ impl BackendUi {
         let recommended = self.recommended();
         let families = installable_families(self.active_backend.snapshot().backends(), recommended);
         let overlay = self.overlay.clone();
-        install_models_dialog(&families, recommended, move |dialog, family| {
-            open_in_app_center(&overlay, family);
-            dialog.close();
-        })
+        install_models_dialog(
+            &families,
+            recommended,
+            self.user_language(),
+            move |dialog, family| {
+                open_in_app_center(&overlay, family);
+                dialog.close();
+            },
+        )
     }
 
     fn present_install_models(&self) {
@@ -3086,20 +3255,87 @@ mod tests {
         });
     }
 
+    /// The pill's text when `row` shows one.
+    fn shown_pill(row: &adw::ActionRow) -> Option<String> {
+        descendants(row.upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+            .find(|label| label.has_css_class("recommended-pill") && label.is_visible())
+            .map(|label| label.label().to_string())
+    }
+
+    /// The button naming `row`'s languages, when its family is known.
+    fn languages_button(row: &adw::ActionRow) -> Option<gtk::MenuButton> {
+        descendants(row.upcast_ref())
+            .into_iter()
+            .find_map(|widget| widget.downcast::<gtk::MenuButton>().ok())
+    }
+
     /// The General tab's model rows in order, each with whether it shows the
     /// Recommended pill.
     fn recommended_rows(ui: &BackendUi) -> Vec<(String, bool)> {
-        let pill = gettextrs::gettext("Recommended");
+        listed_rows(ui)
+            .into_iter()
+            .map(|row| (row.title().to_string(), shown_pill(&row).is_some()))
+            .collect()
+    }
+
+    /// The General tab's model rows: title, pill text, languages summary.
+    fn pills_and_languages(ui: &BackendUi) -> Vec<(String, Option<String>, Option<String>)> {
         listed_rows(ui)
             .into_iter()
             .map(|row| {
-                let shown = descendants(row.upcast_ref())
-                    .into_iter()
-                    .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
-                    .any(|label| label.label() == pill && label.is_visible());
-                (row.title().to_string(), shown)
+                (
+                    row.title().to_string(),
+                    shown_pill(&row),
+                    languages_button(&row).map(|button| summary_of(&button)),
+                )
             })
             .collect()
+    }
+
+    /// What `button` shows, which must be a label so no arrow is drawn.
+    fn summary_of(button: &gtk::MenuButton) -> String {
+        button
+            .child()
+            .and_downcast::<gtk::Label>()
+            .expect("a label child, not the arrowed default")
+            .label()
+            .to_string()
+    }
+
+    /// The names the popover of `button` lists, each with whether it stands out.
+    fn open_languages(button: &gtk::MenuButton) -> (String, Vec<(String, bool)>) {
+        button.popup();
+        let popover = button.popover().expect("languages popover");
+        let labels: Vec<gtk::Label> = descendants(popover.upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+            .collect();
+        let heading = labels
+            .iter()
+            .find(|label| {
+                !label.parent().is_some_and(|parent| {
+                    parent
+                        .parent()
+                        .is_some_and(|names| names.has_css_class("language-columns"))
+                })
+            })
+            .map(|label| label.label().to_string())
+            .unwrap_or_default();
+        let names = labels
+            .iter()
+            .filter(|label| {
+                label.parent().is_some_and(|parent| {
+                    parent
+                        .parent()
+                        .is_some_and(|names| names.has_css_class("language-columns"))
+                })
+            })
+            .map(|label| (label.label().to_string(), label.has_css_class("accent")))
+            .collect();
+        button.popdown();
+        (heading, names)
     }
 
     fn listed_rows(ui: &BackendUi) -> Vec<adw::ActionRow> {
@@ -3161,6 +3397,99 @@ mod tests {
          content[inference-provider] myna:backend myna-parakeet:provider manual\n\
          content - myna-whisper:provider -\n\
          content - myna-fake-backend:provider -\n";
+
+    #[test]
+    fn the_pill_and_the_languages_name_the_user_language_in_itself() {
+        on_gtk_thread(|| {
+            let ui = general_ui_with(PARAKEET_CONNECTED_TWO_MORE_INSTALLED, THREE_MODEL_SLOTS);
+            assert_eq!(
+                pills_and_languages(&ui),
+                [
+                    ("Fake Backend".to_owned(), None, None),
+                    (
+                        "Parakeet".to_owned(),
+                        None,
+                        Some("English, Deutsch +23".to_owned())
+                    ),
+                    (
+                        "Whisper".to_owned(),
+                        None,
+                        Some("English, 中文 +97".to_owned())
+                    ),
+                ],
+                "before the language is known"
+            );
+            ui.set_preferred_languages(vec!["de_DE".to_owned(), "en".to_owned()]);
+            assert_eq!(
+                pills_and_languages(&ui),
+                [
+                    (
+                        "Parakeet".to_owned(),
+                        Some("Best for Deutsch".to_owned()),
+                        Some("Deutsch, English +23".to_owned())
+                    ),
+                    ("Fake Backend".to_owned(), None, None),
+                    (
+                        "Whisper".to_owned(),
+                        None,
+                        Some("Deutsch, English +97".to_owned())
+                    ),
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn a_model_lists_its_languages_on_demand_the_user_language_first() {
+        on_gtk_thread(|| {
+            let ui = two_models_for(&["de_DE"]);
+            let window = adw::Window::builder()
+                .default_width(800)
+                .default_height(600)
+                .content(ui.myna_selector.as_ref().expect("general page"))
+                .build();
+            window.present();
+            let rows = listed_rows(&ui);
+            let (heading, names) = open_languages(&languages_button(&rows[0]).expect("button"));
+            assert_eq!(heading, "25 languages");
+            assert_eq!(names.len(), 25);
+            assert_eq!(names[0], ("Deutsch".to_owned(), true));
+            assert_eq!(names[1], ("Čeština".to_owned(), false));
+            assert_eq!(names.iter().filter(|(_, mine)| *mine).count(), 1);
+            let button = languages_button(&rows[0]).expect("button");
+            button.popup();
+            let columns: Vec<Vec<String>> =
+                descendants(button.popover().expect("popover").upcast_ref())
+                    .into_iter()
+                    .find(|widget| widget.has_css_class("language-columns"))
+                    .map(|names| {
+                        descendants(&names)
+                            .into_iter()
+                            .filter_map(|widget| widget.downcast::<gtk::Box>().ok())
+                            .map(|column| {
+                                descendants(column.upcast_ref())
+                                    .into_iter()
+                                    .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+                                    .map(|label| label.label().to_string())
+                                    .collect()
+                            })
+                            .collect()
+                    })
+                    .expect("columns");
+            assert_eq!(columns.len(), 2);
+            assert_eq!(columns[0][..2], ["Deutsch", "Čeština"], "down the column");
+            assert_eq!(columns[1][0], names[13].0, "then the next");
+            button.popdown();
+
+            ui.set_preferred_languages(vec!["ja_JP".to_owned()]);
+            let (_, names) = open_languages(&languages_button(&rows[0]).expect("button"));
+            assert!(
+                names.iter().all(|(_, mine)| !mine),
+                "Parakeet lacks Japanese, so nothing stands out"
+            );
+            window.destroy();
+        });
+    }
 
     #[test]
     fn a_model_is_described_by_its_subtitle_then_its_pill() {
@@ -3264,22 +3593,56 @@ mod tests {
     /// The install dialog's rows: title, subtitle, whether the pill shows,
     /// and the accessible description.
     fn offered(dialog: &ui::InstallModelsDialog) -> Vec<(String, String, bool)> {
-        let pill = gettextrs::gettext("Recommended");
-        descendants(dialog.families().upcast_ref())
-            .into_iter()
-            .filter_map(|widget| widget.downcast::<adw::ActionRow>().ok())
+        offered_rows(dialog)
+            .iter()
             .map(|row| {
-                let shown = descendants(row.upcast_ref())
-                    .into_iter()
-                    .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
-                    .any(|label| label.label() == pill && label.is_visible());
                 (
                     row.title().to_string(),
                     row.subtitle().unwrap_or_default().to_string(),
-                    shown,
+                    shown_pill(row).is_some(),
                 )
             })
             .collect()
+    }
+
+    fn offered_rows(dialog: &ui::InstallModelsDialog) -> Vec<adw::ActionRow> {
+        descendants(dialog.families().upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<adw::ActionRow>().ok())
+            .collect()
+    }
+
+    #[test]
+    fn the_install_dialog_names_the_user_language_in_itself() {
+        on_gtk_thread(|| {
+            let ui = general_ui(PARAKEET_CONNECTED);
+            ui.set_preferred_languages(vec!["ja_JP".to_owned()]);
+            let shown: Vec<_> = offered_rows(&ui.install_models())
+                .iter()
+                .map(|row| {
+                    (
+                        row.title().to_string(),
+                        shown_pill(row),
+                        languages_button(row).map(|button| summary_of(&button)),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                shown,
+                [
+                    (
+                        "FunASR".to_owned(),
+                        Some("Best for 日本語".to_owned()),
+                        Some("日本語, 中文 +3".to_owned())
+                    ),
+                    (
+                        "Whisper".to_owned(),
+                        None,
+                        Some("日本語, English +97".to_owned())
+                    ),
+                ]
+            );
+        });
     }
 
     #[test]
@@ -3353,7 +3716,7 @@ mod tests {
         on_gtk_thread(|| {
             use myna_core::language::ModelFamily as Family;
             let chosen = Rc::new(RefCell::new(Vec::new()));
-            let dialog = install_models_dialog(&[Family::Whisper, Family::FunAsr], None, {
+            let dialog = install_models_dialog(&[Family::Whisper, Family::FunAsr], None, None, {
                 let chosen = Rc::clone(&chosen);
                 move |_, family| chosen.borrow_mut().push(family)
             });

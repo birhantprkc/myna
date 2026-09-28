@@ -61,3 +61,8 @@ button.outlined:active {
   padding: 1px 8px;
   font-size: smaller;
 }
+
+/* A model row's language summary: secondary to the name, as a subtitle. */
+menubutton.languages-button > button {
+  font-weight: normal;
+}
