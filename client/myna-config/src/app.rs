@@ -25,6 +25,7 @@ const TYPING_ENV: &str = "MYNA_CONFIG_TYPING_TEST";
 const ONBOARDING_ENV: &str = "MYNA_CONFIG_ONBOARDING_TEST";
 const SHORTCUT_ENV: &str = "MYNA_CONFIG_SHORTCUT_TEST";
 const SHORTCUT_CONTROL_ENV: &str = "MYNA_CONFIG_SHORTCUT_CONTROL_TEST";
+const ONBOARDING_CONTROL_ENV: &str = "MYNA_CONFIG_ONBOARDING_CONTROL_TEST";
 const BACKENDS_ENV: &str = "MYNA_CONFIG_BACKENDS_TEST";
 const ICON_RESOURCES: &str = "/com/canonical/Myna/Config/icons";
 /// The probes must never claim the real application id: registering it while a
@@ -68,6 +69,10 @@ pub fn run() -> glib::ExitCode {
 
     if smoke_requested(std::env::var_os(ONBOARDING_ENV).as_deref()) {
         return onboarding_probe();
+    }
+
+    if smoke_requested(std::env::var_os(ONBOARDING_CONTROL_ENV).as_deref()) {
+        return onboarding_control_probe();
     }
 
     if smoke_requested(std::env::var_os(SHORTCUT_ENV).as_deref()) {
@@ -1276,6 +1281,193 @@ const PROBE_DICTATION_XML: &str = "<node>\
     <property name='Activation' type='s' access='read'/>\
   </interface>\
 </node>";
+
+/// Finishing setup under control activation installs the default key, unless
+/// the user already has one or the key is taken; under the portal it binds
+/// nothing, since only the portal's own dialog may. Runs against a stand-in
+/// daemon on the session bus, which the caller makes private.
+fn onboarding_control_probe() -> glib::ExitCode {
+    use crate::adapters::desktop_shortcut::DesktopShortcut;
+    use crate::onboarding::{assess, Machine};
+    use crate::onboarding_ui::OnboardingUi;
+
+    ui::register_resources();
+    if let Err(error) = gtk::init() {
+        eprintln!("myna-config onboarding control probe could not initialize GTK: {error}");
+        return glib::ExitCode::FAILURE;
+    }
+    let application = new_application(&probe_app_id());
+    let _ = application.register(None::<&gio::Cancellable>);
+
+    let Ok(connection) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
+        eprintln!("myna-config onboarding control probe needs a session bus");
+        return glib::ExitCode::FAILURE;
+    };
+    let Some(interface) = gio::DBusNodeInfo::for_xml(PROBE_DICTATION_XML)
+        .ok()
+        .and_then(|node| node.lookup_interface("com.canonical.Myna.Dictation"))
+    else {
+        eprintln!("the probe's daemon interface did not parse");
+        return glib::ExitCode::FAILURE;
+    };
+    let activation = Rc::new(RefCell::new(String::new()));
+    let binds = Rc::new(Cell::new(0));
+    let registered = connection
+        .register_object("/com/canonical/Myna/Dictation", &interface)
+        .method_call({
+            let binds = binds.clone();
+            move |_, _, _, _, _, _, invocation| {
+                binds.set(binds.get() + 1);
+                invocation.return_value(Some(&(false, "the probe binds nothing").to_variant()));
+            }
+        })
+        .property({
+            let activation = activation.clone();
+            move |_, _, _, _, property| match property {
+                "Activation" => activation.borrow().to_variant(),
+                _ => "".to_variant(),
+            }
+        })
+        .build();
+    let owned = connection.call_sync(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "RequestName",
+        Some(&("com.canonical.Myna.Dictation", 4u32).to_variant()),
+        None,
+        gio::DBusCallFlags::NONE,
+        1_000,
+        gio::Cancellable::NONE,
+    );
+    if registered.is_err() || owned.is_err() {
+        eprintln!("the probe could not serve its stand-in daemon");
+        return glib::ExitCode::FAILURE;
+    }
+    let Some(desktop) = DesktopShortcut::open() else {
+        eprintln!("the probe finds no media-keys schema");
+        return glib::ExitCode::FAILURE;
+    };
+    let installed = [crate::diagnostics::InstalledSnap {
+        name: crate::onboarding::MYNA_SNAP.to_owned(),
+        version: "1".to_owned(),
+    }];
+    let step = |window: &ui::OnboardingWindow| {
+        window
+            .navigation()
+            .visible_page()
+            .and_then(|page| page.tag())
+            .map(|tag| tag.to_string())
+            .unwrap_or_default()
+    };
+    // Walk a fully installed machine through setup to the shortcut step,
+    // never touching the shortcut button.
+    let walk = |mode: &str| {
+        activation.replace(mode.to_owned());
+        let machine = ProbeMachine::new();
+        let (window, button) = {
+            let ui = OnboardingUi::present_with_ports(
+                &application,
+                assess(Machine::new(&installed, 1)),
+                Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                    std::sync::Arc::new(machine.clone()),
+                )),
+                Rc::new(machine),
+                None,
+                Box::new(|| {}),
+            );
+            (ui.window(), ui.shortcut_button())
+        };
+        settle_gtk();
+        window.forward_button().emit_clicked();
+        settle_gtk();
+        window.forward_button().emit_clicked();
+        for _ in 0..100 {
+            if step(&window) == "shortcut" {
+                break;
+            }
+            settle_gtk();
+        }
+        for _ in 0..5 {
+            settle_gtk();
+        }
+        (window, button)
+    };
+    let dictation = gettextrs::gettext("Dictation");
+    let toggle = format!("/snap/bin/{}.toggle", crate::onboarding::MYNA_SNAP);
+
+    let _ = desktop.install(&dictation, &toggle, "<Control><Alt>d");
+    let (window, _) = walk("control");
+    if desktop.binding().as_deref() != Some("<Control><Alt>d") {
+        eprintln!("setup replaced the user's key with {:?}", desktop.binding());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-default: kept the user's key");
+    window.close();
+    let _ = desktop.install(&dictation, &toggle, "");
+
+    let theirs = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/";
+    let list = gio::Settings::new("org.gnome.settings-daemon.plugins.media-keys");
+    let other = gio::Settings::with_path(
+        "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding",
+        theirs,
+    );
+    let mut paths: Vec<String> = list
+        .strv("custom-keybindings")
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    paths.push(theirs.to_owned());
+    let _ = list.set_strv("custom-keybindings", paths);
+    let _ = other.set_string("binding", "<Super>j");
+    let (window, _) = walk("control");
+    if desktop.binding().is_some() || other.string("binding") != "<Super>j" {
+        eprintln!(
+            "setup took a key another shortcut holds: {:?}",
+            desktop.binding()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-default: left a key in use");
+    window.close();
+    let _ = other.set_string("binding", "");
+
+    let (window, _) = walk("portal");
+    if binds.get() != 0 || desktop.binding().is_some() {
+        eprintln!(
+            "setup under the portal bound {} times, installed {:?}",
+            binds.get(),
+            desktop.binding()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-default: portal untouched");
+    window.close();
+
+    let (window, button) = walk("control");
+    for _ in 0..40 {
+        if desktop.binding().is_some() {
+            break;
+        }
+        settle_gtk();
+    }
+    settle_gtk();
+    if step(&window) != "shortcut"
+        || desktop.binding().as_deref() != Some(crate::shortcut::DEFAULT_ACCELERATOR)
+        || button.label().as_deref() != Some("Change Shortcut")
+    {
+        eprintln!(
+            "setup under control left binding {:?} and offered {:?}",
+            desktop.binding(),
+            button.label()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-default: Super+J without a click");
+    window.close();
+    settle_gtk();
+    glib::ExitCode::SUCCESS
+}
 
 /// Drive the Myna page's shortcut row against a stand-in daemon on the session
 /// bus, which the caller makes private. Under `control` activation the daemon

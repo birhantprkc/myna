@@ -285,6 +285,48 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
     assert!(warnings.is_empty(), "toolkit warnings: {warnings:#?}");
 }
 
+/// Setup installs the default key itself under control activation, but never
+/// over a key the user has or another shortcut holds, and never under the
+/// portal, which binds only through its own dialog.
+#[test]
+fn onboarding_installs_the_default_key_only_under_control_activation() {
+    if std::env::var_os("MYNA_CONFIG_GTK_TESTS").is_none() {
+        eprintln!("skipped: set MYNA_CONFIG_GTK_TESTS=1 under Xvfb");
+        return;
+    }
+
+    let (store, schemas) = scratch_store("onboarding-control");
+    let output = Command::new("dbus-run-session")
+        .arg("--")
+        .arg(env!("CARGO_BIN_EXE_myna-config"))
+        .env("GSETTINGS_BACKEND", "memory")
+        .env("GSETTINGS_SCHEMA_DIR", &schemas)
+        .env("XDG_CONFIG_HOME", &store)
+        .env("GDK_DEBUG", "no-portals")
+        .env("MYNA_CONFIG_ONBOARDING_CONTROL_TEST", "1")
+        .env("GTK_A11Y", "none")
+        .output()
+        .expect("run the onboarding control probe under dbus-run-session");
+    std::fs::remove_dir_all(&store).ok();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "onboarding control probe failed: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in [
+        "onboarding-default: kept the user's key",
+        "onboarding-default: left a key in use",
+        "onboarding-default: portal untouched",
+        "onboarding-default: Super+J without a click",
+    ] {
+        assert!(
+            stdout.contains(line),
+            "onboarding control probe missing: {line}"
+        );
+    }
+}
+
 /// The real application against a fixture machine: still running once it has
 /// started, and not a single GTK or libadwaita warning on the way.
 #[test]

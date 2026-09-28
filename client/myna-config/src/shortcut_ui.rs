@@ -16,7 +16,9 @@ use libadwaita::prelude::*;
 
 use crate::adapters::desktop_shortcut::DesktopShortcut;
 use crate::onboarding::MYNA_SNAP;
-use crate::shortcut::{accelerators, ShortcutPath, ShortcutState, DEFAULT_ACCELERATOR};
+use crate::shortcut::{
+    accelerators, default_key, DefaultKey, ShortcutPath, ShortcutState, DEFAULT_ACCELERATOR,
+};
 
 const DICTATION_BUS: &str = "com.canonical.Myna.Dictation";
 const DICTATION_PATH: &str = "/com/canonical/Myna/Dictation";
@@ -37,6 +39,7 @@ pub struct ShortcutControl {
     path: Cell<ShortcutPath>,
     state: RefCell<ShortcutState>,
     busy: Cell<bool>,
+    default_pending: Cell<bool>,
 }
 
 impl ShortcutControl {
@@ -49,7 +52,7 @@ impl ShortcutControl {
         overlay: adw::ToastOverlay,
         compact: bool,
         describe: Describe,
-    ) {
+    ) -> Rc<Self> {
         let control = Rc::new(Self {
             keys,
             button: button.clone(),
@@ -61,6 +64,7 @@ impl ShortcutControl {
             path: Cell::new(ShortcutPath::Portal),
             state: RefCell::new(ShortcutState::NotRunning),
             busy: Cell::new(false),
+            default_pending: Cell::new(false),
         });
         control.render();
         if let Some(desktop) = &control.desktop {
@@ -107,6 +111,14 @@ impl ShortcutControl {
             control.proxy.replace(Some(proxy));
             control.refresh();
         });
+        control
+    }
+
+    /// Install the default key once the daemon says it is activated through
+    /// the control socket, unless a key is already bound or taken.
+    pub fn install_default(&self) {
+        self.default_pending.set(true);
+        self.refresh();
     }
 
     fn refresh(&self) {
@@ -122,7 +134,8 @@ impl ShortcutControl {
             .borrow()
             .as_ref()
             .is_some_and(|proxy| proxy.name_owner().is_some());
-        let path = ShortcutPath::from_activation(property("Activation").as_deref());
+        let activation = property("Activation");
+        let path = ShortcutPath::from_activation(activation.as_deref());
         let state = match path {
             ShortcutPath::Portal => ShortcutState::observe(owned, property("Shortcut").as_deref()),
             ShortcutPath::Control => ShortcutState::observe_control(
@@ -134,8 +147,22 @@ impl ShortcutControl {
             ),
         };
         self.path.set(path);
-        self.state.replace(state);
+        self.state.replace(state.clone());
         self.render();
+        if self.default_pending.get() {
+            let available = self
+                .desktop
+                .as_ref()
+                .is_some_and(|desktop| desktop.conflict(DEFAULT_ACCELERATOR).is_none());
+            match default_key(activation.as_deref(), &state, available) {
+                DefaultKey::Wait => {}
+                DefaultKey::Install => {
+                    self.default_pending.set(false);
+                    self.install(DEFAULT_ACCELERATOR);
+                }
+                DefaultKey::Leave => self.default_pending.set(false),
+            }
+        }
     }
 
     fn render(&self) {

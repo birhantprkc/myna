@@ -1,4 +1,45 @@
-use myna_config::shortcut::{accelerators, ShortcutPath, ShortcutState};
+use myna_config::shortcut::{accelerators, default_key, DefaultKey, ShortcutPath, ShortcutState};
+
+#[test]
+fn setup_installs_the_default_key_only_under_control_with_none_bound() {
+    let unbound = ShortcutState::Unbound;
+    assert_eq!(
+        default_key(Some("control"), &unbound, true),
+        DefaultKey::Install
+    );
+    assert_eq!(
+        default_key(Some("control"), &unbound, false),
+        DefaultKey::Leave
+    );
+    assert_eq!(
+        default_key(
+            Some("control"),
+            &ShortcutState::Bound("<Control><Alt>d".to_owned()),
+            true
+        ),
+        DefaultKey::Leave
+    );
+    assert_eq!(
+        default_key(Some("portal"), &unbound, true),
+        DefaultKey::Leave
+    );
+}
+
+#[test]
+fn setup_waits_for_the_daemon_to_say_how_it_is_activated() {
+    assert_eq!(
+        default_key(Some("control"), &ShortcutState::NotRunning, true),
+        DefaultKey::Wait
+    );
+    assert_eq!(
+        default_key(Some(""), &ShortcutState::Unbound, true),
+        DefaultKey::Wait
+    );
+    assert_eq!(
+        default_key(None, &ShortcutState::Unbound, true),
+        DefaultKey::Wait
+    );
+}
 
 #[test]
 fn gnome_trigger_descriptions_yield_their_accelerator() {

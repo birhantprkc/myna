@@ -62,6 +62,28 @@ impl ShortcutPath {
     }
 }
 
+/// What finishing setup does about the key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefaultKey {
+    /// The daemon has not said yet how it is activated.
+    Wait,
+    /// Install [`DEFAULT_ACCELERATOR`] as the desktop shortcut.
+    Install,
+    /// Leave the key alone: the portal binds only through its own dialog,
+    /// and a key the user already has, or one another shortcut holds, is theirs.
+    Leave,
+}
+
+/// Decide [`DefaultKey`] from the daemon's `Activation`, the observed state,
+/// and whether the desktop can take the default key without a conflict.
+pub fn default_key(activation: Option<&str>, state: &ShortcutState, available: bool) -> DefaultKey {
+    match (activation, state) {
+        (_, ShortcutState::NotRunning) | (None | Some(""), _) => DefaultKey::Wait,
+        (Some("control"), ShortcutState::Unbound) if available => DefaultKey::Install,
+        _ => DefaultKey::Leave,
+    }
+}
+
 /// The GTK accelerators inside a portal trigger description.
 ///
 /// GNOME's portal wraps the accelerator in a translated sentence

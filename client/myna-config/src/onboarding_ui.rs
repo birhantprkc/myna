@@ -36,6 +36,7 @@ const BEAT: Duration = Duration::from_secs(1);
 pub struct OnboardingUi {
     window: ui::OnboardingWindow,
     shortcut_page: ui::OnboardingShortcut,
+    shortcut: Rc<crate::shortcut_ui::ShortcutControl>,
     repository: Rc<dyn BackendRepository>,
     configurator: Rc<dyn SystemConfigurator>,
     step: Cell<Step>,
@@ -111,9 +112,22 @@ impl OnboardingUi {
             move |_| copy_command(&window, &commands)
         });
 
+        let shortcut = crate::shortcut_ui::ShortcutControl::attach(
+            shortcut_page.shortcut_box(),
+            shortcut_page.shortcut_button(),
+            window.overlay(),
+            false,
+            Box::new({
+                let description = shortcut_page.description();
+                move |state, path| {
+                    description.set_label(&crate::shortcut_ui::onboarding_description(state, path))
+                }
+            }),
+        );
         let ui = Rc::new(Self {
             window: window.clone(),
             shortcut_page: shortcut_page.clone(),
+            shortcut,
             repository,
             configurator,
             step: Cell::new(Step::first()),
@@ -150,18 +164,6 @@ impl OnboardingUi {
                 }
             }
         });
-        crate::shortcut_ui::ShortcutControl::attach(
-            shortcut_page.shortcut_box(),
-            shortcut_page.shortcut_button(),
-            window.overlay(),
-            false,
-            Box::new({
-                let description = shortcut_page.description();
-                move |state, path| {
-                    description.set_label(&crate::shortcut_ui::onboarding_description(state, path))
-                }
-            }),
-        );
         // Installing happens in App Center or a terminal, so coming back to
         // the window is the moment to look again.
         window.connect_is_active_notify({
@@ -270,6 +272,9 @@ impl OnboardingUi {
             };
             ui.busy.set(false);
             ui.render();
+            if outcome.is_ok() {
+                ui.shortcut.install_default();
+            }
             match outcome {
                 Ok(()) if pause => ui.pause_before(next),
                 Ok(()) => ui.window.navigation().push_by_tag(step_name(next)),
