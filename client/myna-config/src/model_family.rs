@@ -55,6 +55,30 @@ pub fn installable_families(
     first.into_iter().chain(rest).collect()
 }
 
+/// Where the recommendation for the user's language lands: the pill on
+/// General goes to the best installed family, and the best of all, when it
+/// is not installed, is what Install more models hints at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Recommendation {
+    pub installed: Option<Family>,
+    pub better: Option<Family>,
+}
+
+pub fn recommendation<S: AsRef<str>>(
+    preferred: &[S],
+    backends: &[BackendIdentity],
+) -> Recommendation {
+    let installed: Vec<Family> = backends
+        .iter()
+        .filter_map(|backend| Family::from_snap_name(backend.snap_name()))
+        .collect();
+    let best = myna_core::language::recommend(preferred);
+    Recommendation {
+        installed: myna_core::language::recommend_among(preferred, &installed),
+        better: (!installed.contains(&best)).then_some(best),
+    }
+}
+
 /// Where App Center shows `family`'s snap.
 pub fn store_uri(family: Family) -> String {
     format!("snap://{}", family.snap_name())
@@ -238,25 +262,40 @@ pub fn coverage_cell(index: usize, count: usize, columns: usize) -> (usize, usiz
     (index / rows, index % rows)
 }
 
+/// The user's language, when `family` transcribes it and it has a name.
+fn covered(family: Family, user_language: Option<&str>) -> Option<Endonym> {
+    let language = user_language?;
+    family
+        .languages()
+        .iter()
+        .copied()
+        .find(|code| *code == language)
+        .and_then(Endonym::of)
+}
+
 /// The recommended row's pill: why it is recommended, when the family covers
 /// the user's language.
 pub fn recommendation_label(family: Family, user_language: Option<&str>) -> Named {
-    match user_language
-        .and_then(|language| {
-            family
-                .languages()
-                .iter()
-                .copied()
-                .find(|code| *code == language)
-        })
-        .and_then(Endonym::of)
-    {
+    match covered(family, user_language) {
         Some(language) => {
             // TRANSLATORS: {language} is the user's language named in that language, such as "Deutsch" or "中文", inserted as-is in the nominative. If your grammar would inflect it, rephrase, e.g. "Najlepszy dla języka: {language}".
             let frame = gettextrs::gettext("Best for {language}");
             Named::of(language).within(&frame, "{language}")
         }
         None => Named::plain(gettextrs::gettext("Recommended")),
+    }
+}
+
+/// What Install more models says when `family`, not installed, would serve
+/// the user better.
+pub fn better_model_hint(family: Family, user_language: Option<&str>) -> Named {
+    match covered(family, user_language) {
+        Some(language) => {
+            // TRANSLATORS: Shown under "Install more models" when a model not installed would transcribe the user's language better. {language} is that language named in itself, such as "Deutsch" or "中文", inserted as-is in the nominative. If your grammar would inflect it, rephrase, e.g. "Dostępny jest lepszy model dla języka: {language}".
+            let frame = gettextrs::gettext("A better model for {language} is available");
+            Named::of(language).within(&frame, "{language}")
+        }
+        None => Named::plain(gettextrs::gettext("A recommended model is available")),
     }
 }
 
@@ -598,6 +637,63 @@ mod tests {
         assert_eq!(
             recommendation_label(Family::Whisper, None).text,
             "Recommended"
+        );
+    }
+
+    #[test]
+    fn the_pill_goes_to_the_best_installed_family_and_a_better_one_is_hinted() {
+        let recommend = |languages: &[&str], snaps: &[&str]| {
+            let Recommendation { installed, better } = recommendation(languages, &installed(snaps));
+            (installed, better)
+        };
+        let whisper_and_parakeet = ["myna-fake-backend", "myna-parakeet", "myna-whisper"];
+        for locale in ["zh_CN", "ja_JP", "ko_KR", "yue"] {
+            assert_eq!(
+                recommend(&[locale], &whisper_and_parakeet),
+                (Some(Family::Whisper), Some(Family::FunAsr)),
+                "{locale}"
+            );
+            assert_eq!(
+                recommend(&[locale], &["myna-parakeet", "myna-whisper", "myna-funasr"]),
+                (Some(Family::FunAsr), None),
+                "{locale}"
+            );
+        }
+        assert_eq!(
+            recommend(&["en_US"], &whisper_and_parakeet),
+            (Some(Family::Parakeet), None)
+        );
+        assert_eq!(
+            recommend(&["de_DE"], &["myna-funasr"]),
+            (None, Some(Family::Parakeet)),
+            "no installed family transcribes German"
+        );
+        assert_eq!(
+            recommend(&["de_DE"], &["myna-fake-backend"]),
+            (None, Some(Family::Parakeet)),
+            "a backend of no known family is never recommended"
+        );
+        assert_eq!(
+            recommend(&["de_DE"], &["myna-whisper", "myna-whisper"]),
+            (Some(Family::Whisper), Some(Family::Parakeet))
+        );
+    }
+
+    #[test]
+    fn the_hint_names_the_user_language_a_better_model_serves() {
+        let chinese = better_model_hint(Family::FunAsr, Some("zh"));
+        assert_eq!(chinese.text, "A better model for 中文 is available");
+        assert_eq!(spans(&chinese), [("中文", "zh")]);
+        assert_eq!(
+            better_model_hint(Family::Parakeet, Some("de")).text,
+            "A better model for Deutsch is available"
+        );
+        let unknown = better_model_hint(Family::Whisper, Some("xx"));
+        assert_eq!(unknown.text, "A recommended model is available");
+        assert!(unknown.names.is_empty());
+        assert_eq!(
+            better_model_hint(Family::Whisper, None).text,
+            "A recommended model is available"
         );
     }
 

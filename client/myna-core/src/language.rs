@@ -276,10 +276,11 @@ pub fn recommend<S: AsRef<str>>(preferred: &[S]) -> ModelFamily {
 
 /// The family among `candidates` to recommend for `preferred` languages,
 /// or `None` when no candidate can transcribe the most preferred one.
+/// Settings passes the installed families to choose among what is there.
 ///
 /// Only the first language decides: the rest are fallbacks the user settled
 /// for, and a Welsh speaker listing English after Welsh still speaks Welsh.
-fn recommend_among<S: AsRef<str>>(
+pub fn recommend_among<S: AsRef<str>>(
     preferred: &[S],
     candidates: &[ModelFamily],
 ) -> Option<ModelFamily> {
@@ -378,6 +379,23 @@ mod tests {
     fn without_the_best_family_the_next_measured_one_wins() {
         assert_eq!(recommend_among(&["zh_TW"], &[Whisper]), Some(Whisper));
         assert_eq!(recommend_among(&["de"], &[FunAsr, Whisper]), Some(Whisper));
+    }
+
+    #[test]
+    fn among_the_installed_the_best_measured_one_is_recommended() {
+        for locale in ["zh_CN", "ja_JP", "ko_KR", "yue"] {
+            assert_eq!(
+                recommend_among(&[locale], &[Parakeet, Whisper]),
+                Some(Whisper),
+                "{locale}"
+            );
+            assert_eq!(
+                recommend_among(&[locale], &[Parakeet, Whisper, FunAsr]),
+                Some(FunAsr),
+                "{locale}"
+            );
+        }
+        assert_eq!(recommend_among(&["de_DE"], &[Whisper]), Some(Whisper));
     }
 
     #[test]

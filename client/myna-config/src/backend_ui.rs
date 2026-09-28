@@ -35,9 +35,9 @@ use crate::diagnostics::{
 use crate::domain::{ActiveBackendState, BackendIdentity, ConfigValue, ServiceState};
 use crate::markup::escape_markup;
 use crate::model_family::{
-    coverage, coverage_cell, coverage_columns, coverage_count, coverage_summary,
-    installable_families, is_recommended, model_family, recommendation_label, recommended_first,
-    store_uri, Coverage, Named,
+    better_model_hint, coverage, coverage_cell, coverage_columns, coverage_count, coverage_summary,
+    installable_families, is_recommended, model_family, recommendation, recommendation_label,
+    recommended_first, store_uri, Coverage, Named, Recommendation,
 };
 use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::performance::PerformanceFacts;
@@ -679,11 +679,13 @@ impl BackendUi {
         };
         let group = page.model_group();
         let snapshot = self.active_backend.snapshot();
-        let recommended = self.recommended();
+        let recommendation = self.recommendation();
+        let recommended = recommendation.and_then(|found| found.installed);
         let ordered = recommended_first(snapshot.backends(), recommended);
         let backends = ordered.as_slice();
         page.install_button()
             .set_visible(!installable_families(backends, None).is_empty());
+        self.show_install_hint(page, recommendation.and_then(|found| found.better));
         let selectable = backends.len() > 1
             || !matches!(snapshot.active_state(), ActiveBackendState::Connected(_));
         let (listed, listed_selectable) = {
@@ -843,12 +845,36 @@ impl BackendUi {
         *self.model_rows.borrow_mut() = rows;
     }
 
-    /// The recommendation, once the language is known.
-    fn recommended(&self) -> Option<myna_core::language::ModelFamily> {
+    /// The recommendation among the installed models, once the language is
+    /// known.
+    fn recommendation(&self) -> Option<Recommendation> {
+        let snapshot = self.active_backend.snapshot();
         self.preferred_languages
             .borrow()
             .as_deref()
-            .map(myna_core::language::recommend)
+            .map(|preferred| recommendation(preferred, snapshot.backends()))
+    }
+
+    /// Hints on Install more models that `better` would serve the user's
+    /// language better than anything installed.
+    fn show_install_hint(
+        &self,
+        page: &ui::MynaPage,
+        better: Option<myna_core::language::ModelFamily>,
+    ) {
+        let button = page.install_button();
+        let hint = page.install_hint();
+        match better {
+            Some(family) => {
+                set_named(
+                    &hint,
+                    &better_model_hint(family, self.user_language().as_deref()),
+                );
+                button.update_property(&[gtk::accessible::Property::Description(&hint.label())]);
+            }
+            None => button.reset_property(gtk::AccessibleProperty::Description),
+        }
+        hint.set_visible(better.is_some());
     }
 
     /// The language the recommendation is for, once it is known.
@@ -874,7 +900,7 @@ impl BackendUi {
     }
 
     fn install_offer(&self) -> InstallOffer {
-        let recommended = self.recommended();
+        let recommended = self.recommendation().and_then(|found| found.better);
         InstallOffer {
             families: installable_families(self.active_backend.snapshot().backends(), recommended),
             recommended,
@@ -3642,14 +3668,13 @@ mod tests {
                 recommended_rows(&two_models_for(&["en_US", "en"])),
                 [("Parakeet".to_owned(), true), ("Whisper".to_owned(), false)]
             );
-            assert_eq!(
-                recommended_rows(&two_models_for(&["zh_CN"])),
-                [
-                    ("Parakeet".to_owned(), false),
-                    ("Whisper".to_owned(), false)
-                ],
-                "FunASR is recommended, and it is not installed"
-            );
+            for locale in ["zh_CN", "ja_JP", "ko_KR", "yue"] {
+                assert_eq!(
+                    recommended_rows(&two_models_for(&[locale])),
+                    [("Whisper".to_owned(), true), ("Parakeet".to_owned(), false)],
+                    "{locale}: FunASR is not installed, so the best installed is"
+                );
+            }
             let ui = two_models_for(&["cy_GB"]);
             assert_eq!(
                 recommended_rows(&ui),
@@ -3764,7 +3789,11 @@ mod tests {
             button.popdown();
 
             ui.set_preferred_languages(vec!["ja_JP".to_owned()]);
-            let (_, names) = open_languages(&languages_button(&rows[0]).expect("button"));
+            let parakeet = listed_rows(&ui)
+                .into_iter()
+                .find(|row| row.title() == "Parakeet")
+                .expect("Parakeet listed");
+            let (_, names) = open_languages(&languages_button(&parakeet).expect("button"));
             assert!(
                 names.iter().all(|(_, mine)| !mine),
                 "Parakeet lacks Japanese, so nothing stands out"
@@ -3848,6 +3877,56 @@ mod tests {
          content[inference-provider] myna:backend myna-parakeet:provider manual\n\
          content - myna-whisper:provider -\n\
          content - myna-funasr:provider -\n";
+
+    const PARAKEET_AND_FUNASR_SLOTS: &str = "name: content\nslots:\n  \
+         - myna-parakeet:provider:\n      content: inference-provider\n  \
+         - myna-funasr:provider:\n      content: inference-provider\n";
+    const PARAKEET_CONNECTED_FUNASR_INSTALLED: &str = "Interface Plug Slot Notes\n\
+         content[inference-provider] myna:backend myna-parakeet:provider manual\n\
+         content - myna-funasr:provider -\n";
+
+    /// The hint Install more models shows, when it is shown.
+    fn install_hint(ui: &BackendUi) -> Option<String> {
+        let page = ui.myna_selector.as_ref().expect("general page");
+        let hint = page.install_hint();
+        (page.install_button().is_visible() && hint.is_visible()).then(|| hint.label().to_string())
+    }
+
+    #[test]
+    fn install_more_models_hints_a_better_model_for_the_user_language() {
+        on_gtk_thread(|| {
+            let ui = two_models_for(&["zh_CN"]);
+            assert_eq!(
+                install_hint(&ui).as_deref(),
+                Some("A better model for 中文 is available")
+            );
+            assert_eq!(install_hint(&two_models_for(&["en_US"])), None);
+            let unknown = general_ui_with(
+                PARAKEET_CONNECTED_WHISPER_INSTALLED,
+                PARAKEET_AND_WHISPER_SLOTS,
+            );
+            assert_eq!(install_hint(&unknown), None, "no hint before the language");
+            let dialog = ui.install_models();
+            assert_eq!(
+                offered_rows(&dialog)
+                    .iter()
+                    .map(|row| (row.title().to_string(), shown_pill(row)))
+                    .collect::<Vec<_>>(),
+                [("FunASR".to_owned(), Some("Best for 中文".to_owned()))],
+                "the dialog keeps the pill on the best family"
+            );
+            let with_funasr = general_ui_with(
+                PARAKEET_CONNECTED_FUNASR_INSTALLED,
+                PARAKEET_AND_FUNASR_SLOTS,
+            );
+            with_funasr.set_preferred_languages(vec!["zh_CN".to_owned()]);
+            assert_eq!(install_hint(&with_funasr), None);
+            assert!(
+                install_button_shown(&with_funasr),
+                "Whisper is still offered"
+            );
+        });
+    }
 
     fn install_button_shown(ui: &BackendUi) -> bool {
         ui.myna_selector
@@ -4430,6 +4509,76 @@ mod tests {
             settle(|| model_titles(&ui).len() == 3);
             settle(|| closed.get());
             assert!(closed.get(), "nothing is left to install");
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn installing_the_best_model_meanwhile_moves_the_pill_and_drops_the_hint() {
+        on_gtk_thread(|| {
+            let (ui, repository, window) = refocusable_ui();
+            *repository.machine.borrow_mut() = (
+                PARAKEET_CONNECTED_WHISPER_INSTALLED,
+                PARAKEET_AND_WHISPER_SLOTS,
+            );
+            ui.rediscover_on_focus(after_the_interval());
+            settle(|| model_titles(&ui).len() == 2);
+            ui.set_preferred_languages(vec!["zh_CN".to_owned()]);
+            assert_eq!(
+                pills_and_languages(&ui)
+                    .into_iter()
+                    .map(|(title, pill, _)| (title, pill))
+                    .collect::<Vec<_>>(),
+                [
+                    ("Whisper".to_owned(), Some("Best for 中文".to_owned())),
+                    ("Parakeet".to_owned(), None),
+                ]
+            );
+            assert!(install_hint(&ui).is_some());
+
+            *repository.machine.borrow_mut() = (
+                PARAKEET_CONNECTED_EVERY_FAMILY_INSTALLED,
+                KNOWN_FAMILY_SLOTS,
+            );
+            ui.rediscover_on_focus(
+                after_the_interval() + crate::backend_controller::FOCUS_REDISCOVERY_INTERVAL,
+            );
+            settle(|| model_titles(&ui).len() == 3);
+            assert_eq!(
+                recommended_rows(&ui),
+                [
+                    ("FunASR".to_owned(), true),
+                    ("Parakeet".to_owned(), false),
+                    ("Whisper".to_owned(), false),
+                ]
+            );
+            assert_eq!(install_hint(&ui), None);
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn a_refocus_that_brings_the_best_model_drops_the_hint_but_keeps_the_button() {
+        on_gtk_thread(|| {
+            let (ui, repository, window) = refocusable_ui();
+            ui.set_preferred_languages(vec!["ko_KR".to_owned()]);
+            assert_eq!(recommended_rows(&ui), [("Parakeet".to_owned(), false)]);
+            assert_eq!(
+                install_hint(&ui).as_deref(),
+                Some("A better model for 한국어 is available")
+            );
+            *repository.machine.borrow_mut() = (
+                PARAKEET_CONNECTED_FUNASR_INSTALLED,
+                PARAKEET_AND_FUNASR_SLOTS,
+            );
+            ui.rediscover_on_focus(after_the_interval());
+            settle(|| model_titles(&ui).len() == 2);
+            assert_eq!(
+                recommended_rows(&ui),
+                [("FunASR".to_owned(), true), ("Parakeet".to_owned(), false)]
+            );
+            assert_eq!(install_hint(&ui), None);
+            assert!(install_button_shown(&ui));
             window.destroy();
         });
     }

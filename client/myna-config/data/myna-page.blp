@@ -47,17 +47,35 @@ template $MynaPage: Adw.NavigationPage {
         }
 
         child: Gtk.Box {
+          orientation: vertical;
           halign: center;
-          spacing: 6;
+          spacing: 2;
           margin-top: 8;
           margin-bottom: 8;
 
-          Gtk.Label {
-            label: _("Install more models");
+          Gtk.Box {
+            halign: center;
+            spacing: 6;
+
+            Gtk.Label {
+              label: _("Install more models");
+            }
+
+            Gtk.Image {
+              icon-name: "go-next-symbolic";
+            }
           }
 
-          Gtk.Image {
-            icon-name: "go-next-symbolic";
+          Gtk.Label install_hint {
+            visible: false;
+            justify: center;
+            wrap: true;
+            wrap-mode: word_char;
+
+            styles [
+              "caption",
+              "dim-label",
+            ]
           }
         };
 
