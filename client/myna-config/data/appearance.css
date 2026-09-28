@@ -15,12 +15,19 @@
   border-bottom-width: 4px;
   border-radius: 2px;
   padding: 8px 16px;
+  min-width: 11px;
+  font-size: 20px;
+}
+
+/* The "+" between caps, at the caps' size. */
+.keycap:not(.compact) + label {
   font-size: 20px;
 }
 
 .keycap.compact {
   border-bottom-width: 2px;
   padding: 2px 8px;
+  min-width: 0;
   font-size: 1em;
 }
 
