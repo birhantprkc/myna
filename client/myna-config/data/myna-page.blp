@@ -37,6 +37,34 @@ template $MynaPage: Adw.NavigationPage {
     Adw.PreferencesGroup model_group {
       title: _("Model");
       visible: false;
+
+      Gtk.Button install_button {
+        visible: false;
+        margin-top: 12;
+
+        accessibility {
+          label: _("Install more models");
+        }
+
+        child: Gtk.Box {
+          halign: center;
+          spacing: 6;
+          margin-top: 8;
+          margin-bottom: 8;
+
+          Gtk.Label {
+            label: _("Install more models");
+          }
+
+          Gtk.Image {
+            icon-name: "go-next-symbolic";
+          }
+        };
+
+        styles [
+          "card",
+        ]
+      }
     }
   };
 }

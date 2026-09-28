@@ -1,0 +1,22 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $InstallModelsDialog: Adw.Dialog {
+  title: _("Install more models");
+  content-width: 560;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Gtk.Box {
+      orientation: vertical;
+      margin-start: 24;
+      margin-end: 24;
+      margin-top: 24;
+      margin-bottom: 24;
+
+      Adw.PreferencesGroup families {}
+    };
+  };
+}

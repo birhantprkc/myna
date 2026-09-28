@@ -979,6 +979,7 @@ fn template_probe() -> glib::ExitCode {
         "backend-apply-controls.ui",
         "backend-page.ui",
         "diagnostics-page.ui",
+        "install-models-dialog.ui",
         "main-window.ui",
         "myna-page.ui",
         "onboarding-components.ui",
@@ -1020,6 +1021,7 @@ fn template_probe() -> glib::ExitCode {
         myna.preferences_page(),
         myna.settings_group(),
         myna.model_group(),
+        myna.install_button(),
         myna.shortcut_group(),
         myna.shortcut_row(),
         myna.shortcut_keys(),
@@ -1068,6 +1070,8 @@ fn template_probe() -> glib::ExitCode {
     println!("StatusPage");
     let _ = ui::ShortcutDialog::new();
     println!("ShortcutDialog");
+    let _ = ui::InstallModelsDialog::new().families();
+    println!("InstallModelsDialog");
     let error_dialog = ui::OperationErrorDialog::new(
         "Operation failed",
         "concise summary",

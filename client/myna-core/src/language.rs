@@ -7,12 +7,13 @@ use crate::locale::language_code;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ModelFamily {
     Parakeet,
-    FunAsr,
     Whisper,
+    FunAsr,
 }
 
 impl ModelFamily {
-    pub const ALL: [ModelFamily; 3] = [Self::Parakeet, Self::FunAsr, Self::Whisper];
+    /// Every family, in the order Settings lists them.
+    pub const ALL: [ModelFamily; 3] = [Self::Parakeet, Self::Whisper, Self::FunAsr];
 
     pub fn snap_name(self) -> &'static str {
         match self {
@@ -101,7 +102,7 @@ pub fn recommend<S: AsRef<str>>(preferred: &[S]) -> ModelFamily {
 ///
 /// Only the first language decides: the rest are fallbacks the user settled
 /// for, and a Welsh speaker listing English after Welsh still speaks Welsh.
-pub fn recommend_among<S: AsRef<str>>(
+fn recommend_among<S: AsRef<str>>(
     preferred: &[S],
     candidates: &[ModelFamily],
 ) -> Option<ModelFamily> {

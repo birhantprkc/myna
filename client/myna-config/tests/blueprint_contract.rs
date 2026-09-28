@@ -6,6 +6,7 @@ const BLUEPRINTS: &[(&str, &str)] = &[
     ("backend-apply-controls.blp", "backend-apply-controls.ui"),
     ("backend-page.blp", "backend-page.ui"),
     ("diagnostics-page.blp", "diagnostics-page.ui"),
+    ("install-models-dialog.blp", "install-models-dialog.ui"),
     ("main-window.blp", "main-window.ui"),
     ("myna-page.blp", "myna-page.ui"),
     ("onboarding-components.blp", "onboarding-components.ui"),

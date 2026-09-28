@@ -6,6 +6,7 @@
     <file>backend-apply-controls.ui</file>
     <file>backend-page.ui</file>
     <file>diagnostics-page.ui</file>
+    <file>install-models-dialog.ui</file>
     <file>main-window.ui</file>
     <file>myna-page.ui</file>
     <file>onboarding-components.ui</file>

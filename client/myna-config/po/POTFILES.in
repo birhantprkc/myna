@@ -3,6 +3,7 @@ data/apply-dialog.blp
 data/backend-apply-controls.blp
 data/backend-page.blp
 data/diagnostics-page.blp
+data/install-models-dialog.blp
 data/main-window.blp
 data/myna-page.blp
 data/onboarding-components.blp

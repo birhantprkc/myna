@@ -29,6 +29,7 @@ fn every_top_level_template_instantiates_headlessly_when_enabled() {
         "DiagnosticsPage",
         "StatusPage",
         "ShortcutDialog",
+        "InstallModelsDialog",
         "OperationErrorDialog",
         "OnboardingWelcome",
         "OnboardingComponents",

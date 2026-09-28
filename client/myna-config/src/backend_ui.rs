@@ -34,7 +34,9 @@ use crate::diagnostics::{
 };
 use crate::domain::{ActiveBackendState, BackendIdentity, ConfigValue, ServiceState};
 use crate::markup::escape_markup;
-use crate::model_family::{is_recommended, model_family, recommended_family, recommended_first};
+use crate::model_family::{
+    installable_families, is_recommended, model_family, recommended_first, store_uri,
+};
 use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::performance::PerformanceFacts;
 use crate::ports::{BackendRepository, SystemConfigurator};
@@ -70,6 +72,77 @@ fn model_description(subtitle: Option<&str>, pill: Option<&str>) -> Option<Strin
         .filter(|part| !part.is_empty())
         .collect();
     (!parts.is_empty()).then(|| parts.join("\n"))
+}
+
+fn recommended_pill() -> gtk::Label {
+    gtk::Label::builder()
+        .label(gettextrs::gettext("Recommended"))
+        .valign(gtk::Align::Center)
+        .css_classes(["recommended-pill"])
+        .build()
+}
+
+/// One activatable row per family, `recommended` with its pill; activating a
+/// row hands its family to `choose`.
+fn install_models_dialog(
+    families: &[myna_core::language::ModelFamily],
+    recommended: Option<myna_core::language::ModelFamily>,
+    choose: impl Fn(&ui::InstallModelsDialog, myna_core::language::ModelFamily) + 'static,
+) -> ui::InstallModelsDialog {
+    let dialog = ui::InstallModelsDialog::new();
+    let choose = Rc::new(choose);
+    for &family in families {
+        let shown = model_family(family.snap_name());
+        let row = adw::ActionRow::builder()
+            .title(&shown.name)
+            .use_markup(false)
+            .activatable(true)
+            .build();
+        if let Some(description) = &shown.description {
+            row.set_subtitle(description);
+        }
+        let pill = (recommended == Some(family)).then(recommended_pill);
+        if let Some(pill) = &pill {
+            row.add_suffix(pill);
+        }
+        row.add_suffix(&gtk::Image::from_icon_name("adw-external-link-symbolic"));
+        row.reset_relation(gtk::AccessibleRelation::DescribedBy);
+        let pill_text = pill.as_ref().map(gtk::Label::label);
+        if let Some(description) =
+            model_description(shown.description.as_deref(), pill_text.as_deref())
+        {
+            row.update_property(&[gtk::accessible::Property::Description(&description)]);
+        }
+        row.connect_activated({
+            let dialog = dialog.downgrade();
+            let choose = Rc::clone(&choose);
+            move |_| {
+                if let Some(dialog) = dialog.upgrade() {
+                    choose(&dialog, family);
+                }
+            }
+        });
+        dialog.families().add(&row);
+    }
+    dialog
+}
+
+fn open_in_app_center(overlay: &adw::ToastOverlay, family: myna_core::language::ModelFamily) {
+    let parent = overlay.root().and_downcast::<gtk::Window>();
+    let overlay = overlay.clone();
+    gtk::UriLauncher::new(&store_uri(family)).launch(
+        parent.as_ref(),
+        gio::Cancellable::NONE,
+        move |result| {
+            if let Err(error) = result {
+                if !error.matches(gtk::DialogError::Dismissed) {
+                    overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
+                        "App Center could not be opened",
+                    )));
+                }
+            }
+        },
+    );
 }
 
 /// Runtime coordinator that keeps the Backend/Diagnostics tabs in sync with a
@@ -292,6 +365,7 @@ impl BackendUi {
         });
 
         ui.connect_view_stack_selection();
+        ui.connect_install_button();
 
         ui.controller.observe({
             let ui = Rc::downgrade(&ui);
@@ -429,13 +503,11 @@ impl BackendUi {
         };
         let group = page.model_group();
         let snapshot = self.active_backend.snapshot();
-        let recommended = self
-            .preferred_languages
-            .borrow()
-            .as_deref()
-            .and_then(|languages| recommended_family(snapshot.backends(), languages));
+        let recommended = self.recommended();
         let ordered = recommended_first(snapshot.backends(), recommended);
         let backends = ordered.as_slice();
+        page.install_button()
+            .set_visible(!installable_families(backends, None).is_empty());
         let selectable = backends.len() > 1
             || !matches!(snapshot.active_state(), ActiveBackendState::Connected(_));
         let (listed, listed_selectable) = {
@@ -542,12 +614,8 @@ impl BackendUi {
                 });
                 radio
             });
-            let pill = gtk::Label::builder()
-                .label(gettextrs::gettext("Recommended"))
-                .valign(gtk::Align::Center)
-                .css_classes(["recommended-pill"])
-                .visible(false)
-                .build();
+            let pill = recommended_pill();
+            pill.set_visible(false);
             let spinner = gtk::Spinner::builder()
                 .valign(gtk::Align::Center)
                 .visible(false)
@@ -574,6 +642,43 @@ impl BackendUi {
             });
         }
         *self.model_rows.borrow_mut() = rows;
+    }
+
+    /// The recommendation, once the language is known.
+    fn recommended(&self) -> Option<myna_core::language::ModelFamily> {
+        self.preferred_languages
+            .borrow()
+            .as_deref()
+            .map(myna_core::language::recommend)
+    }
+
+    fn connect_install_button(self: &Rc<Self>) {
+        let Some(page) = self.myna_selector.as_ref() else {
+            return;
+        };
+        page.install_button().connect_clicked({
+            let ui = Rc::downgrade(self);
+            move |_| {
+                if let Some(ui) = ui.upgrade() {
+                    ui.present_install_models();
+                }
+            }
+        });
+    }
+
+    fn install_models(&self) -> ui::InstallModelsDialog {
+        let recommended = self.recommended();
+        let families = installable_families(self.active_backend.snapshot().backends(), recommended);
+        let overlay = self.overlay.clone();
+        install_models_dialog(&families, recommended, move |dialog, family| {
+            open_in_app_center(&overlay, family);
+            dialog.close();
+        })
+    }
+
+    fn present_install_models(&self) {
+        self.install_models()
+            .present(Some(self.overlay.upcast_ref::<gtk::Widget>()));
     }
 
     fn connect_view_stack_selection(self: &Rc<Self>) {
@@ -2715,6 +2820,7 @@ mod tests {
             last_diagnostics_refresh: std::cell::Cell::new(None),
         });
         ui.connect_view_stack_selection();
+        ui.connect_install_button();
         TestUi { ui, view_stack }
     }
 
@@ -3024,7 +3130,15 @@ mod tests {
                 recommended_rows(&two_models_for(&["en_US", "en"])),
                 [("Parakeet".to_owned(), true), ("Whisper".to_owned(), false)]
             );
-            let ui = two_models_for(&["zh_CN"]);
+            assert_eq!(
+                recommended_rows(&two_models_for(&["zh_CN"])),
+                [
+                    ("Parakeet".to_owned(), false),
+                    ("Whisper".to_owned(), false)
+                ],
+                "FunASR is recommended, and it is not installed"
+            );
+            let ui = two_models_for(&["cy_GB"]);
             assert_eq!(
                 recommended_rows(&ui),
                 [("Whisper".to_owned(), true), ("Parakeet".to_owned(), false)]
@@ -3099,7 +3213,7 @@ mod tests {
             let (read_on_tx, read_on) = std::sync::mpsc::channel();
             ui.read_preferred_languages(move || {
                 read_on_tx.send(std::thread::current().id()).ok();
-                vec!["zh_CN".to_owned()]
+                vec!["cy_GB".to_owned()]
             });
             let context = glib::MainContext::default();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -3112,6 +3226,144 @@ mod tests {
                 [("Whisper".to_owned(), true), ("Parakeet".to_owned(), false)]
             );
             assert_ne!(read_on.recv().ok(), Some(main));
+        });
+    }
+
+    const KNOWN_FAMILY_SLOTS: &str = "name: content\nslots:\n  \
+         - myna-parakeet:provider:\n      content: inference-provider\n  \
+         - myna-whisper:provider:\n      content: inference-provider\n  \
+         - myna-funasr:provider:\n      content: inference-provider\n";
+    const PARAKEET_CONNECTED_EVERY_FAMILY_INSTALLED: &str = "Interface Plug Slot Notes\n\
+         content[inference-provider] myna:backend myna-parakeet:provider manual\n\
+         content - myna-whisper:provider -\n\
+         content - myna-funasr:provider -\n";
+
+    fn install_button_shown(ui: &BackendUi) -> bool {
+        ui.myna_selector
+            .as_ref()
+            .expect("general page")
+            .install_button()
+            .is_visible()
+    }
+
+    #[test]
+    fn install_more_models_hides_once_every_known_family_is_installed() {
+        on_gtk_thread(|| {
+            assert!(install_button_shown(&general_ui(PARAKEET_CONNECTED)));
+            assert!(install_button_shown(&general_ui_with(
+                PARAKEET_CONNECTED_TWO_MORE_INSTALLED,
+                THREE_MODEL_SLOTS,
+            )));
+            assert!(!install_button_shown(&general_ui_with(
+                PARAKEET_CONNECTED_EVERY_FAMILY_INSTALLED,
+                KNOWN_FAMILY_SLOTS,
+            )));
+        });
+    }
+
+    /// The install dialog's rows: title, subtitle, whether the pill shows,
+    /// and the accessible description.
+    fn offered(dialog: &ui::InstallModelsDialog) -> Vec<(String, String, bool)> {
+        let pill = gettextrs::gettext("Recommended");
+        descendants(dialog.families().upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<adw::ActionRow>().ok())
+            .map(|row| {
+                let shown = descendants(row.upcast_ref())
+                    .into_iter()
+                    .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+                    .any(|label| label.label() == pill && label.is_visible());
+                (
+                    row.title().to_string(),
+                    row.subtitle().unwrap_or_default().to_string(),
+                    shown,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_install_dialog_offers_the_missing_families_recommended_first() {
+        on_gtk_thread(|| {
+            let whisper = gettextrs::gettext("Widest language support");
+            let funasr =
+                gettextrs::gettext("Good support for English, Chinese, Japanese and Korean");
+            let ui = general_ui(PARAKEET_CONNECTED);
+            assert_eq!(
+                offered(&ui.install_models()),
+                [
+                    ("Whisper".to_owned(), whisper.clone(), false),
+                    ("FunASR".to_owned(), funasr.clone(), false),
+                ],
+                "no pill before the language is known"
+            );
+            ui.set_preferred_languages(vec!["ja_JP".to_owned()]);
+            assert_eq!(
+                offered(&ui.install_models()),
+                [
+                    ("FunASR".to_owned(), funasr.clone(), true),
+                    ("Whisper".to_owned(), whisper.clone(), false),
+                ]
+            );
+            ui.set_preferred_languages(vec!["en_US".to_owned()]);
+            assert_eq!(
+                offered(&ui.install_models()),
+                [
+                    ("Whisper".to_owned(), whisper, false),
+                    ("FunASR".to_owned(), funasr, false),
+                ],
+                "the installed Parakeet keeps the pill on the General tab"
+            );
+        });
+    }
+
+    #[test]
+    fn install_more_models_opens_the_dialog() {
+        on_gtk_thread(|| {
+            let ui = general_ui(PARAKEET_CONNECTED);
+            let window = adw::Window::builder()
+                .default_width(800)
+                .default_height(600)
+                .content(&ui.overlay)
+                .build();
+            window.present();
+            let opened = || {
+                gtk::Window::list_toplevels()
+                    .into_iter()
+                    .flat_map(|window| descendants(&window))
+                    .filter_map(|widget| widget.downcast::<ui::InstallModelsDialog>().ok())
+                    .collect::<Vec<_>>()
+            };
+            assert!(opened().is_empty());
+            ui.myna_selector
+                .as_ref()
+                .expect("general page")
+                .install_button()
+                .emit_clicked();
+            let dialogs = opened();
+            assert_eq!(dialogs.len(), 1);
+            assert_eq!(offered(&dialogs[0]).len(), 2);
+            dialogs[0].force_close();
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn activating_an_offered_family_chooses_it() {
+        on_gtk_thread(|| {
+            use myna_core::language::ModelFamily as Family;
+            let chosen = Rc::new(RefCell::new(Vec::new()));
+            let dialog = install_models_dialog(&[Family::Whisper, Family::FunAsr], None, {
+                let chosen = Rc::clone(&chosen);
+                move |_, family| chosen.borrow_mut().push(family)
+            });
+            let rows: Vec<adw::ActionRow> = descendants(dialog.families().upcast_ref())
+                .into_iter()
+                .filter_map(|widget| widget.downcast::<adw::ActionRow>().ok())
+                .collect();
+            assert!(rows.iter().all(|row| row.is_activatable()));
+            adw::prelude::ActionRowExt::activate(&rows[1]);
+            assert_eq!(*chosen.borrow(), [Family::FunAsr]);
         });
     }
 
