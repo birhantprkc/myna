@@ -1523,3 +1523,43 @@ async fn mono_capture_of_a_stereo_source_mixes_in_the_right_channel() {
         i16::MAX
     );
 }
+
+fn cue() -> myna_audio::playback::Clip {
+    myna_audio::playback::Clip::decode_ogg(std::io::Cursor::new(
+        &include_bytes!("sounds/cue.oga")[..],
+    ))
+    .expect("the fixture decodes")
+}
+
+/// A cue returns once the graph has played it through, not when it was
+/// queued: drained is only reported for audio the sink consumed.
+#[test]
+fn a_cue_plays_through_on_the_default_sink() {
+    skip_unless_enabled!();
+    let clip = cue();
+    let started = Instant::now();
+    myna_audio::playback::play(&clip).expect("the cue plays");
+    let took = started.elapsed();
+    assert!(
+        took >= clip.duration().mul_f32(0.8),
+        "returned after {took:?} for a {:?} cue",
+        clip.duration()
+    );
+}
+
+/// A graph nothing links the cue into never drains it; playing must give up
+/// shortly after the cue's length rather than hold its thread forever.
+#[test]
+fn a_cue_nothing_plays_is_an_error_not_a_hang() {
+    skip_unless_enabled!();
+    let daemon = NoSmDaemon::spawn();
+    let clip = cue();
+    let started = Instant::now();
+    let result = myna_audio::playback::play_on(&clip, Some(&daemon.remote()));
+    assert!(result.is_err(), "an unlinked cue reported {result:?}");
+    assert!(
+        started.elapsed() < clip.duration() + Duration::from_secs(4),
+        "gave up only after {:?}",
+        started.elapsed()
+    );
+}

@@ -49,6 +49,14 @@ pub const DEFAULT_HUD_STYLE: &str = "bar";
 /// on its own, in seconds; `0` turns the timeout off.
 pub const KEY_SILENCE_TIMEOUT: &str = "silence-timeout";
 
+/// Whether the daemon plays a theme sound when a session starts, stops or
+/// fails.
+pub const KEY_SOUNDS: &str = "sounds";
+
+/// The schema default for [`KEY_SOUNDS`], and what a machine with no schema
+/// installed gets.
+pub const DEFAULT_SOUNDS: bool = true;
+
 /// The schema default for [`KEY_SILENCE_TIMEOUT`], also what a machine with
 /// no schema installed gets - a forgotten session should end there too.
 pub const DEFAULT_SILENCE_TIMEOUT_SECS: u32 = 30;
@@ -69,6 +77,8 @@ pub struct Settings {
     pub hud_style: Option<String>,
     /// Seconds of silence after which a toggle session ends itself; `0` = never.
     pub silence_timeout: u32,
+    /// Whether a session's start, stop and failure are heard as well as seen.
+    pub sounds: bool,
 }
 
 /// What a machine with no schema installed reads: every key's schema default.
@@ -79,6 +89,7 @@ impl Default for Settings {
             language: None,
             hud_style: None,
             silence_timeout: DEFAULT_SILENCE_TIMEOUT_SECS,
+            sounds: DEFAULT_SOUNDS,
         }
     }
 }
@@ -102,6 +113,7 @@ impl Settings {
             language: store.text(KEY_LANGUAGE),
             hud_style: store.text(KEY_HUD_STYLE),
             silence_timeout: store.seconds(KEY_SILENCE_TIMEOUT),
+            sounds: store.flag(KEY_SOUNDS),
         }
     }
 }
@@ -160,6 +172,10 @@ impl Store {
     /// An unsigned-seconds key. The schema bounds it; nothing to interpret.
     pub fn seconds(&self, key: &str) -> u32 {
         self.settings.uint(key)
+    }
+
+    pub fn flag(&self, key: &str) -> bool {
+        self.settings.boolean(key)
     }
 }
 
@@ -441,6 +457,19 @@ mod tests {
         assert_eq!(Settings::from_store(&store).silence_timeout, 0);
         assert!(store.settings.set_uint(KEY_SILENCE_TIMEOUT, 120).is_ok());
         assert_eq!(Settings::from_store(&store).silence_timeout, 120);
+    }
+
+    /// Sounds are on out of the box, with or without a schema, and turning
+    /// them off reaches the value the daemon reads.
+    #[test]
+    fn sounds_read_the_schema_default_and_round_trip() {
+        let store = test_store();
+        assert_eq!(Settings::from_store(&store).sounds, DEFAULT_SOUNDS);
+        assert_eq!(Settings::default().sounds, DEFAULT_SOUNDS);
+        assert!(store.settings.set_boolean(KEY_SOUNDS, false).is_ok());
+        assert!(!Settings::from_store(&store).sounds);
+        assert!(store.settings.set_boolean(KEY_SOUNDS, true).is_ok());
+        assert!(Settings::from_store(&store).sounds);
     }
 
     /// The schema's nicks and this module's parser are one contract; a value

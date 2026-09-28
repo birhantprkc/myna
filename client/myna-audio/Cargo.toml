@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Audio-capture adapter for the myna dictation service"
+description = "Audio capture and cue playback for the myna dictation service"
 
 [dependencies]
 myna-core = { path = "../myna-core" }
@@ -14,6 +14,8 @@ futures-util.workspace = true
 pipewire.workspace = true
 # Lock-free SPSC ring between the realtime process callback and the loop thread.
 rtrb = "0.4"
+# Ogg Vorbis, the format freedesktop sound themes ship, for the session cues.
+lewton = "0.10"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

@@ -62,7 +62,10 @@ apps:
       <<: &settings-env
         GSETTINGS_BACKEND: keyfile
         XDG_CONFIG_HOME: $SNAP_USER_COMMON/.config
-      XDG_DATA_DIRS: "$SNAP/usr/share:$XDG_DATA_DIRS"
+      # $SNAP/data-dir holds the sound themes `sound-themes` mounts (from
+      # the hud's gnome extension), where the session cues are looked up
+      # (myna-desktop/src/sound/theme.rs).
+      XDG_DATA_DIRS: "$SNAP/usr/share:$SNAP/data-dir:$XDG_DATA_DIRS"
     command: bin/myna-daemon
     # A per-user systemd service, started at login and supervised
     # (`WantedBy=default.target`, `Restart=on-failure`, `RestartSec=1s`).
@@ -114,11 +117,12 @@ apps:
     # more.
     refresh-mode: restart
     plugs:
-      - pipewire # mic capture — snapd gates it: `snap connect myna:pipewire`
+      - pipewire # mic capture and the session cues - snapd gates it: `snap connect myna:pipewire`
       - desktop # portals (GlobalShortcuts hotkey) + desktop notifications
       - desktop-legacy # the IBus daemon's private socket (text injection)
       - network-bind # seccomp bind(2) for the control socket - no other interface grants it
       - backend # content share → the backend snap's session socket
+      - sound-themes # the session cues; declared by the gnome extension
     slots:
       - dictation # com.canonical.Myna.Dictation for the GNOME Shell indicator
 

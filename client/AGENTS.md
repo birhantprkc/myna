@@ -15,7 +15,7 @@ The client is a Rust workspace that turns activation events into bounded microph
 # Directory
 
 - `myna-core/` - Shared audio, event, settings, and wire types, plus the language-to-model recommendation.
-- `myna-audio/` - Native PipeWire capture and device discovery.
+- `myna-audio/` - Native PipeWire capture, device discovery and cue playback.
 - `myna-orchestrator/` - Session and residency state machines plus boundary traits.
 - `myna-cli/` - `myna-testbed` development binary.
 - `myna-desktop/` - Desktop activation, IBus injection, and state publication.

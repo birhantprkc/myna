@@ -2306,6 +2306,7 @@ fn backends_probe() -> glib::ExitCode {
     .collect();
     if dictation_rows
         != [
+            "Sounds on start, stop and error",
             "When to transcribe",
             "Indicator style",
             "Stop after silence (seconds)",
@@ -2588,6 +2589,29 @@ fn backends_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("mode: a choice is stored as the user's");
+
+    let sounds_row = descendants(general.upcast_ref(), &|widget| {
+        widget.is::<adw::SwitchRow>()
+    })
+    .into_iter()
+    .filter_map(|row| row.downcast::<adw::SwitchRow>().ok())
+    .find(|row| row.title() == "Sounds on start, stop and error")
+    .expect("a Sounds switch on General");
+    if !sounds_row.is_active() {
+        eprintln!("the Sounds switch starts off, though the schema defaults it on");
+        return glib::ExitCode::FAILURE;
+    }
+    let stored_sounds = || {
+        GioClientSettings::open()
+            .ok()
+            .and_then(|settings| settings.get(myna_core::settings::KEY_SOUNDS).ok())
+    };
+    sounds_row.set_active(false);
+    if !settles(&|| stored_sounds() == Some(ClientSettingValue::Boolean(false))) {
+        eprintln!("turning Sounds off stored {:?}", stored_sounds());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("sounds: the switch writes the setting");
 
     // A refused switch puts the radio back and says so in a toast whose
     // Details button opens the full report.
@@ -3109,6 +3133,11 @@ enum RowBinding {
         writable: bool,
         updating: Rc<Cell<bool>>,
     },
+    Switch {
+        row: adw::SwitchRow,
+        writable: bool,
+        updating: Rc<Cell<bool>>,
+    },
     Text {
         row: adw::EntryRow,
         key: String,
@@ -3173,6 +3202,18 @@ impl RowBinding {
                 updating.set(true);
                 if let Some(value) = value.as_integer() {
                     row.set_value(value as f64);
+                }
+                row.set_sensitive(*writable);
+                updating.set(false);
+            }
+            Self::Switch {
+                row,
+                writable,
+                updating,
+            } => {
+                updating.set(true);
+                if let Some(value) = value.as_bool() {
+                    row.set_active(value);
                 }
                 row.set_sensitive(*writable);
                 updating.set(false);
@@ -3330,6 +3371,40 @@ fn ready_page(
                 bindings.borrow_mut().insert(
                     plan.key.clone(),
                     RowBinding::Number {
+                        row: row.clone(),
+                        writable: plan.writable,
+                        updating,
+                    },
+                );
+                add(row.upcast_ref());
+            }
+            WidgetKind::Switch => {
+                let row = adw::SwitchRow::builder()
+                    .title(&plan.title)
+                    .active(setting.value().as_bool().unwrap_or_default())
+                    .sensitive(plan.writable)
+                    .build();
+                describe(&row, &plan.description);
+                let updating = Rc::new(Cell::new(false));
+                row.connect_active_notify({
+                    let controller = controller.clone();
+                    let key = plan.key.clone();
+                    let updating = updating.clone();
+                    let writer = writer.clone();
+                    move |row| {
+                        if updating.get() {
+                            return;
+                        }
+                        if let Ok(request) =
+                            controller.set(&key, ClientSettingValue::Boolean(row.is_active()))
+                        {
+                            persist_request(writer.clone(), controller.clone(), request, None);
+                        }
+                    }
+                });
+                bindings.borrow_mut().insert(
+                    plan.key.clone(),
+                    RowBinding::Switch {
                         row: row.clone(),
                         writable: plan.writable,
                         updating,

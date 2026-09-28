@@ -126,16 +126,17 @@ fn every_real_schema_key_round_trips_in_the_private_keyfile() {
     let adapter = open_adapter(&files);
 
     for metadata in adapter.list().unwrap() {
-        let value = match metadata.range() {
-            SettingRange::Choices(choices) => ClientSettingValue::Choice(
+        let value = match (metadata.range(), metadata.default_value()) {
+            (_, ClientSettingValue::Boolean(default)) => ClientSettingValue::Boolean(!default),
+            (SettingRange::Choices(choices), _) => ClientSettingValue::Choice(
                 choices
                     .iter()
                     .find(|choice| Some(choice.as_str()) != metadata.default_value().as_str())
                     .unwrap_or(&choices[0])
                     .clone(),
             ),
-            SettingRange::Unrestricted => ClientSettingValue::Text("round trip".into()),
-            SettingRange::Range { minimum, .. } => {
+            (SettingRange::Unrestricted, _) => ClientSettingValue::Text("round trip".into()),
+            (SettingRange::Range { minimum, .. }, _) => {
                 let floor = minimum.as_integer().expect("integer range");
                 let default = metadata
                     .default_value()
@@ -391,8 +392,14 @@ fn headless_widget_smoke_covers_every_real_schema_key() {
 
     let plans: Vec<_> = adapter.list().unwrap().iter().map(widget_plan).collect();
 
-    assert_eq!(plans.len(), 4);
+    assert_eq!(plans.len(), 5);
     assert!(plans.iter().any(|plan| plan.kind == WidgetKind::Choice));
+    let switch = plans
+        .iter()
+        .find(|plan| plan.kind == WidgetKind::Switch)
+        .expect("sounds is a boolean");
+    assert_eq!(switch.key, "sounds");
+    assert_eq!(switch.title, "Sounds on start, stop and error");
     assert!(plans.iter().any(|plan| plan.kind == WidgetKind::Text));
     let number = plans
         .iter()
@@ -433,4 +440,35 @@ fn the_silence_timeout_is_a_bounded_integer_that_rejects_values_outside_its_rang
         adapter.get("silence-timeout").unwrap(),
         ClientSettingValue::Integer(0)
     );
+}
+
+#[test]
+fn sounds_are_a_boolean_that_defaults_on() {
+    let files = TestFiles::new("sounds");
+    let adapter = open_adapter(&files);
+
+    assert_eq!(
+        adapter.get("sounds").unwrap(),
+        ClientSettingValue::Boolean(true)
+    );
+    adapter
+        .set("sounds", ClientSettingValue::Boolean(false))
+        .unwrap();
+    assert_eq!(
+        open_adapter(&files).get("sounds").unwrap(),
+        ClientSettingValue::Boolean(false)
+    );
+    for wrong in [
+        ClientSettingValue::Text("true".into()),
+        ClientSettingValue::Integer(1),
+    ] {
+        assert!(matches!(
+            adapter.set("sounds", wrong),
+            Err(ClientSettingsError::InvalidValue { key, .. }) if key == "sounds"
+        ));
+    }
+    assert!(matches!(
+        adapter.set("silence-timeout", ClientSettingValue::Boolean(true)),
+        Err(ClientSettingsError::InvalidValue { key, .. }) if key == "silence-timeout"
+    ));
 }

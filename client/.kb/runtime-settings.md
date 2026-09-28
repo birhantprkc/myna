@@ -27,6 +27,8 @@ The mode is a client presentation preference, not wire negotiation. A streaming 
 
 `silence-timeout` (unsigned seconds, 0 = off, schema default 30) is the toggle session's idle limit. `Settings::default()` carries the schema default too, so a machine without the schema still ends a forgotten session. The daemon reads it live at every stats tick, so a change applies to the session in progress. Myna Settings renders any bounded integer key as a spin row; a key with a GVariant type the adapter cannot widen to `i64` fails the whole page, so add the conversion before adding such a key.
 
+`sounds` (boolean, schema default true) turns the session cues on and off (`.kb/desktop-integration.md`). The daemon reads it live, at the next cue. Myna Settings renders any boolean key as a switch row.
+
 # Important
 
 - Apply live-reloadable settings without restart. Activation and hotkey changes require rebinding and must report that limitation.

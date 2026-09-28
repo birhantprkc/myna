@@ -12,7 +12,7 @@ Solid arrows are Cargo dependencies. Dashed arrows are runtime integration bound
 flowchart TB
     subgraph workspace["client/ Cargo workspace"]
         core["myna-core<br/>contract types, wire codecs, settings"]
-        audio["myna-audio<br/>PipeWire capture and devices"]
+        audio["myna-audio<br/>PipeWire capture, devices and cues"]
         orchestrator["myna-orchestrator<br/>session and residency FSMs"]
         cli["myna-cli<br/>myna-testbed"]
         desktop["myna-desktop<br/>activation, controller, injection"]

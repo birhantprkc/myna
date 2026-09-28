@@ -25,6 +25,15 @@
   </enum>
 
   <schema id="com.canonical.Myna.Dictation" path="/com/canonical/myna/dictation/">
+    <key name="sounds" type="b">
+      <default>true</default>
+      <summary>Sounds on start, stop and error</summary>
+      <description>
+        Play a short sound from the desktop sound theme when dictation starts
+        listening, when it stops, and when it fails.
+      </description>
+    </key>
+
     <key name="streaming-mode" enum="com.canonical.Myna.Dictation.StreamingMode">
       <default>'streaming'</default>
       <summary>When to transcribe</summary>

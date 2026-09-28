@@ -1067,7 +1067,10 @@ fn stream_channels(selection: Option<&[u8]>, negotiated: u8) -> u32 {
 /// first and renumber what the indices refer to. Past stereo there is no
 /// single right answer (4 channels may be quad or 3.1), so those stay
 /// unpositioned too rather than guess a layout.
-fn channel_positions(selection: Option<&[u8]>, channels: u32) -> Option<[u32; MAX_CHANNELS]> {
+pub(crate) fn channel_positions(
+    selection: Option<&[u8]>,
+    channels: u32,
+) -> Option<[u32; MAX_CHANNELS]> {
     if selection.is_some() {
         return None;
     }

@@ -109,6 +109,7 @@ impl ClientSettings for GioClientSettings {
         let variant = match (&range, &value) {
             (SettingRange::Choices(_), ClientSettingValue::Choice(value))
             | (SettingRange::Unrestricted, ClientSettingValue::Text(value)) => value.to_variant(),
+            (_, ClientSettingValue::Boolean(value)) => value.to_variant(),
             (
                 SettingRange::Range { .. } | SettingRange::Unrestricted,
                 ClientSettingValue::Integer(value),
@@ -225,6 +226,9 @@ fn value_from_variant(
 ) -> Result<ClientSettingValue, ClientSettingsError> {
     if let Some(integer) = integer_from_variant(value) {
         return Ok(ClientSettingValue::Integer(integer));
+    }
+    if let Some(boolean) = value.get::<bool>() {
+        return Ok(ClientSettingValue::Boolean(boolean));
     }
     let value = value
         .get::<String>()

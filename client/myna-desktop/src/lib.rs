@@ -30,6 +30,7 @@ pub mod indicator;
 pub mod inject;
 pub mod live;
 pub mod shortcut;
+pub mod sound;
 
 pub use controller::{
     auto_stop_due, event_to_indicator, input_quality, AutoStop, ChannelSink, Delivery,

@@ -186,6 +186,7 @@ fn dictation_rows_follow_the_designed_order_not_the_schema_order() {
             "hud-style",
             "language",
             "silence-timeout",
+            "sounds",
             "streaming-mode",
         ]
         .map(text)
@@ -203,6 +204,7 @@ fn dictation_rows_follow_the_designed_order_not_the_schema_order() {
     assert_eq!(
         keys,
         [
+            "sounds",
             "streaming-mode",
             "hud-style",
             "silence-timeout",

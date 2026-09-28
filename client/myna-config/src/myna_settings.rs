@@ -18,6 +18,8 @@ pub enum WidgetKind {
     Text,
     /// A bounded integer: a spin row over the schema range.
     Number,
+    /// A boolean key.
+    Switch,
 }
 
 /// Where a setting's row sits in the window.
@@ -48,6 +50,7 @@ pub fn widget_plan(metadata: &ClientSettingMetadata) -> WidgetPlan {
         _ => None,
     };
     let kind = match metadata.range() {
+        _ if metadata.default_value().as_bool().is_some() => WidgetKind::Switch,
         SettingRange::Choices(_) => WidgetKind::Choice,
         _ if bounds.is_some() => WidgetKind::Number,
         _ => WidgetKind::Text,
@@ -75,7 +78,8 @@ pub fn widget_plan(metadata: &ClientSettingMetadata) -> WidgetPlan {
 }
 
 /// The Dictation group's order; any other key follows, in the adapter's order.
-const DICTATION_ORDER: [&str; 3] = [
+const DICTATION_ORDER: [&str; 4] = [
+    myna_core::settings::KEY_SOUNDS,
     KEY_STREAMING_MODE,
     myna_core::settings::KEY_HUD_STYLE,
     myna_core::settings::KEY_SILENCE_TIMEOUT,

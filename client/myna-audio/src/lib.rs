@@ -31,11 +31,15 @@
 //! etc.) is PipeWire
 //! filter-chain territory upstream of the capture node — this crate observes,
 //! it never transforms (§10).
+//!
+//! The one output path is [`playback`]: short one-shot cues, never the
+//! microphone's audio.
 
 mod backend;
 mod devices;
 mod fake;
 mod native;
+pub mod playback;
 mod ring;
 mod source;
 mod stats;

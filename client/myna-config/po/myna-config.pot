@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-28 22:09+0100\n"
+"POT-Creation-Date: 2026-09-28 22:39+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -113,7 +113,7 @@ msgid "General"
 msgstr ""
 
 #: data/main-window.blp:39 data/myna-page.blp:38 src/app.rs:1154
-#: src/app.rs:2294 src/app.rs:2635 src/diagnostics.rs:535
+#: src/app.rs:2327 src/app.rs:2689 src/diagnostics.rs:535
 msgid "Model"
 msgstr ""
 
@@ -146,11 +146,11 @@ msgstr ""
 msgid "Dictation"
 msgstr ""
 
-#: data/onboarding-components.blp:18 src/app.rs:2851 src/onboarding_ui.rs:457
+#: data/onboarding-components.blp:18 src/app.rs:2905 src/onboarding_ui.rs:457
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:27 src/app.rs:453 src/app.rs:2855
+#: data/onboarding-components.blp:27 src/app.rs:453 src/app.rs:2909
 msgid ""
 "Copy the command below and enter them in the Terminal to install all "
 "necessary components."
@@ -160,7 +160,7 @@ msgstr ""
 msgid "Copy install commands"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:18 src/app.rs:2904 src/onboarding_ui.rs:458
+#: data/onboarding-shortcut.blp:18 src/app.rs:2958 src/onboarding_ui.rs:458
 msgid "How to dictate"
 msgstr ""
 
@@ -180,7 +180,7 @@ msgstr ""
 msgid "Setting up dictation"
 msgstr ""
 
-#: data/onboarding-window.blp:43 src/app.rs:2964
+#: data/onboarding-window.blp:43 src/app.rs:3018
 msgid "All components installed"
 msgstr ""
 
@@ -224,11 +224,11 @@ msgstr ""
 msgid "Press Escape to cancel."
 msgstr ""
 
-#: data/status-page.blp:8 src/app.rs:1149 src/app.rs:3039
+#: data/status-page.blp:8 src/app.rs:1149 src/app.rs:3093
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:9 src/app.rs:1150 src/app.rs:3040
+#: data/status-page.blp:9 src/app.rs:1150 src/app.rs:3094
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -248,47 +248,47 @@ msgstr ""
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:2332 src/backend_ui.rs:3354 src/model_family.rs:27
+#: src/app.rs:2365 src/backend_ui.rs:3354 src/model_family.rs:27
 msgid "Fastest, good support for European languages"
 msgstr ""
 
-#: src/app.rs:2336 src/backend_ui.rs:3823 src/model_family.rs:29
+#: src/app.rs:2369 src/backend_ui.rs:3823 src/model_family.rs:29
 msgid "Widest language support"
 msgstr ""
 
-#: src/app.rs:2471 src/myna_settings.rs:86
+#: src/app.rs:2504 src/myna_settings.rs:104
 msgid "As you speak"
 msgstr ""
 
-#: src/app.rs:2472 src/myna_settings.rs:87
+#: src/app.rs:2505 src/myna_settings.rs:105
 msgid "When you stop"
 msgstr ""
 
-#: src/app.rs:2577 src/backend_ui.rs:617
+#: src/app.rs:2631 src/backend_ui.rs:617
 msgid "Changing to {model} failed"
 msgstr ""
 
-#: src/app.rs:2578 src/backend_ui.rs:626
+#: src/app.rs:2632 src/backend_ui.rs:626
 msgid "Details"
 msgstr ""
 
-#: src/app.rs:2919 src/shortcut_ui.rs:391
+#: src/app.rs:2973 src/shortcut_ui.rs:391
 msgid "You can trigger Dictation anytime by using the keyboard shortcut:"
 msgstr ""
 
-#: src/app.rs:3044
+#: src/app.rs:3098
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:3045
+#: src/app.rs:3099
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:3061
+#: src/app.rs:3115
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:3428
+#: src/app.rs:3533
 msgid "Could not save the setting"
 msgstr ""
 
@@ -1189,11 +1189,11 @@ msgstr ""
 msgid "chunks dropped this session"
 msgstr ""
 
-#: src/myna_settings.rs:88
+#: src/myna_settings.rs:106
 msgid "VU meter"
 msgstr ""
 
-#: src/myna_settings.rs:89
+#: src/myna_settings.rs:107
 msgid "Default"
 msgstr ""
 
@@ -1220,41 +1220,51 @@ msgid "Best for {language}"
 msgstr ""
 
 #: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:30
-msgid "When to transcribe"
+msgid "Sounds on start, stop and error"
 msgstr ""
 
 #: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:31
+msgid ""
+"Play a short sound from the desktop sound theme when dictation starts "
+"listening, when it stops, and when it fails."
+msgstr ""
+
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:39
+msgid "When to transcribe"
+msgstr ""
+
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:40
 msgid ""
 "As you speak shows partial text in the field while you talk; When you stop "
 "injects the whole transcript once the utterance ends."
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:39
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:48
 msgid "Spoken language"
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:40
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:49
 msgid ""
 "A BCP-47-ish code (en, fr, zh) for the language you dictate in. The backend "
 "skips language detection and decodes in this language; a code that does not "
 "match what is spoken degrades the transcript. Empty lets the backend decide."
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:50
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:59
 msgid "Indicator style"
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:51
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:60
 msgid ""
 "Both render the same calibrated audio envelope: Default is a level bar in "
 "the accent colour, VU meter a segmented meter."
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:60
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:69
 msgid "Stop after silence (seconds)"
 msgstr ""
 
-#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:61
+#: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:70
 msgid ""
 "With tap-to-start activation, end the dictation session on its own after "
 "this many seconds without speech. 0 keeps it running until the next tap. "

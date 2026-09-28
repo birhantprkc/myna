@@ -63,6 +63,7 @@ use myna_desktop::shortcut::control::{default_socket_path, send_toggle, ControlT
 use myna_desktop::shortcut::portal::{ActivationMode, GlobalShortcutTrigger, TriggerError};
 use myna_desktop::shortcut::retry::{BindFailure, Rebind, RetryingTrigger};
 use myna_desktop::shortcut::Trigger;
+use myna_desktop::sound::{theme::ThemeChime, Chiming};
 use myna_desktop::{AutoStop, DesktopController, Indicator, Live, Session};
 use myna_orchestrator::backend::share::{BackendSocket, ResolveError};
 use myna_orchestrator::{
@@ -171,6 +172,7 @@ struct Resolved {
     preedit: bool,
     mode: ModeInputs,
     auto_stop: AutoStop,
+    sounds: bool,
 }
 
 impl Resolved {
@@ -189,6 +191,7 @@ impl Resolved {
             preedit: resolve_preedit(args.preedit, mode.effective().mode),
             mode,
             auto_stop: resolve_auto_stop(activation, args.hold, settings.silence_timeout),
+            sounds: settings.sounds,
         }
     }
 }
@@ -250,6 +253,7 @@ struct LiveSettings {
     /// Read at every stats tick of a running session, so a changed timeout
     /// applies to the session in progress.
     auto_stop: Live<AutoStop>,
+    sounds: Live<bool>,
     hud_style: Arc<tokio::sync::watch::Sender<String>>,
 }
 
@@ -260,6 +264,7 @@ impl LiveSettings {
             mode: Arc::new(std::sync::Mutex::new(resolved.mode)),
             language: Live::new(resolved.language.clone()),
             auto_stop: Live::new(resolved.auto_stop),
+            sounds: Live::new(resolved.sounds),
             // The schema default until the first read in `follow`; a machine
             // with no schema installed keeps it, which is the same answer
             // `Settings::load` gives there.
@@ -374,6 +379,10 @@ impl LiveSettings {
                 resolved.auto_stop.silence
             );
             self.auto_stop.set(resolved.auto_stop);
+        }
+        if self.sounds.get() != resolved.sounds {
+            myna_core::info_log!("settings", "sounds -> {} (live)", resolved.sounds);
+            self.sounds.set(resolved.sounds);
         }
     }
 
@@ -829,6 +838,18 @@ fn bind_control(path: &std::path::Path) -> Result<Box<dyn Trigger>, BindFailure>
         })
 }
 
+/// The indicator, heard as well as seen while the `sounds` setting is on. A
+/// daemon that cannot start the player thread dictates silently.
+fn with_sounds(indicator: impl Indicator + 'static, live: &LiveSettings) -> Box<dyn Indicator> {
+    match ThemeChime::spawn() {
+        Ok(chime) => Box::new(Chiming::new(indicator, chime, live.sounds.clone())),
+        Err(e) => {
+            eprintln!("myna-desktop: no sound player ({e}); cues are off");
+            Box::new(indicator)
+        }
+    }
+}
+
 /// Build and run the controller with the given indicator (tokio side).
 ///
 /// Nothing here is allowed to end the process. Every boundary this composes -
@@ -860,7 +881,7 @@ async fn run_controller(
 
     let builder = DesktopController::builder()
         .injector(LazyInjector::new(IbusConnect))
-        .indicator(indicator)
+        .indicator(with_sounds(indicator, &live))
         .session(make_session(&args, &live, readiness, pump_bus.clone()))
         .preedit(live.preedit.clone())
         .auto_stop(live.auto_stop.clone());
@@ -1912,6 +1933,19 @@ mod tests {
             resolved(&a, &settings).auto_stop,
             AutoStop::toggle(Duration::from_secs(45))
         );
+    }
+
+    /// Turning sounds off in Settings silences the next cue, no restart.
+    #[test]
+    fn a_sounds_change_reaches_the_live_cell() {
+        let live = LiveSettings::new(&resolved(&Args::default(), &unset()));
+        assert!(live.sounds.get(), "sounds are on out of the box");
+        let off = myna_core::Settings {
+            sounds: false,
+            ..Default::default()
+        };
+        live.settings_changed(&Args::default(), &off);
+        assert!(!live.sounds.get());
     }
 
     /// A settings change lands in the live cell the controller reads, and an

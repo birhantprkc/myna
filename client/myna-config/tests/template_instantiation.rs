@@ -419,6 +419,7 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
         "model-group: a refused switch reverts with a toast",
         "mode: shows the active backend's default",
         "mode: a choice is stored as the user's",
+        "sounds: the switch writes the setting",
         "backend-snapshot: read",
         "backend-edit: staged",
         "backend-apply: read back",

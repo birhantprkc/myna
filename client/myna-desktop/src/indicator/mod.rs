@@ -103,3 +103,14 @@ pub trait Indicator: Send {
     /// can obtain for itself.
     async fn set_audio_drops(&mut self, _not_active: u64) {}
 }
+
+#[async_trait]
+impl Indicator for Box<dyn Indicator> {
+    async fn set_state(&mut self, state: IndicatorState) {
+        (**self).set_state(state).await;
+    }
+
+    async fn set_audio_drops(&mut self, not_active: u64) {
+        (**self).set_audio_drops(not_active).await;
+    }
+}
