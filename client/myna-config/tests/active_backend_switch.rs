@@ -173,19 +173,6 @@ fn missing_selected_backend_is_rejected() {
     );
 }
 
-#[test]
-fn preview_names_the_backend_and_no_commands() {
-    let plan = SwitchPlan::new(
-        &connections(&["myna-parakeet", "myna-whisper"], &["myna-parakeet"]),
-        BackendIdentity::new("myna-whisper", "provider"),
-    )
-    .unwrap();
-    let text = plan.confirmation_text();
-    assert!(text.contains("myna-whisper"));
-    assert!(!text.contains("myna:backend"));
-    assert!(!text.contains("myna-parakeet"));
-}
-
 type ChangesRead = Result<Vec<SnapChange>, BackendSurfaceError>;
 
 #[derive(Clone)]
@@ -353,7 +340,6 @@ fn execution_rediscovers_before_and_after_and_reports_agreement() {
 
     let outcome = block_on(execute_switch(
         &plan,
-        true,
         &configurator,
         &repository,
         CancellationToken::new(),
@@ -380,7 +366,6 @@ fn stale_discovery_and_disappearing_selection_are_blocked_without_privilege() {
         let configurator = FakeConfigurator::returning(Ok(vec![]));
         let outcome = block_on(execute_switch(
             &plan,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -405,7 +390,6 @@ fn cached_noop_is_rechecked_and_external_change_is_reported_without_privilege() 
 
     let outcome = block_on(execute_switch(
         &plan,
-        true,
         &configurator,
         &repository,
         CancellationToken::new(),
@@ -428,7 +412,6 @@ fn verified_noop_returns_the_final_reread_state_without_authorization() {
 
     let outcome = block_on(execute_switch(
         &plan,
-        true,
         &configurator,
         &repository,
         CancellationToken::new(),
@@ -471,7 +454,6 @@ fn every_operation_failure_and_auth_denial_still_rediscover_actual_state() {
         )));
         let outcome = block_on(execute_switch(
             &plan,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -490,39 +472,57 @@ fn every_operation_failure_and_auth_denial_still_rediscover_actual_state() {
 }
 
 #[test]
-fn cancellation_and_confirmation_rejection_rediscover_without_false_rollback() {
+fn cancellation_rediscovers_without_false_rollback() {
     let initial = connections(&["old", "new"], &["old"]);
     let plan = SwitchPlan::new(&initial, BackendIdentity::new("new", "provider")).unwrap();
-    for confirmed in [false, true] {
-        let final_state = connections(&["old", "new"], &[]);
-        let repository = FakeRepository::new(if confirmed {
-            vec![Ok(initial.clone()), Ok(final_state.clone())]
-        } else {
-            vec![Ok(final_state.clone())]
-        });
-        let configurator = FakeConfigurator::returning(Err(SystemConfiguratorFailure::new(
-            success(&plan)[..1].to_vec(),
-            SystemConfiguratorError::Cancelled,
-        )));
-        let cancellation = CancellationToken::new();
-        if confirmed {
-            cancellation.cancel();
-        }
-        let outcome = block_on(execute_switch(
-            &plan,
-            confirmed,
-            &configurator,
-            &repository,
-            cancellation,
-        ));
-        assert!(matches!(
-            outcome,
-            SwitchOutcome::Cancelled {
-                final_snapshot: Some(actual),
-                ..
-            } if actual == final_state
-        ));
-    }
+    let final_state = connections(&["old", "new"], &[]);
+    let repository = FakeRepository::new([Ok(initial.clone()), Ok(final_state.clone())]);
+    let configurator = FakeConfigurator::returning(Err(SystemConfiguratorFailure::new(
+        success(&plan)[..1].to_vec(),
+        SystemConfiguratorError::Cancelled,
+    )));
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let outcome = block_on(execute_switch(
+        &plan,
+        &configurator,
+        &repository,
+        cancellation,
+    ));
+    assert!(matches!(
+        outcome,
+        SwitchOutcome::Cancelled {
+            final_snapshot: Some(actual),
+            ..
+        } if actual == final_state
+    ));
+    assert!(configurator.calls().is_empty());
+}
+
+#[test]
+fn a_dismissed_authorization_prompt_is_a_cancel_that_rereads_the_connections() {
+    let initial = connections(&["old", "new"], &["old"]);
+    let plan = SwitchPlan::new(&initial, BackendIdentity::new("new", "provider")).unwrap();
+    let repository = FakeRepository::new([Ok(initial.clone()), Ok(initial.clone())]);
+    let configurator = FakeConfigurator::returning(Err(SystemConfiguratorFailure::new(
+        Vec::new(),
+        SystemConfiguratorError::Cancelled,
+    )));
+    let outcome = block_on(execute_switch(
+        &plan,
+        &configurator,
+        &repository,
+        CancellationToken::new(),
+    ));
+    assert!(matches!(
+        outcome,
+        SwitchOutcome::Cancelled {
+            final_snapshot: Some(actual),
+            discovery_error: None,
+            ..
+        } if actual == initial
+    ));
+    assert_eq!(repository.calls(), 2);
 }
 
 #[test]
@@ -535,7 +535,6 @@ fn partial_reconciliation_and_post_operation_disagreement_are_honest() {
 
     let outcome = block_on(execute_switch(
         &plan,
-        true,
         &configurator,
         &repository,
         CancellationToken::new(),
@@ -555,7 +554,6 @@ fn failed_final_rediscovery_is_exposed() {
     assert!(matches!(
         block_on(execute_switch(
             &plan,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),

@@ -1,5 +1,4 @@
 # Source files containing translatable strings, relative to this crate.
-data/active-backend-dialog.blp
 data/apply-dialog.blp
 data/backend-apply-controls.blp
 data/backend-page.blp

@@ -264,13 +264,10 @@ impl BackendUi {
         ui
     }
 
+    /// Choosing a model is the go-ahead: snapd's own authorization prompt is
+    /// the only question asked.
     fn begin_backend_switch(self: &Rc<Self>, selected: BackendIdentity) {
         let request = match self.active_backend.begin(selected) {
-            Ok(request) if request.plan().is_noop() => {
-                self.render_model_group();
-                self.run_backend_switch(request, true);
-                return;
-            }
             Ok(request) => request,
             Err(PrepareSwitchError::BackendUnavailable(_)) => {
                 self.render_model_group();
@@ -286,25 +283,10 @@ impl BackendUi {
             }
         };
         self.render_model_group();
-        let dialog = ui::ActiveBackendDialog::new(request.plan().confirmation_text());
-        let ui = Rc::downgrade(self);
-        glib::spawn_future_local(async move {
-            let Some(owner) = ui.upgrade() else {
-                return;
-            };
-            let confirmed = dialog
-                .choose_future(Some(owner.overlay.upcast_ref::<gtk::Widget>()))
-                .await
-                == "switch";
-            owner.run_backend_switch(request, confirmed);
-        });
+        self.run_backend_switch(request);
     }
 
-    fn run_backend_switch(
-        self: &Rc<Self>,
-        request: crate::active_backend::SwitchRequest,
-        confirmed: bool,
-    ) {
+    fn run_backend_switch(self: &Rc<Self>, request: crate::active_backend::SwitchRequest) {
         let Some(repository) = self.controller.repository().cloned() else {
             self.active_backend.abandon();
             self.render_model_group();
@@ -319,7 +301,6 @@ impl BackendUi {
         glib::spawn_future_local(async move {
             let outcome = execute_switch(
                 &plan,
-                confirmed,
                 configurator.as_ref(),
                 repository.as_ref(),
                 cancellation,
@@ -338,6 +319,8 @@ impl BackendUi {
 
     fn present_switch_outcome(&self, outcome: &SwitchOutcome) {
         let (message, error_dialog) = match outcome {
+            // The radio already shows what is connected again.
+            SwitchOutcome::Cancelled { .. } => return,
             SwitchOutcome::Applied { .. } => {
                 (gettextrs::gettext("Active backend switched."), None)
             }
@@ -385,20 +368,6 @@ impl BackendUi {
                     )),
                 )
             }
-            SwitchOutcome::Cancelled {
-                discovery_error, ..
-            } => (
-                if discovery_error.is_some() {
-                    gettextrs::gettext(
-                        "Backend switch cancelled, but final connections could not be refreshed.",
-                    )
-                } else {
-                    gettextrs::gettext(
-                        "Backend switch cancelled. Actual connections were refreshed; no rollback is claimed.",
-                    )
-                },
-                None,
-            ),
             SwitchOutcome::FinalDiscoveryFailed { error, completed } => {
                 let concise = gettextrs::gettext("Could not verify final backend connections.");
                 let details = final_discovery_details(error, completed);

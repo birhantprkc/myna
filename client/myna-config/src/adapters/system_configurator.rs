@@ -981,9 +981,9 @@ mod tests {
     fn backend_switch_maps_snapd_authorization_denial() {
         let snapd = Arc::new(ScriptedSnapd {
             interface_outcomes: Mutex::new(vec![Err(SnapdError::AuthorizationDenied {
-                status_code: 403,
-                kind: Some("auth-cancelled".into()),
-                message: "cancelled".into(),
+                status_code: 401,
+                kind: None,
+                message: "access denied".into(),
             })]),
             calls: Mutex::new(Vec::new()),
         });

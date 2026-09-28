@@ -22,7 +22,6 @@ fn every_top_level_template_instantiates_headlessly_when_enabled() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for name in [
         "MainWindow",
-        "ActiveBackendDialog",
         "ApplyDialog",
         "BackendApplyControls",
         "MynaPage",
@@ -410,7 +409,8 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
     for line in [
         "backends-discovered: 2",
         "model-group: lists the installed models",
-        "model-group: declining keeps the model",
+        "model-group: a dismissed prompt reverts silently",
+        "model-group: choosing a model switches to it",
         "backend-snapshot: read",
         "backend-edit: staged",
         "backend-apply: read back",

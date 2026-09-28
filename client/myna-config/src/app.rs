@@ -975,7 +975,6 @@ fn template_probe() -> glib::ExitCode {
     let application = new_application(&probe_app_id());
     let _ = application.register(None::<&gio::Cancellable>);
     for resource in [
-        "active-backend-dialog.ui",
         "apply-dialog.ui",
         "backend-apply-controls.ui",
         "backend-page.ui",
@@ -1006,8 +1005,6 @@ fn template_probe() -> glib::ExitCode {
         window.diagnostics_nav(),
     );
     println!("MainWindow");
-    let _switch = ui::ActiveBackendDialog::new("preview");
-    println!("ActiveBackendDialog");
     let _apply = ui::ApplyDialog::new("preview");
     println!("ApplyDialog");
     let controls = ui::BackendApplyControls::new();
@@ -1899,6 +1896,11 @@ struct ProbeMachine {
     installing: std::sync::Arc<std::sync::atomic::AtomicBool>,
     change_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     restarts_attempted: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// The backends `myna:backend` is connected to; switches rewire it.
+    connected: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// The user dismisses the authorization prompt of every switch.
+    dismissing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    switches_attempted: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ProbeMachine {
@@ -1918,7 +1920,33 @@ impl ProbeMachine {
             installing: std::sync::Arc::default(),
             change_reads: std::sync::Arc::default(),
             restarts_attempted: std::sync::Arc::default(),
+            connected: std::sync::Arc::new(std::sync::Mutex::new(vec!["myna-parakeet".to_owned()])),
+            dismissing: std::sync::Arc::default(),
+            switches_attempted: std::sync::Arc::default(),
         }
+    }
+
+    fn dismiss_authorization(&self, dismissing: bool) {
+        self.dismissing
+            .store(dismissing, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn switches_attempted(&self) -> usize {
+        self.switches_attempted
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn connections(&self) -> String {
+        let connected = self.connected.lock().expect("probe machine lock");
+        let mut table = "Interface  Plug  Slot  Notes\n".to_owned();
+        for snap in ["myna-parakeet", "myna-whisper"] {
+            table.push_str(&if connected.iter().any(|backend| backend == snap) {
+                format!("content[inference-provider]  myna:backend  {snap}:provider  manual\n")
+            } else {
+                format!("content  -  {snap}:provider  -\n")
+            });
+        }
+        table + "network  browser:network  :network  -\n"
     }
 
     fn hold_changes(&self, installing: bool) {
@@ -1977,9 +2005,7 @@ impl ProbeMachine {
                  myna-parakeet  0.1.0  8  latest/stable  canonical**  -\n\
                  myna-whisper  0.1.0  9  latest/stable  canonical**  -\n",
             ),
-            ["connections", "--all"] => {
-                fixture(include_str!("../tests/fixtures/snap-connections.txt"))
-            }
+            ["connections", "--all"] => Some(self.connections()),
             ["interface", "content", "--attrs"] => {
                 fixture(include_str!("../tests/fixtures/snap-interface-content.txt"))
             }
@@ -2075,6 +2101,14 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
         plan: &crate::active_backend::SwitchPlan,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure> {
+        self.switches_attempted
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.dismissing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::ports::SystemConfiguratorFailure::new(
+                Vec::new(),
+                crate::ports::SystemConfiguratorError::Cancelled,
+            ));
+        }
         Ok(self.record(plan.operations()))
     }
 
@@ -2101,6 +2135,15 @@ impl ProbeMachine {
                     if let Some((key, value)) = assignment.split_once('=') {
                         configuration.insert(key.to_owned(), value.to_owned());
                     }
+                }
+            }
+            if let [action, plug, slot] = arguments.as_slice() {
+                let snap = slot.trim_end_matches(":provider").to_owned();
+                let mut connected = self.connected.lock().expect("probe machine lock");
+                match (action.as_str(), plug.as_str()) {
+                    ("connect", "myna:backend") => connected.push(snap),
+                    ("disconnect", "myna:backend") => connected.retain(|held| *held != snap),
+                    _ => {}
                 }
             }
             self.applied
@@ -2253,38 +2296,102 @@ fn backends_probe() -> glib::ExitCode {
     }
     println!("model-group: lists the installed models");
 
-    // Choosing another model still asks first, and declining leaves the
-    // connected one chosen.
-    let whisper = model_rows()
-        .into_iter()
-        .find(|(row, _)| row.title() == "Whisper")
-        .expect("whisper row");
-    adw::prelude::ActionRowExt::activate(&whisper.0);
-    let switch_dialog = || {
-        window
-            .visible_dialog()
-            .and_then(|dialog| dialog.downcast::<ui::ActiveBackendDialog>().ok())
+    // Reads already in flight finish on their own; only a read after they
+    // settle is one the step under test started.
+    let quiesce = || {
+        let mut reads = machine.reads();
+        let mut quiet = 0;
+        while quiet < 5 {
+            settle_gtk();
+            let now = machine.reads();
+            quiet = if now == reads { quiet + 1 } else { 0 };
+            reads = now;
+        }
+        reads
     };
-    if !settles(&|| switch_dialog().is_some()) {
-        eprintln!("choosing Whisper never asked to switch");
-        return glib::ExitCode::FAILURE;
-    }
-    let declined = switch_dialog().expect("switch dialog");
-    declined.emit_by_name::<()>("response", &[&"cancel"]);
-    declined.force_close();
-    if !settles(&|| ui.operation_coordinator().active().is_none() && chosen() == ["Parakeet"]) {
-        eprintln!("declining the switch left {:?} chosen", chosen());
-        return glib::ExitCode::FAILURE;
-    }
-    if machine
-        .applied()
-        .iter()
-        .any(|operation| operation.iter().any(|argument| argument == "connect"))
+
+    // Choosing another model switches at once. Dismissing snapd's
+    // authorization prompt puts the radio back without a word.
+    let whisper_row = || {
+        model_rows()
+            .into_iter()
+            .find(|(row, _)| row.title() == "Whisper")
+            .map(|(row, _)| row)
+            .expect("whisper row")
+    };
+    let toasts = || {
+        descendants(overlay.upcast_ref(), &|widget| {
+            widget.type_().name() == "AdwToastWidget"
+        })
+        .len()
+    };
+    let asked = std::rc::Rc::new(std::cell::Cell::new(false));
+    let settles_unasked = |done: &dyn Fn() -> bool| {
+        settles(&|| {
+            if window.visible_dialog().is_some() {
+                asked.set(true);
+            }
+            done()
+        })
+    };
+    let idle = || ui.operation_coordinator().active().is_none();
+    machine.dismiss_authorization(true);
+    adw::prelude::ActionRowExt::activate(&whisper_row());
+    if !settles_unasked(&|| machine.switches_attempted() == 1 && idle() && chosen() == ["Parakeet"])
+        || asked.get()
     {
-        eprintln!("declining the switch still ran {:?}", machine.applied());
+        eprintln!(
+            "dismissing the prompt left {:?} chosen after {} switches, asked first: {}",
+            chosen(),
+            machine.switches_attempted(),
+            asked.get()
+        );
         return glib::ExitCode::FAILURE;
     }
-    println!("model-group: declining keeps the model");
+    if toasts() != 0 || window.visible_dialog().is_some() {
+        eprintln!("dismissing the prompt was reported");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("model-group: a dismissed prompt reverts silently");
+
+    machine.dismiss_authorization(false);
+    adw::prelude::ActionRowExt::activate(&whisper_row());
+    let connected_whisper = || {
+        machine
+            .applied()
+            .iter()
+            .any(|operation| operation == &["connect", "myna:backend", "myna-whisper:provider"])
+    };
+    if !settles_unasked(&|| connected_whisper() && idle() && chosen() == ["Whisper"]) || asked.get()
+    {
+        eprintln!(
+            "choosing Whisper left {:?} chosen; the machine ran {:?}; asked first: {}",
+            chosen(),
+            machine.applied(),
+            asked.get()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    let parakeet_row = model_rows()
+        .into_iter()
+        .find(|(row, _)| row.title() == "Parakeet")
+        .map(|(row, _)| row)
+        .expect("parakeet row");
+    adw::prelude::ActionRowExt::activate(&parakeet_row);
+    let connected_parakeet = || {
+        machine
+            .applied()
+            .iter()
+            .any(|operation| operation == &["connect", "myna:backend", "myna-parakeet:provider"])
+    };
+    if !settles_unasked(&|| connected_parakeet() && idle() && chosen() == ["Parakeet"])
+        || asked.get()
+    {
+        eprintln!("switching back left {:?} chosen", chosen());
+        return glib::ExitCode::FAILURE;
+    }
+    quiesce();
+    println!("model-group: choosing a model switches to it");
 
     if view_stack
         .child_by_name("model")
@@ -2308,7 +2415,7 @@ fn backends_probe() -> glib::ExitCode {
             .and_then(|widget| widget.downcast::<adw::EntryRow>().ok())
     };
     if !settles(&|| idle_entry().is_some_and(|entry| entry.text() == "300")) {
-        eprintln!("the Parakeet page never showed the snapshot it read");
+        eprintln!("the active model's page never showed the snapshot it read");
         return glib::ExitCode::FAILURE;
     }
     println!("backend-snapshot: read");
@@ -2393,20 +2500,6 @@ fn backends_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("diagnostics-report: lists backends");
-
-    // Reads already in flight finish on their own; only a read after they
-    // settle is one the step under test started.
-    let quiesce = || {
-        let mut reads = machine.reads();
-        let mut quiet = 0;
-        while quiet < 5 {
-            settle_gtk();
-            let now = machine.reads();
-            quiet = if now == reads { quiet + 1 } else { 0 };
-            reads = now;
-        }
-        reads
-    };
 
     // Ctrl+R refreshes whichever tab is showing; General reads nothing.
     view_stack.set_visible_child_name("general");

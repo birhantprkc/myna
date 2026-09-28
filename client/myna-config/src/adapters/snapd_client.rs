@@ -73,7 +73,8 @@ impl SnapdTimeoutContext {
 /// the higher-level [`crate::ports::SystemConfiguratorError`] variants.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SnapdError {
-    /// Operation was cancelled before or during the request.
+    /// Operation was cancelled before or during the request, or the user
+    /// dismissed snapd's authorization prompt (`kind: "auth-cancelled"`).
     Cancelled,
     /// Per-request or total timeout expired.
     Timeout {
@@ -99,7 +100,7 @@ pub enum SnapdError {
         message: String,
     },
     /// Polkit or an equivalent authorization mechanism denied the request
-    /// (HTTP 401 / 403 or snapd error `kind: "auth-cancelled" | "login-required"`).
+    /// (HTTP 401 / 403 or snapd error `kind: "login-required"`).
     AuthorizationDenied {
         status_code: u16,
         kind: Option<String>,
@@ -592,9 +593,12 @@ fn parse_envelope(body: &str) -> Result<Envelope, SnapdError> {
 }
 
 fn classify_error(status_code: u16, kind: Option<String>, message: String) -> SnapdError {
+    if kind.as_deref() == Some("auth-cancelled") {
+        return SnapdError::Cancelled;
+    }
     let is_auth_kind = matches!(
         kind.as_deref(),
-        Some("auth-cancelled") | Some("login-required") | Some("interactive-required")
+        Some("login-required") | Some("interactive-required")
     );
     if status_code == 401 || status_code == 403 || is_auth_kind {
         SnapdError::AuthorizationDenied {
@@ -1226,10 +1230,18 @@ mod tests {
 
     #[test]
     fn classify_error_maps_auth_denials() {
-        let denied = classify_error(403, Some("auth-cancelled".into()), "user cancelled".into());
+        let denied = classify_error(401, None, "access denied".into());
         assert!(matches!(denied, SnapdError::AuthorizationDenied { .. }));
+        let forbidden = classify_error(403, None, "forbidden".into());
+        assert!(matches!(forbidden, SnapdError::AuthorizationDenied { .. }));
         let generic = classify_error(400, None, "bad".into());
         assert!(matches!(generic, SnapdError::Snapd { .. }));
+    }
+
+    #[test]
+    fn dismissing_the_authorization_prompt_is_a_cancel() {
+        let dismissed = classify_error(403, Some("auth-cancelled".into()), "cancelled".into());
+        assert_eq!(dismissed, SnapdError::Cancelled);
     }
 
     #[test]

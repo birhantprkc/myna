@@ -27,7 +27,6 @@ pub struct SwitchPlan {
     baseline: ConnectionSnapshot,
     selected: BackendIdentity,
     operations: Vec<CommandRequest>,
-    confirmation_text: String,
 }
 
 impl SwitchPlan {
@@ -51,12 +50,10 @@ impl SwitchPlan {
             operations.push(myna_restart_request());
             operations
         };
-        let confirmation_text = confirmation_text(&selected);
         Ok(Self {
             baseline: snapshot.clone(),
             selected,
             operations,
-            confirmation_text,
         })
     }
 
@@ -72,10 +69,6 @@ impl SwitchPlan {
         &self.operations
     }
 
-    pub fn confirmation_text(&self) -> &str {
-        &self.confirmation_text
-    }
-
     pub fn is_noop(&self) -> bool {
         self.operations.is_empty()
     }
@@ -86,12 +79,10 @@ impl SwitchPlan {
         selected: BackendIdentity,
         operations: Vec<CommandRequest>,
     ) -> Self {
-        let confirmation_text = confirmation_text(&selected);
         Self {
             baseline,
             selected,
             operations,
-            confirmation_text,
         }
     }
 }
@@ -112,11 +103,6 @@ pub fn myna_restart_request() -> CommandRequest {
             MYNA_USER_UNIT.to_owned(),
         ],
     )
-}
-
-fn confirmation_text(selected: &BackendIdentity) -> String {
-    gettextrs::gettext("Dictation will use {backend}. It pauses briefly while Myna restarts.")
-        .replace("{backend}", selected.snap_name())
 }
 
 fn connected_backends(snapshot: &ConnectionSnapshot) -> Vec<BackendIdentity> {
@@ -184,15 +170,10 @@ impl SwitchOutcome {
 
 pub async fn execute_switch(
     plan: &SwitchPlan,
-    confirmed: bool,
     configurator: &dyn SystemConfigurator,
     repository: &dyn BackendRepository,
     cancellation: CancellationToken,
 ) -> SwitchOutcome {
-    if !confirmed {
-        return cancelled_after_refresh(Vec::new(), repository).await;
-    }
-
     let preflight = match repository.refresh(CancellationToken::new()).await {
         Ok(snapshot) => snapshot,
         Err(error) => {
@@ -299,15 +280,7 @@ pub async fn ensure_backend_active(
     };
     let plan = SwitchPlan::new(&snapshot, selected)
         .map_err(|_| gettextrs::gettext("The model is not available to switch to."))?;
-    match execute_switch(
-        &plan,
-        true,
-        configurator,
-        repository,
-        CancellationToken::new(),
-    )
-    .await
-    {
+    match execute_switch(&plan, configurator, repository, CancellationToken::new()).await {
         SwitchOutcome::Applied { .. } | SwitchOutcome::Noop { .. } => Ok(()),
         SwitchOutcome::Failed { error, .. } => Err(error.to_string()),
         SwitchOutcome::FinalDiscoveryFailed { error, .. } => Err(error.message().to_owned()),

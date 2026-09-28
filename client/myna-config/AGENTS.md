@@ -6,7 +6,7 @@ Read the top-level `.kb/agents.md` file before continuing below.
 
 # Overview
 
-Myna Settings is a host application, not a snap. It talks to snapd on the user's behalf and escalates to root through polkit for the few `snap` commands that need it, so it is packaged as a deb from `myna-config-deb/` and only shares the `myna-core` crate with the confined client. Everything the user can trigger is expressed as a plan of exact commands first, confirmed by the user in plain words, and only then executed.
+Myna Settings is a host application, not a snap. It talks to snapd on the user's behalf and escalates to root through polkit for the few `snap` commands that need it, so it is packaged as a deb from `myna-config-deb/` and only shares the `myna-core` crate with the confined client. Everything the user can trigger is expressed as a plan of exact commands first, confirmed by the user in plain words, and only then executed. Switching models is the one exception: activating a model's radio row on General is the confirmation, snapd's polkit prompt is the only question, and dismissing that prompt silently puts the radio back on the connected model.
 
 # Important
 
