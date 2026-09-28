@@ -1316,6 +1316,7 @@ fn onboarding_control_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     };
     let activation = Rc::new(RefCell::new(String::new()));
+    let shortcut = Rc::new(RefCell::new(String::new()));
     let binds = Rc::new(Cell::new(0));
     let registered = connection
         .register_object("/com/canonical/Myna/Dictation", &interface)
@@ -1328,9 +1329,10 @@ fn onboarding_control_probe() -> glib::ExitCode {
         })
         .property({
             let activation = activation.clone();
+            let shortcut = shortcut.clone();
             move |_, _, _, _, property| match property {
                 "Activation" => activation.borrow().to_variant(),
-                _ => "".to_variant(),
+                _ => shortcut.borrow().to_variant(),
             }
         })
         .build();
@@ -1449,6 +1451,20 @@ fn onboarding_control_probe() -> glib::ExitCode {
     println!("onboarding-default: portal untouched");
     window.close();
 
+    // A key the portal granted before reads as the design, as Super+J.
+    shortcut.replace("Press <Super>j".to_owned());
+    let (window, _) = walk("portal");
+    shortcut.replace(String::new());
+    if !shortcut_shown(&window) {
+        eprintln!(
+            "the portal's Super+J did not show as the design: caps {:?}",
+            keycaps(window.upcast_ref())
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-keys: Super+J under the portal");
+    window.close();
+
     let (window, button) = walk("control");
     for _ in 0..40 {
         if desktop.binding().is_some() {
@@ -1469,6 +1485,14 @@ fn onboarding_control_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-default: Super+J without a click");
+    if !shortcut_shown(&window) {
+        eprintln!(
+            "the desktop's Super+J did not show as the design: caps {:?}",
+            keycaps(window.upcast_ref())
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-keys: Super+J under control");
     window.close();
     settle_gtk();
     glib::ExitCode::SUCCESS
@@ -2281,6 +2305,35 @@ fn shortcut_headed(window: &ui::OnboardingWindow) -> bool {
         })
     })
     .is_some()
+}
+
+/// Whether the shortcut step shows a bound Super+J as the design: the one
+/// sentence over its key caps.
+fn shortcut_shown(window: &ui::OnboardingWindow) -> bool {
+    let sentence =
+        gettextrs::gettext("You can trigger Dictation anytime by using the keyboard shortcut:");
+    let described = find_descendant(window.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::Label>()
+            .is_some_and(|label| label.is_mapped() && label.label() == sentence.as_str())
+    });
+    described.is_some() && keycaps(window.upcast_ref()) == ["Super", "J"]
+}
+
+/// The labels of the mapped key caps under `root`, in order.
+fn keycaps(root: &gtk::Widget) -> Vec<String> {
+    let mut caps = Vec::new();
+    if root.is_mapped() && root.has_css_class("keycap") {
+        if let Some(label) = root.downcast_ref::<gtk::Label>() {
+            caps.push(label.label().to_string());
+        }
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        caps.extend(keycaps(&widget));
+        child = widget.next_sibling();
+    }
+    caps
 }
 
 /// Whether the onboarding footer says everything is installed: a success

@@ -319,7 +319,9 @@ fn onboarding_installs_the_default_key_only_under_control_activation() {
         "onboarding-default: kept the user's key",
         "onboarding-default: left a key in use",
         "onboarding-default: portal untouched",
+        "onboarding-keys: Super+J under the portal",
         "onboarding-default: Super+J without a click",
+        "onboarding-keys: Super+J under control",
     ] {
         assert!(
             stdout.contains(line),
