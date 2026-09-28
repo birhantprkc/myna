@@ -735,6 +735,9 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-setup-failure: reported");
+    if let Some(dialog) = window.visible_dialog() {
+        dialog.force_close();
+    }
     window.close();
     settle_gtk();
 
@@ -873,6 +876,12 @@ fn onboarding_probe() -> glib::ExitCode {
     };
     if window.is_visible() {
         eprintln!("finishing the wizard left it open");
+        return glib::ExitCode::FAILURE;
+    }
+    // Done keeps the application running on the settings window alone.
+    let windows = application.windows();
+    if windows.len() != 1 || windows[0] != *settings.upcast_ref::<gtk::Window>() {
+        eprintln!("finishing the wizard left {} windows open", windows.len());
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-finish: opened settings");
