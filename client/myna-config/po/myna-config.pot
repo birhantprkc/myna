@@ -159,7 +159,7 @@ msgstr ""
 
 #: data/myna-page.blp:46 data/onboarding-shortcut.blp:41 src/shortcut_ui.rs:190
 #: src/shortcut_ui.rs:200
-msgid "Set Up Shortcut"
+msgid "Set up shortcut"
 msgstr ""
 
 #: data/onboarding-components.blp:18 src/app.rs:2283 src/onboarding_ui.rs:444
@@ -874,7 +874,7 @@ msgid "Commands copied. Paste them into a terminal."
 msgstr ""
 
 #: src/shortcut_ui.rs:186 src/shortcut_ui.rs:194
-msgid "Change Shortcut"
+msgid "Change shortcut"
 msgstr ""
 
 #: src/shortcut_ui.rs:187

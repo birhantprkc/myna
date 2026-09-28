@@ -1475,7 +1475,7 @@ fn onboarding_control_probe() -> glib::ExitCode {
     settle_gtk();
     if step(&window) != "shortcut"
         || desktop.binding().as_deref() != Some(crate::shortcut::DEFAULT_ACCELERATOR)
-        || button.label().as_deref() != Some("Change Shortcut")
+        || button.label().as_deref() != Some("Change shortcut")
     {
         eprintln!(
             "setup under control left binding {:?} and offered {:?}",
@@ -1633,7 +1633,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
         eprintln!("the shortcut row never offered to bind against a running daemon");
         return glib::ExitCode::FAILURE;
     }
-    if button.label().as_deref() != Some("Set Up Shortcut") || keys.is_visible() {
+    if button.label().as_deref() != Some("Set up shortcut") || keys.is_visible() {
         eprintln!(
             "an unbound daemon rendered {:?} with keys visible: {}",
             button.label(),
@@ -1672,7 +1672,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
         );
         return glib::ExitCode::FAILURE;
     }
-    if button.label().as_deref() != Some("Change Shortcut") {
+    if button.label().as_deref() != Some("Change shortcut") {
         eprintln!("a bound shortcut offered {:?}", button.label());
         return glib::ExitCode::FAILURE;
     }
@@ -1685,7 +1685,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             .visible_dialog()
             .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
         else {
-            eprintln!("Change Shortcut opened no capture dialog");
+            eprintln!("Change shortcut opened no capture dialog");
             return glib::ExitCode::FAILURE;
         };
         // Key events travel only to the focused widget and its ancestors.
@@ -1714,7 +1714,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             .visible_dialog()
             .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
         else {
-            eprintln!("Change Shortcut opened no capture dialog the second time");
+            eprintln!("Change shortcut opened no capture dialog the second time");
             return glib::ExitCode::FAILURE;
         };
         dialog.press(gtk::gdk::Key::a, gtk::gdk::ModifierType::empty());
@@ -1738,7 +1738,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             .visible_dialog()
             .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
         else {
-            eprintln!("Change Shortcut opened no capture dialog the third time");
+            eprintln!("Change shortcut opened no capture dialog the third time");
             return glib::ExitCode::FAILURE;
         };
         // Super+O is rotation lock's -static key, which cannot be taken.

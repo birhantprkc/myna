@@ -183,21 +183,21 @@ impl ShortcutControl {
 
         let (label, help) = match (path, &state) {
             (ShortcutPath::Control, ShortcutState::Bound(_)) => (
-                gettextrs::gettext("Change Shortcut"),
+                gettextrs::gettext("Change shortcut"),
                 gettextrs::gettext("Press a different keyboard shortcut for dictation."),
             ),
             (ShortcutPath::Control, ShortcutState::Unbound | ShortcutState::NotRunning) => (
-                gettextrs::gettext("Set Up Shortcut"),
+                gettextrs::gettext("Set up shortcut"),
                 gettextrs::gettext("Add a keyboard shortcut for dictation to the desktop."),
             ),
             (_, ShortcutState::Bound(_) | ShortcutState::Unpublished) => (
-                gettextrs::gettext("Change Shortcut"),
+                gettextrs::gettext("Change shortcut"),
                 gettextrs::gettext(
                     "Open Myna in the desktop's Apps settings, where the dictation shortcut is changed.",
                 ),
             ),
             (_, ShortcutState::Unbound | ShortcutState::NotRunning) => (
-                gettextrs::gettext("Set Up Shortcut"),
+                gettextrs::gettext("Set up shortcut"),
                 gettextrs::gettext(
                     "Open the desktop's dialog to confirm a keyboard shortcut for dictation.",
                 ),

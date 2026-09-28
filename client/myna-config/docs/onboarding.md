@@ -88,10 +88,10 @@ page follow both through a live proxy, so a rebind elsewhere shows up at once.
 Not running disables the button; no `Shortcut` from an older daemon is treated
 as bound.
 
-**Portal.** Set Up Shortcut calls `BindShortcut("")`: the daemon offers `LOGO+j`
+**Portal.** Set up shortcut calls `BindShortcut("")`: the daemon offers `LOGO+j`
 (Super+J) to the portal's dialog, because the portal files a binding under the
 caller's app id and grants one only through that dialog. The description
-(`Press <Super>j`) becomes key caps. Change Shortcut opens
+(`Press <Super>j`) becomes key caps. Change shortcut opens
 `gnome-control-center applications myna_myna`: GlobalShortcuts 1 has no
 `ConfigureShortcuts` and no unbind. A refused bind shows the error dialog.
 
