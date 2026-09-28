@@ -1888,7 +1888,8 @@ struct ProbeMachine {
     reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Nothing is installed yet: every `snap` read fails, as on a bare machine.
     bare: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// A daemon restart waits while this is set, as a slow one does.
+    /// A daemon restart, alone or ending a switch, waits while this is set,
+    /// as a slow one does.
     held: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// How many daemon restarts to refuse before letting one through.
     refusals: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -2103,6 +2104,9 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
     ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure> {
         self.switches_attempted
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        while self.held.load(std::sync::atomic::Ordering::SeqCst) {
+            glib::timeout_future(Duration::from_millis(10)).await;
+        }
         if self.dismissing.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(crate::ports::SystemConfiguratorFailure::new(
                 Vec::new(),
@@ -2354,8 +2358,44 @@ fn backends_probe() -> glib::ExitCode {
     }
     println!("model-group: a dismissed prompt reverts silently");
 
+    // While the switch runs, the target stays marked, the rows are
+    // insensitive and a spinner turns at the end of the target row only.
+    let spinning = || {
+        model_rows()
+            .iter()
+            .filter(|(row, _)| {
+                find_descendant(row.upcast_ref(), &|widget| {
+                    widget
+                        .downcast_ref::<gtk::Spinner>()
+                        .is_some_and(|spinner| spinner.is_visible() && spinner.is_spinning())
+                })
+                .is_some()
+            })
+            .map(|(row, _)| row.title().to_string())
+            .collect::<Vec<_>>()
+    };
+    let insensitive = || model_rows().iter().all(|(row, _)| !row.is_sensitive());
     machine.dismiss_authorization(false);
+    machine.hold_restart(true);
     adw::prelude::ActionRowExt::activate(&whisper_row());
+    if !settles_unasked(&|| {
+        machine.switches_attempted() == 2
+            && chosen() == ["Whisper"]
+            && insensitive()
+            && spinning() == ["Whisper"]
+    }) || asked.get()
+    {
+        eprintln!(
+            "a pending switch shows {:?} chosen, spinners on {:?}, rows insensitive: {}",
+            chosen(),
+            spinning(),
+            insensitive()
+        );
+        machine.hold_restart(false);
+        return glib::ExitCode::FAILURE;
+    }
+    println!("model-group: a pending switch spins on its target");
+    machine.hold_restart(false);
     let connected_whisper = || {
         machine
             .applied()
@@ -2369,6 +2409,14 @@ fn backends_probe() -> glib::ExitCode {
             chosen(),
             machine.applied(),
             asked.get()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    if !spinning().is_empty() || insensitive() {
+        eprintln!(
+            "a finished switch left spinners on {:?}, rows insensitive: {}",
+            spinning(),
+            insensitive()
         );
         return glib::ExitCode::FAILURE;
     }

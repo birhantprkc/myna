@@ -410,6 +410,7 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
         "backends-discovered: 2",
         "model-group: lists the installed models",
         "model-group: a dismissed prompt reverts silently",
+        "model-group: a pending switch spins on its target",
         "model-group: choosing a model switches to it",
         "backend-snapshot: read",
         "backend-edit: staged",

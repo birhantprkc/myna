@@ -681,8 +681,10 @@ fn a_pending_switch_marks_its_target_chosen_until_it_completes() {
         OperationCoordinator::new(),
     );
     let whisper = BackendIdentity::new("myna-whisper", "provider");
+    assert_eq!(controller.switching_to(), None);
     let switch = controller.begin(whisper.clone()).unwrap();
-    assert_eq!(controller.chosen(), Some(whisper));
+    assert_eq!(controller.chosen(), Some(whisper.clone()));
+    assert_eq!(controller.switching_to(), Some(whisper));
 
     assert!(controller.complete(
         switch.operation_token(),
@@ -699,6 +701,7 @@ fn a_pending_switch_marks_its_target_chosen_until_it_completes() {
         controller.chosen(),
         Some(BackendIdentity::new("myna-parakeet", "provider"))
     );
+    assert_eq!(controller.switching_to(), None);
 
     controller
         .begin(BackendIdentity::new("myna-whisper", "provider"))
@@ -708,6 +711,7 @@ fn a_pending_switch_marks_its_target_chosen_until_it_completes() {
         controller.chosen(),
         Some(BackendIdentity::new("myna-parakeet", "provider"))
     );
+    assert_eq!(controller.switching_to(), None);
 }
 
 /// A store install auto-connects a same-publisher backend, and the daemon may

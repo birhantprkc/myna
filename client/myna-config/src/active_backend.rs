@@ -504,8 +504,12 @@ impl ActiveBackendController {
         true
     }
 
-    pub fn busy(&self) -> bool {
-        self.inner.borrow().pending.is_some()
+    pub fn switching_to(&self) -> Option<BackendIdentity> {
+        let inner = self.inner.borrow();
+        inner
+            .pending
+            .as_ref()
+            .map(|pending| pending.selected.clone())
     }
 
     pub fn verified(&self) -> bool {

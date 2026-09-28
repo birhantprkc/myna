@@ -41,6 +41,12 @@ use crate::ports::{BackendRepository, SystemConfigurator};
 use crate::presentation::{ControlType, Sensitivity};
 use crate::ui;
 
+struct ModelRow {
+    backend: BackendIdentity,
+    radio: gtk::CheckButton,
+    spinner: gtk::Spinner,
+}
+
 /// Runtime coordinator that keeps the Backend/Diagnostics tabs in sync with a
 /// [`BackendController`]. The Model tab always shows the single active
 /// backend; there is no chooser or per-backend list to maintain.
@@ -53,7 +59,7 @@ pub struct BackendUi {
     overlay: adw::ToastOverlay,
     myna_selector: Option<ui::MynaPage>,
     /// The General tab's model rows and the backend each one chooses.
-    model_rows: RefCell<Vec<(BackendIdentity, gtk::CheckButton)>>,
+    model_rows: RefCell<Vec<ModelRow>>,
     /// Set while rendering marks a radio, so the mark is not taken as a choice.
     marking_models: std::cell::Cell<bool>,
     this: std::rc::Weak<Self>,
@@ -414,7 +420,7 @@ impl BackendUi {
             .model_rows
             .borrow()
             .iter()
-            .map(|(backend, _)| backend.clone())
+            .map(|row| row.backend.clone())
             .collect::<Vec<_>>();
         if listed.as_slice() != backends {
             self.list_models(&group, backends);
@@ -439,22 +445,26 @@ impl BackendUi {
         group.set_description(status.map(|status| escape_markup(&status)).as_deref());
 
         let chosen = self.active_backend.chosen();
+        let switching_to = self.active_backend.switching_to();
         self.marking_models.set(true);
-        for (backend, radio) in self.model_rows.borrow().iter() {
-            radio.set_active(chosen.as_ref() == Some(backend));
+        for row in self.model_rows.borrow().iter() {
+            row.radio.set_active(chosen.as_ref() == Some(&row.backend));
+            let switching = switching_to.as_ref() == Some(&row.backend);
+            row.spinner.set_visible(switching);
+            row.spinner.set_spinning(switching);
         }
         self.marking_models.set(false);
 
         let apply_active = self.operation_coordinator.active() == Some(OperationKind::BackendApply);
         group.set_sensitive(
-            self.active_backend.verified() && !apply_active && !self.active_backend.busy(),
+            self.active_backend.verified() && !apply_active && switching_to.is_none(),
         );
     }
 
     /// One radio row per installed backend, named and described by family.
     fn list_models(&self, group: &adw::PreferencesGroup, backends: &[BackendIdentity]) {
-        for (_, radio) in self.model_rows.take() {
-            if let Some(row) = radio.ancestor(adw::ActionRow::static_type()) {
+        for row in self.model_rows.take() {
+            if let Some(row) = row.radio.ancestor(adw::ActionRow::static_type()) {
                 group.remove(&row);
             }
         }
@@ -487,11 +497,23 @@ impl BackendUi {
                     }
                 }
             });
+            let spinner = gtk::Spinner::builder()
+                .valign(gtk::Align::Center)
+                .visible(false)
+                .build();
+            spinner.update_property(&[gtk::accessible::Property::Label(&gettextrs::gettext(
+                "Changing model",
+            ))]);
             row.add_prefix(&radio);
+            row.add_suffix(&spinner);
             row.set_activatable_widget(Some(&radio));
             group.add(&row);
             leader.get_or_insert_with(|| radio.clone());
-            rows.push((backend.clone(), radio));
+            rows.push(ModelRow {
+                backend: backend.clone(),
+                radio,
+                spinner,
+            });
         }
         *self.model_rows.borrow_mut() = rows;
     }
