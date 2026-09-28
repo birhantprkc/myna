@@ -146,21 +146,13 @@ fn show_languages(
 
 fn languages_popover(coverage: &Coverage) -> gtk::Popover {
     let count = coverage.languages.len();
-    let columns: Vec<gtk::Box> = (0..coverage_columns(count))
-        .map(|_| {
-            gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .spacing(6)
-                .build()
-        })
-        .collect();
-    let names = gtk::Box::builder()
+    let columns = coverage_columns(count);
+    let names = gtk::Grid::builder()
         .css_classes(["language-columns"])
-        .spacing(24)
+        .row_homogeneous(true)
+        .row_spacing(6)
+        .column_spacing(24)
         .build();
-    for column in &columns {
-        names.append(column);
-    }
     for (index, endonym) in coverage.languages.iter().enumerate() {
         let label = gtk::Label::builder().xalign(0.0).build();
         set_named(&label, &Named::of(*endonym));
@@ -173,8 +165,8 @@ fn languages_popover(coverage: &Coverage) -> gtk::Popover {
                 ))],
             );
         }
-        let (column, _) = coverage_cell(index, count, columns.len());
-        columns[column].append(&label);
+        let (column, row) = coverage_cell(index, count, columns);
+        names.attach(&label, column as i32, row as i32, 1, 1);
     }
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -3487,22 +3479,18 @@ mod tests {
         let heading = labels
             .iter()
             .find(|label| {
-                !label.parent().is_some_and(|parent| {
-                    parent
-                        .parent()
-                        .is_some_and(|names| names.has_css_class("language-columns"))
-                })
+                !label
+                    .parent()
+                    .is_some_and(|names| names.has_css_class("language-columns"))
             })
             .map(|label| label.label().to_string())
             .unwrap_or_default();
         let names = labels
             .iter()
             .filter(|label| {
-                label.parent().is_some_and(|parent| {
-                    parent
-                        .parent()
-                        .is_some_and(|names| names.has_css_class("language-columns"))
-                })
+                label
+                    .parent()
+                    .is_some_and(|names| names.has_css_class("language-columns"))
             })
             .map(|label| (label.label().to_string(), label.has_css_class("accent")))
             .collect();
@@ -3630,24 +3618,30 @@ mod tests {
             assert_eq!(names.iter().filter(|(_, mine)| *mine).count(), 1);
             let button = languages_button(&rows[0]).expect("button");
             button.popup();
-            let columns: Vec<Vec<String>> =
-                descendants(button.popover().expect("popover").upcast_ref())
-                    .into_iter()
-                    .find(|widget| widget.has_css_class("language-columns"))
-                    .map(|names| {
-                        descendants(&names)
-                            .into_iter()
-                            .filter_map(|widget| widget.downcast::<gtk::Box>().ok())
-                            .map(|column| {
-                                descendants(column.upcast_ref())
-                                    .into_iter()
-                                    .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
-                                    .map(|label| label.label().to_string())
-                                    .collect()
-                            })
-                            .collect()
-                    })
-                    .expect("columns");
+            let grid = descendants(button.popover().expect("popover").upcast_ref())
+                .into_iter()
+                .find(|widget| widget.has_css_class("language-columns"))
+                .and_then(|widget| widget.downcast::<gtk::Grid>().ok())
+                .expect("language grid");
+            let mut cells: Vec<(i32, i32, gtk::Label)> = descendants(grid.upcast_ref())
+                .into_iter()
+                .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+                .map(|label| {
+                    let (column, row, _, _) = grid.query_child(&label);
+                    (column, row, label)
+                })
+                .collect();
+            cells.sort_by_key(|(column, row, _)| (*column, *row));
+            let columns: Vec<Vec<String>> = (0..2)
+                .map(|column| {
+                    cells
+                        .iter()
+                        .filter(|(c, _, _)| *c == column)
+                        .map(|(_, _, label)| label.label().to_string())
+                        .collect()
+                })
+                .collect();
+            assert!(grid.is_row_homogeneous(), "even rhythm down each column");
             assert_eq!(columns.len(), 2);
             assert_eq!(columns[0][..2], ["Deutsch", "Čeština"], "down the column");
             assert_eq!(columns[1][0], names[13].0, "then the next");

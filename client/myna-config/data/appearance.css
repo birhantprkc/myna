@@ -66,3 +66,9 @@ button.outlined:active {
 menubutton.languages-button > button {
   font-weight: normal;
 }
+
+/* One line height for every script in the language list, so fallback fonts
+   with tall metrics (Arabic, Myanmar) do not stretch its even rows. */
+.language-columns label {
+  line-height: 1.4em;
+}
