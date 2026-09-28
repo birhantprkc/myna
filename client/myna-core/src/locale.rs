@@ -294,12 +294,14 @@ mod tests {
                     let connection = gio::DBusConnection::new_sync(
                         &stream,
                         Some(&guid),
-                        gio::DBusConnectionFlags::AUTHENTICATION_SERVER,
+                        gio::DBusConnectionFlags::AUTHENTICATION_SERVER
+                            | gio::DBusConnectionFlags::DELAY_MESSAGE_PROCESSING,
                         None,
                         gio::Cancellable::NONE,
                     )
                     .unwrap();
                     let _objects = language.map(|language| serve(&connection, user, language));
+                    connection.start_message_processing();
                     main_loop.run();
                 })
                 .unwrap();
