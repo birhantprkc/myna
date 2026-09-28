@@ -193,6 +193,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-setup: spinner while setting up",
         "onboarding-setup: restarted the daemon",
         "onboarding-walk: reached the last step",
+        "onboarding-shortcut: headed as the design",
         "onboarding-shortcut: waits for the daemon",
         "onboarding-finish: opened settings",
     ] {

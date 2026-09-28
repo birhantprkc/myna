@@ -837,6 +837,11 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-walk: reached the last step");
+    if !shortcut_headed(&window) {
+        eprintln!("the shortcut step is not headed as the design");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-shortcut: headed as the design");
     if installed_status(&window).is_some() || setup_spinner(&window) {
         eprintln!("the footer status stayed on the last step");
         return glib::ExitCode::FAILURE;
@@ -2259,6 +2264,23 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
         ),
         None,
     )
+}
+
+/// Whether the shortcut step heads itself as the design: a regular 24 px
+/// title in the 540 px column.
+fn shortcut_headed(window: &ui::OnboardingWindow) -> bool {
+    find_descendant(window.upcast_ref(), &|widget| {
+        widget.downcast_ref::<gtk::Label>().is_some_and(|label| {
+            label.is_mapped()
+                && label.label() == gettextrs::gettext("How to dictate").as_str()
+                && label.has_css_class("onboarding-title")
+                && label
+                    .ancestor(adw::Clamp::static_type())
+                    .and_then(|clamp| clamp.downcast::<adw::Clamp>().ok())
+                    .is_some_and(|clamp| clamp.maximum_size() == 540)
+        })
+    })
+    .is_some()
 }
 
 /// Whether the onboarding footer says everything is installed: a success

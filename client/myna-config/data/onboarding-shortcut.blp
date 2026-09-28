@@ -6,35 +6,35 @@ template $OnboardingShortcut: Adw.Bin {
     hscrollbar-policy: never;
 
     child: Adw.Clamp {
-      maximum-size: 640;
+      maximum-size: 540;
       valign: center;
+      margin-start: 24;
+      margin-end: 24;
 
       child: Gtk.Box {
         orientation: vertical;
-        spacing: 12;
-        margin-start: 24;
-        margin-end: 24;
 
         Gtk.Label {
           label: _("How to dictate");
           justify: center;
           wrap: true;
+          margin-bottom: 8;
 
           styles [
-            "title-1",
+            "onboarding-title",
           ]
         }
 
         Gtk.Label description {
           justify: center;
           wrap: true;
-          margin-bottom: 24;
+          margin-bottom: 32;
         }
 
         Gtk.Box shortcut_box {
           halign: center;
           spacing: 8;
-          margin-bottom: 24;
+          margin-bottom: 32;
         }
 
         Gtk.Button shortcut_button {
