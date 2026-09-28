@@ -6,6 +6,7 @@ template $OperationErrorDialog: Adw.AlertDialog {
   body: _("Full details are shown below. You can copy them to share with support.");
   default-response: "close";
   close-response: "close";
+  focus-widget: copy_button;
 
   responses [
     close: _("Close"),
