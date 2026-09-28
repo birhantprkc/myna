@@ -41,7 +41,7 @@ use crate::presentation::{ControlType, Sensitivity};
 use crate::ui;
 
 /// Runtime coordinator that keeps the Backend/Diagnostics tabs in sync with a
-/// [`BackendController`]. The Backend tab always shows the single active
+/// [`BackendController`]. The Model tab always shows the single active
 /// backend; there is no chooser or per-backend list to maintain.
 pub struct BackendUi {
     controller: Rc<BackendController>,
@@ -56,7 +56,7 @@ pub struct BackendUi {
     diagnostics_page: RefCell<Option<adw::NavigationPage>>,
     backend_pages: RefCell<BTreeMap<String, adw::NavigationPage>>,
     apply_state: RefCell<BTreeMap<String, BackendApplyState>>,
-    /// The active-backend state the Backend tab last rendered.
+    /// The active-backend state the Model tab last rendered.
     shown_state: RefCell<Option<ActiveBackendState>>,
     backend_tab_shown: std::cell::Cell<bool>,
     installed_snaps: RefCell<Vec<InstalledSnap>>,
@@ -230,7 +230,7 @@ impl BackendUi {
             apply_state: RefCell::new(BTreeMap::new()),
             shown_state: RefCell::new(None),
             backend_tab_shown: std::cell::Cell::new(
-                view_stack.visible_child_name().as_deref() == Some("backend"),
+                view_stack.visible_child_name().as_deref() == Some("model"),
             ),
             installed_snaps: RefCell::new(Vec::new()),
             inventory_complete: std::cell::Cell::new(false),
@@ -510,7 +510,7 @@ impl BackendUi {
                     return;
                 };
                 let tab = stack.visible_child_name();
-                let backend_shown = tab.as_deref() == Some("backend");
+                let backend_shown = tab.as_deref() == Some("model");
                 let shown = ui.shown_backend();
                 if ui.backend_tab_shown.replace(backend_shown) && !backend_shown {
                     if let Some(name) = &shown {
@@ -519,7 +519,7 @@ impl BackendUi {
                 }
                 match tab.as_deref() {
                     Some("diagnostics") => ui.on_diagnostics_page_shown(),
-                    Some("backend") => {
+                    Some("model") => {
                         if let Some(name) = shown {
                             ui.trigger_snapshot(&name);
                         }
@@ -610,7 +610,7 @@ impl BackendUi {
     fn refresh_visible_tab(self: &Rc<Self>) {
         match self.view_stack.visible_child_name().as_deref() {
             Some("diagnostics") => self.on_diagnostics_requested(),
-            Some("backend") => {
+            Some("model") => {
                 if let Some(page) = self.backend_nav.visible_page() {
                     let _ = WidgetExt::activate_action(&page, "backend.refresh", None);
                 }
@@ -1013,7 +1013,7 @@ impl BackendUi {
     }
 
     /// Drops cached pages and staged-apply state for backends that
-    /// disappeared from discovery. The Backend tab itself is kept in sync
+    /// disappeared from discovery. The Model tab itself is kept in sync
     /// separately by [`Self::sync_backend_tab`].
     fn prune_missing_backends(self: &Rc<Self>) {
         let known: Vec<String> = self
@@ -1040,7 +1040,7 @@ impl BackendUi {
         }
     }
 
-    /// Keeps the Backend tab showing the single active backend, or why there
+    /// Keeps the Model tab showing the single active backend, or why there
     /// is none. Called whenever the active-backend snapshot changes.
     fn sync_backend_tab(self: &Rc<Self>) {
         let state = self.active_backend.snapshot().active_state();
@@ -1073,7 +1073,7 @@ impl BackendUi {
         self.backend_nav.replace(&[page]);
     }
 
-    /// The snap whose page the Backend tab shows, if any.
+    /// The snap whose page the Model tab shows, if any.
     fn shown_backend(&self) -> Option<String> {
         match self.shown_state.borrow().as_ref() {
             Some(ActiveBackendState::Connected(identity)) => Some(identity.snap_name().to_owned()),
@@ -2626,7 +2626,7 @@ mod tests {
         let backend_nav = adw::NavigationView::new();
         let diagnostics_nav = adw::NavigationView::new();
         view_stack.add_named(&gtk::Label::new(None), Some("general"));
-        view_stack.add_named(&backend_nav, Some("backend"));
+        view_stack.add_named(&backend_nav, Some("model"));
         view_stack.add_named(&diagnostics_nav, Some("diagnostics"));
         let page = |title: &str| {
             adw::NavigationPage::builder()
@@ -2656,7 +2656,7 @@ mod tests {
             apply_state: RefCell::new(BTreeMap::new()),
             shown_state: RefCell::new(None),
             backend_tab_shown: std::cell::Cell::new(
-                view_stack.visible_child_name().as_deref() == Some("backend"),
+                view_stack.visible_child_name().as_deref() == Some("model"),
             ),
             installed_snaps: RefCell::new(Vec::new()),
             inventory_complete: std::cell::Cell::new(false),
@@ -2738,7 +2738,7 @@ mod tests {
             ui.sync_active_backend();
             assert!(!parakeet_loading(&ui));
 
-            view_stack.set_visible_child_name("backend");
+            view_stack.set_visible_child_name("model");
             assert!(parakeet_loading(&ui));
         });
     }
@@ -2748,7 +2748,7 @@ mod tests {
         on_gtk_thread(|| {
             let TestUi { ui, view_stack } = test_ui(discovered(PARAKEET_CONNECTED));
             ui.sync_active_backend();
-            view_stack.set_visible_child_name("backend");
+            view_stack.set_visible_child_name("model");
             assert!(parakeet_loading(&ui));
 
             view_stack.set_visible_child_name("general");
@@ -2778,7 +2778,7 @@ mod tests {
             let page = ui
                 .backend_nav
                 .visible_page()
-                .expect("the backend tab shows a page")
+                .expect("the model tab shows a page")
                 .downcast::<ui::StatusPage>()
                 .expect("a status page");
             assert_eq!(page.status().title(), "No Active Backend");

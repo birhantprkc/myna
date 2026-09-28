@@ -1152,8 +1152,8 @@ fn build_settings_window(application: &adw::Application) {
         "content-loading-symbolic",
     )]);
     backend_nav.replace(&[status_page(
-        &gettextrs::gettext("Backend"),
-        &gettextrs::gettext("Backend details will appear after discovery."),
+        &gettextrs::gettext("Model"),
+        &gettextrs::gettext("Model details will appear after discovery."),
         "content-loading-symbolic",
     )]);
     let diagnostics_page = status_page(
@@ -2180,8 +2180,17 @@ fn backends_probe() -> glib::ExitCode {
     }
     println!("backends-discovered: 2");
 
-    // The Backend tab shows the one active backend, and opening it reads it.
-    view_stack.set_visible_child_name("backend");
+    if view_stack
+        .child_by_name("model")
+        .map(|child| view_stack.page(&child).title())
+        .is_none_or(|title| title.as_deref() != Some(gettextrs::gettext("Model").as_str()))
+    {
+        eprintln!("the second tab is not the Model tab");
+        return glib::ExitCode::FAILURE;
+    }
+
+    // The Model tab shows the one active backend, and opening it reads it.
+    view_stack.set_visible_child_name("model");
 
     let idle_entry = || {
         content()
@@ -2309,7 +2318,7 @@ fn backends_probe() -> glib::ExitCode {
         eprintln!("Ctrl+R does not refresh");
         return glib::ExitCode::FAILURE;
     }
-    for tab in ["diagnostics", "backend"] {
+    for tab in ["diagnostics", "model"] {
         view_stack.set_visible_child_name(tab);
         let reads = quiesce();
         ActionGroupExt::activate_action(&window, "refresh", None);
