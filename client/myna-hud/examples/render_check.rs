@@ -35,8 +35,11 @@ use myna_hud::states::{state_to_descriptor, wire};
 /// The level the check drives, as the lab's slider would.
 const ENVELOPE: f64 = 0.5;
 
-/// Long enough for the window to map and the eased level to settle.
+/// Long enough, once the indicator is on screen, for the eased level to settle.
 const SETTLE: Duration = Duration::from_millis(600);
+
+/// How long an indicator may take to reach the screen on a loaded runner.
+const MAP_DEADLINE: Duration = Duration::from_secs(20);
 
 /// A rasterised widget: premultiplied BGRA rows, as `gdk::Texture::download`
 /// writes them.
@@ -183,6 +186,36 @@ fn check(pill: &Pill, style: HudStyle, problems: &mut Vec<String>) {
     }
 }
 
+/// Run `then` `SETTLE` after the first frame painted with `widget` mapped and
+/// allocated: a widget's paintable replays its last painted frame, so until
+/// one is painted it renders nothing. A fixed delay raced that on a loaded CI
+/// runner. `then` gets false if the deadline passed first.
+fn when_on_screen(widget: gtk::Widget, then: impl FnOnce(bool) + 'static) {
+    let started = std::time::Instant::now();
+    let mut shown_at = None;
+    let mut then = Some(then);
+    glib::timeout_add_local(Duration::from_millis(20), move || {
+        let frame = widget
+            .frame_clock()
+            .filter(|_| widget.is_mapped() && widget.width() > 0)
+            .map(|clock| clock.frame_counter());
+        let ready = match (shown_at, frame) {
+            (Some(shown), Some(now)) => now > shown,
+            (None, Some(now)) => {
+                shown_at = Some(now);
+                false
+            }
+            _ => false,
+        };
+        if !ready && started.elapsed() < MAP_DEADLINE {
+            return glib::ControlFlow::Continue;
+        }
+        let then = then.take().expect("runs once");
+        glib::timeout_add_local_once(SETTLE, move || then(ready));
+        glib::ControlFlow::Break
+    });
+}
+
 fn main() {
     let app = adw::Application::builder()
         .application_id("com.canonical.Myna.HudRenderCheck")
@@ -207,10 +240,20 @@ fn main() {
 
         let problems: Rc<RefCell<Vec<String>>> = Rc::default();
         let app = app.clone();
-        glib::timeout_add_local_once(SETTLE, move || {
+        when_on_screen(pill.bar().clone(), move |ready| {
+            if !ready {
+                problems
+                    .borrow_mut()
+                    .push("Bar: never reached the screen".into());
+            }
             check(&pill, HudStyle::Bar, &mut problems.borrow_mut());
             pill.set_hud_style(HudStyle::Vumeter);
-            glib::timeout_add_local_once(SETTLE, move || {
+            when_on_screen(pill.meter().clone(), move |ready| {
+                if !ready {
+                    problems
+                        .borrow_mut()
+                        .push("Vumeter: never reached the screen".into());
+                }
                 check(&pill, HudStyle::Vumeter, &mut problems.borrow_mut());
                 let problems = problems.borrow();
                 for p in problems.iter() {
