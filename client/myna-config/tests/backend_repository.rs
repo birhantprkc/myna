@@ -71,6 +71,29 @@ fn installed_snap_inventory_runs_once_and_preserves_versions() {
     assert_eq!(calls[0].arguments(), ["list", "--unicode=never"]);
 }
 
+#[test]
+fn changes_in_progress_run_once_in_the_c_locale() {
+    let (repository, runner) = repository([
+        ok("ID  Status  Spawn  Ready  Summary\n\
+            12  Doing  2026-09-28T09:37:28+01:00  -  Install \"myna\" snap\n"),
+        failed("snap changes"),
+    ]);
+
+    let changes =
+        block_on(repository.changes_in_progress(CancellationToken::new())).expect("changes");
+    let error = block_on(repository.changes_in_progress(CancellationToken::new())).unwrap_err();
+
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].summary(), "Install \"myna\" snap");
+    assert_eq!(error.surface(), BackendSurface::SnapInventory);
+    let calls = runner.calls();
+    assert_eq!(argv(&calls[0]), ("snap", vec!["changes", "--abs-time"]));
+    assert_eq!(
+        calls[0].environment().get("LC_ALL").map(String::as_str),
+        Some("C")
+    );
+}
+
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     gio::glib::MainContext::new().block_on(future)
 }

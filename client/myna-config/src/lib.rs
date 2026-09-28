@@ -21,6 +21,7 @@ pub mod ports;
 pub mod presentation;
 pub mod shortcut;
 pub mod shortcut_ui;
+pub mod snap_changes;
 pub mod ui;
 
 pub const APP_ID: &str = "com.canonical.Myna.Config";

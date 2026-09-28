@@ -10,6 +10,7 @@ use crate::domain::{
     BackendIdentity, BackendSnapshot, BackendSurfaceError, ClientSetting, ClientSettingMetadata,
     ClientSettingValue, CommandResult, ConnectionSnapshot,
 };
+use crate::snap_changes::SnapChange;
 
 pub type ClientSettingsCallback = Box<dyn Fn(ClientSetting) + 'static>;
 
@@ -31,6 +32,14 @@ pub trait BackendRepository {
         &self,
         _cancellation: CancellationToken,
     ) -> Result<Vec<InstalledSnap>, BackendSurfaceError> {
+        Ok(Vec::new())
+    }
+
+    /// The snapd changes that have not finished yet.
+    async fn changes_in_progress(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> Result<Vec<SnapChange>, BackendSurfaceError> {
         Ok(Vec::new())
     }
 
