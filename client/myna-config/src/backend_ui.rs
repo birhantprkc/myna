@@ -194,16 +194,30 @@ fn languages_popover(coverage: &Coverage) -> gtk::Popover {
     gtk::Popover::builder().child(&content).build()
 }
 
-/// One activatable row per family, `recommended` with its pill; activating a
-/// row hands its family to `choose`.
-fn install_models_dialog(
-    families: &[myna_core::language::ModelFamily],
+/// Longer than any dialog's opening animation.
+const DIALOG_OPENED: std::time::Duration = std::time::Duration::from_secs(1);
+
+type ChooseFamily = Rc<dyn Fn(&ui::InstallModelsDialog, myna_core::language::ModelFamily)>;
+
+/// What the Install more models dialog lists: the families, the recommended
+/// one and the language it is recommended for.
+#[derive(Clone, PartialEq)]
+struct InstallOffer {
+    families: Vec<myna_core::language::ModelFamily>,
     recommended: Option<myna_core::language::ModelFamily>,
     user_language: Option<String>,
-    choose: impl Fn(&ui::InstallModelsDialog, myna_core::language::ModelFamily) + 'static,
-) -> ui::InstallModelsDialog {
-    let dialog = ui::InstallModelsDialog::new();
-    let choose = Rc::new(choose);
+}
+
+/// One activatable row per family, `recommended` with its pill; activating a
+/// row hands its family to `choose`.
+fn offer_install(dialog: &ui::InstallModelsDialog, offer: &InstallOffer, choose: ChooseFamily) {
+    let InstallOffer {
+        families,
+        recommended,
+        user_language,
+    } = offer;
+    let recommended = *recommended;
+    let mut rows = Vec::new();
     for &family in families {
         let shown = model_family(family.snap_name());
         let row = adw::ActionRow::builder()
@@ -248,9 +262,9 @@ fn install_models_dialog(
                 }
             }
         });
-        dialog.families().add(&row);
+        rows.push(row);
     }
-    dialog
+    dialog.replace_rows(rows);
 }
 
 fn open_in_app_center(overlay: &adw::ToastOverlay, family: myna_core::language::ModelFamily) {
@@ -314,6 +328,8 @@ pub struct BackendUi {
     /// discovery, off the main thread, so the page never spins a core itself.
     performance: RefCell<Option<PerformanceFacts>>,
     last_diagnostics_refresh: std::cell::Cell<Option<Instant>>,
+    /// The Install more models dialog while it is open, and what it lists.
+    install_dialog: RefCell<Option<(glib::WeakRef<ui::InstallModelsDialog>, InstallOffer)>>,
 }
 
 #[derive(Clone, Copy)]
@@ -508,6 +524,7 @@ impl BackendUi {
             inventory_failure: RefCell::new(None),
             performance: RefCell::new(None),
             last_diagnostics_refresh: std::cell::Cell::new(None),
+            install_dialog: RefCell::new(None),
         });
 
         ui.connect_view_stack_selection();
@@ -740,6 +757,7 @@ impl BackendUi {
         group.set_sensitive(
             self.active_backend.verified() && !apply_active && switching_to.is_none(),
         );
+        self.sync_install_dialog();
     }
 
     /// One row per installed backend, named and described by family, with a
@@ -855,24 +873,85 @@ impl BackendUi {
         });
     }
 
-    fn install_models(&self) -> ui::InstallModelsDialog {
+    fn install_offer(&self) -> InstallOffer {
         let recommended = self.recommended();
-        let families = installable_families(self.active_backend.snapshot().backends(), recommended);
-        let overlay = self.overlay.clone();
-        install_models_dialog(
-            &families,
+        InstallOffer {
+            families: installable_families(self.active_backend.snapshot().backends(), recommended),
             recommended,
-            self.user_language(),
-            move |dialog, family| {
-                open_in_app_center(&overlay, family);
-                dialog.close();
-            },
-        )
+            user_language: self.user_language(),
+        }
+    }
+
+    fn choose_family(&self) -> ChooseFamily {
+        let overlay = self.overlay.clone();
+        Rc::new(move |dialog, family| {
+            open_in_app_center(&overlay, family);
+            dialog.close();
+        })
+    }
+
+    fn install_models(&self) -> ui::InstallModelsDialog {
+        let dialog = ui::InstallModelsDialog::new();
+        offer_install(&dialog, &self.install_offer(), self.choose_family());
+        dialog
     }
 
     fn present_install_models(&self) {
-        self.install_models()
-            .present(Some(self.overlay.upcast_ref::<gtk::Widget>()));
+        let dialog = self.install_models();
+        *self.install_dialog.borrow_mut() = Some((dialog.downgrade(), self.install_offer()));
+        dialog.connect_closed({
+            let ui = self.this.clone();
+            move |_| {
+                if let Some(ui) = ui.upgrade() {
+                    ui.install_dialog.borrow_mut().take();
+                }
+            }
+        });
+        dialog.present(Some(self.overlay.upcast_ref::<gtk::Widget>()));
+    }
+
+    /// Keeps an open Install more models dialog to what is still missing,
+    /// closing it once nothing is.
+    fn sync_install_dialog(&self) {
+        let offer = self.install_offer();
+        let dialog = {
+            let mut open = self.install_dialog.borrow_mut();
+            let Some((dialog, shown)) = open.as_mut() else {
+                return;
+            };
+            if *shown == offer {
+                return;
+            }
+            *shown = offer.clone();
+            dialog.upgrade()
+        };
+        let Some(dialog) = dialog else {
+            return;
+        };
+        if offer.families.is_empty() {
+            dialog.close();
+            // libadwaita 1.5 drops a close that lands while the dialog is
+            // still animating open, so close again once it surely is open.
+            glib::timeout_add_local_once(DIALOG_OPENED, {
+                let ui = self.this.clone();
+                let dialog = dialog.downgrade();
+                move || {
+                    let (Some(ui), Some(dialog)) = (ui.upgrade(), dialog.upgrade()) else {
+                        return;
+                    };
+                    let open = ui
+                        .install_dialog
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|(open, _)| open.upgrade().as_ref() == Some(&dialog));
+                    if open {
+                        dialog.close();
+                    }
+                }
+            });
+        } else {
+            offer_install(&dialog, &offer, self.choose_family());
+        }
     }
 
     fn connect_view_stack_selection(self: &Rc<Self>) {
@@ -904,7 +983,8 @@ impl BackendUi {
     }
 
     /// The settings window's own actions: `win.setup` reopens the onboarding
-    /// wizard over it, and `win.refresh` refreshes the tab on show.
+    /// wizard over it, and `win.refresh` refreshes the tab on show. Regaining
+    /// focus rediscovers the installed models.
     pub fn install_window_actions(self: &Rc<Self>, window: &ui::MainWindow) {
         let refresh = gio::SimpleAction::new("refresh", None);
         refresh.connect_activate({
@@ -928,6 +1008,15 @@ impl BackendUi {
             }
         });
         window.add_action(&setup);
+
+        window.connect_is_active_notify({
+            let ui = Rc::downgrade(self);
+            move |window| {
+                if let (true, Some(ui)) = (window.is_active(), ui.upgrade()) {
+                    ui.rediscover_on_focus(Instant::now());
+                }
+            }
+        });
     }
 
     /// Assess the machine and open the wizard on it. Closing the wizard
@@ -989,6 +1078,18 @@ impl BackendUi {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// The user may have installed or removed a model in App Center or a
+    /// terminal while the window was in the background. Never during an
+    /// operation: a switch or apply rediscovers when it completes.
+    fn rediscover_on_focus(self: &Rc<Self>, at: Instant) {
+        if self.operation_coordinator.active().is_some() {
+            return;
+        }
+        if let Some(request) = self.controller.begin_focus_discovery(at) {
+            self.run_discovery(request);
         }
     }
 
@@ -1755,20 +1856,34 @@ impl BackendUi {
     }
 
     fn trigger_discovery(self: &Rc<Self>) {
+        if self.controller.repository().is_none() {
+            return;
+        }
+        let request: DiscoveryRequest = self.controller.begin_discovery();
+        self.run_discovery(request);
+    }
+
+    /// A quiet (focus) discovery skips the clock probe and the Diagnostics
+    /// snapshots, and redraws Diagnostics only when the inventory changed.
+    fn run_discovery(self: &Rc<Self>, request: DiscoveryRequest) {
         let Some(repository) = self.controller.repository().cloned() else {
             return;
         };
-        let request: DiscoveryRequest = self.controller.begin_discovery();
+        let quiet = request.quiet();
         let token = request.token();
         let inventory_token = token.clone();
         let ui = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             // The probe loads a core for a fraction of a second; it runs on
             // the blocking pool alongside the snapd reads, not on this thread.
-            let probe = gio::spawn_blocking(crate::performance::performance_facts);
+            let probe =
+                (!quiet).then(|| gio::spawn_blocking(crate::performance::performance_facts));
             let inventory = repository.installed_snaps(inventory_token).await;
             let result = repository.refresh(token).await;
-            let performance = probe.await.ok();
+            let performance = match probe {
+                Some(probe) => probe.await.ok(),
+                None => None,
+            };
             if let Some(ui) = ui.upgrade() {
                 let accepted = ui.controller.complete_discovery(request, result);
                 if !accepted {
@@ -1777,20 +1892,20 @@ impl BackendUi {
                 if performance.is_some() {
                     *ui.performance.borrow_mut() = performance;
                 }
-                match inventory {
-                    Ok(snaps) => {
-                        *ui.installed_snaps.borrow_mut() = snaps;
-                        *ui.inventory_failure.borrow_mut() = None;
-                    }
-                    Err(error) => {
-                        ui.installed_snaps.borrow_mut().clear();
-                        *ui.inventory_failure.borrow_mut() =
-                            Some(problem_from_surface_error(&error));
-                    }
-                }
+                let (snaps, failure) = match inventory {
+                    Ok(snaps) => (snaps, None),
+                    Err(error) => (Vec::new(), Some(problem_from_surface_error(&error))),
+                };
+                let changed = *ui.installed_snaps.borrow() != snaps
+                    || *ui.inventory_failure.borrow() != failure;
+                *ui.installed_snaps.borrow_mut() = snaps;
+                *ui.inventory_failure.borrow_mut() = failure;
                 ui.inventory_complete.set(true);
+                if quiet && !changed {
+                    return;
+                }
                 ui.rebuild_diagnostics_page();
-                if ui.view_stack.visible_child_name().as_deref() == Some("diagnostics") {
+                if !quiet && ui.view_stack.visible_child_name().as_deref() == Some("diagnostics") {
                     for page in ui.controller.pages() {
                         if !page.loading() {
                             ui.trigger_snapshot(page.identity().snap_name());
@@ -3066,6 +3181,7 @@ mod tests {
             inventory_failure: RefCell::new(None),
             performance: RefCell::new(None),
             last_diagnostics_refresh: std::cell::Cell::new(None),
+            install_dialog: RefCell::new(None),
         });
         ui.connect_view_stack_selection();
         ui.connect_install_button();
@@ -3882,9 +3998,15 @@ mod tests {
         on_gtk_thread(|| {
             use myna_core::language::ModelFamily as Family;
             let chosen = Rc::new(RefCell::new(Vec::new()));
-            let dialog = install_models_dialog(&[Family::Whisper, Family::FunAsr], None, None, {
+            let dialog = ui::InstallModelsDialog::new();
+            let offer = InstallOffer {
+                families: vec![Family::Whisper, Family::FunAsr],
+                recommended: None,
+                user_language: None,
+            };
+            offer_install(&dialog, &offer, {
                 let chosen = Rc::clone(&chosen);
-                move |_, family| chosen.borrow_mut().push(family)
+                Rc::new(move |_, family| chosen.borrow_mut().push(family))
             });
             let rows: Vec<adw::ActionRow> = descendants(dialog.families().upcast_ref())
                 .into_iter()
@@ -4163,5 +4285,214 @@ mod tests {
         assert!(second.is_cancelled());
         assert!(state.values().all(|entry| entry.cancellation.is_none()));
         assert_eq!(coordinator.active(), None);
+    }
+
+    /// Answers every discovery with the machine as it stands, and counts the
+    /// connection reads.
+    struct ChangingRepository {
+        machine: RefCell<(&'static str, &'static str)>,
+        reads: std::cell::Cell<usize>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl BackendRepository for ChangingRepository {
+        async fn discover(
+            &self,
+            cancellation: CancellationToken,
+        ) -> Result<crate::domain::ConnectionSnapshot, crate::domain::BackendSurfaceError> {
+            self.refresh(cancellation).await
+        }
+
+        async fn read_snapshot(
+            &self,
+            backend: &BackendIdentity,
+            _cancellation: CancellationToken,
+        ) -> crate::domain::BackendSnapshot {
+            crate::domain::BackendSnapshot::empty(backend.clone())
+        }
+
+        async fn refresh(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<crate::domain::ConnectionSnapshot, crate::domain::BackendSurfaceError> {
+            self.reads.set(self.reads.get() + 1);
+            let (connections, slots) = *self.machine.borrow();
+            Ok(crate::domain::parse_connections(connections, slots).expect("connections parse"))
+        }
+    }
+
+    /// General over a Parakeet-only machine the test can change, with the
+    /// first discovery done as startup does it.
+    fn refocusable_ui() -> (Rc<BackendUi>, Rc<ChangingRepository>, adw::Window) {
+        ui::register_resources();
+        let repository = Rc::new(ChangingRepository {
+            machine: RefCell::new((PARAKEET_CONNECTED, PARAKEET_SLOT)),
+            reads: std::cell::Cell::new(0),
+        });
+        let controller = BackendController::new(repository.clone());
+        let TestUi { ui, .. } = test_ui_with(controller, Some(ui::MynaPage::new()));
+        ui.controller.observe({
+            let ui = Rc::downgrade(&ui);
+            move |event| {
+                if let Some(ui) = ui.upgrade() {
+                    ui.on_controller_event(event);
+                }
+            }
+        });
+        let window = adw::Window::builder()
+            .default_width(800)
+            .default_height(600)
+            .content(&ui.overlay)
+            .build();
+        window.present();
+        let request = ui.controller.begin_discovery();
+        ui.controller.complete_discovery(
+            request,
+            Ok(
+                crate::domain::parse_connections(PARAKEET_CONNECTED, PARAKEET_SLOT)
+                    .expect("connections parse"),
+            ),
+        );
+        (ui, repository, window)
+    }
+
+    fn settle(done: impl Fn() -> bool) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while !done() && Instant::now() < deadline {
+            if !glib::MainContext::default().iteration(false) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+
+    fn model_titles(ui: &BackendUi) -> Vec<String> {
+        listed_models(ui)
+            .into_iter()
+            .map(|(title, ..)| title)
+            .collect()
+    }
+
+    fn open_install_dialogs() -> Vec<ui::InstallModelsDialog> {
+        gtk::Window::list_toplevels()
+            .into_iter()
+            .flat_map(|window| descendants(&window))
+            .filter_map(|widget| widget.downcast::<ui::InstallModelsDialog>().ok())
+            .collect()
+    }
+
+    fn after_the_interval() -> Instant {
+        Instant::now() + crate::backend_controller::FOCUS_REDISCOVERY_INTERVAL
+    }
+
+    #[test]
+    fn regaining_focus_lists_a_model_installed_meanwhile() {
+        on_gtk_thread(|| {
+            let (ui, repository, window) = refocusable_ui();
+            assert_eq!(model_titles(&ui), ["Parakeet"]);
+            ui.present_install_models();
+            let dialog = open_install_dialogs().pop().expect("dialog open");
+            let offered_titles = |dialog: &ui::InstallModelsDialog| {
+                offered(dialog)
+                    .into_iter()
+                    .map(|(title, ..)| title)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(offered_titles(&dialog), ["Whisper", "FunASR"]);
+            let closed = Rc::new(std::cell::Cell::new(false));
+            dialog.connect_closed({
+                let closed = Rc::clone(&closed);
+                move |_| closed.set(true)
+            });
+
+            *repository.machine.borrow_mut() = (
+                PARAKEET_CONNECTED_WHISPER_INSTALLED,
+                PARAKEET_AND_WHISPER_SLOTS,
+            );
+            ui.rediscover_on_focus(after_the_interval());
+            settle(|| model_titles(&ui).len() == 2);
+
+            assert_eq!(model_titles(&ui), ["Parakeet", "Whisper"]);
+            assert_eq!(repository.reads.get(), 1);
+            assert_eq!(
+                open_install_dialogs(),
+                std::slice::from_ref(&dialog),
+                "the open dialog stays open"
+            );
+            assert_eq!(offered_titles(&dialog), ["FunASR"]);
+
+            *repository.machine.borrow_mut() = (
+                PARAKEET_CONNECTED_EVERY_FAMILY_INSTALLED,
+                KNOWN_FAMILY_SLOTS,
+            );
+            ui.rediscover_on_focus(
+                after_the_interval() + crate::backend_controller::FOCUS_REDISCOVERY_INTERVAL,
+            );
+            settle(|| model_titles(&ui).len() == 3);
+            settle(|| closed.get());
+            assert!(closed.get(), "nothing is left to install");
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn focus_flapping_reads_the_machine_once() {
+        on_gtk_thread(|| {
+            let (ui, repository, window) = refocusable_ui();
+            let at = after_the_interval();
+            for _ in 0..5 {
+                ui.rediscover_on_focus(at);
+            }
+            settle(|| !ui.controller.discovery_loading());
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+            for _ in 0..5 {
+                ui.rediscover_on_focus(at);
+            }
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+            assert_eq!(repository.reads.get(), 1);
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn regaining_focus_during_a_model_switch_reads_nothing() {
+        on_gtk_thread(|| {
+            let (ui, repository, window) = refocusable_ui();
+            let operation = ui
+                .operation_coordinator
+                .begin(OperationKind::BackendSwitch)
+                .expect("no operation yet");
+            ui.rediscover_on_focus(after_the_interval());
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+            assert_eq!(repository.reads.get(), 0);
+            ui.operation_coordinator.complete(operation.token());
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn an_unchanged_machine_leaves_the_model_tab_alone() {
+        on_gtk_thread(|| {
+            let (ui, repository, window) = refocusable_ui();
+            ui.view_stack.set_visible_child_name("model");
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+            let shown = ui.backend_nav.visible_page();
+            ui.rediscover_on_focus(after_the_interval());
+            settle(|| repository.reads.get() == 1 && !ui.controller.discovery_loading());
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+            assert_eq!(repository.reads.get(), 1);
+            assert_eq!(ui.backend_nav.visible_page(), shown, "the page was rebuilt");
+            assert_eq!(ui.view_stack.visible_child_name().as_deref(), Some("model"));
+            window.destroy();
+        });
     }
 }

@@ -14,6 +14,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use crate::command::CancellationToken;
 use crate::domain::{
@@ -153,16 +154,26 @@ pub enum ControllerEvent {
     BackendDirtyChanged(BackendIdentity),
 }
 
+/// Least time from the start of any discovery to a rediscovery on focus, so
+/// a window flapping in and out of focus costs one discovery per interval.
+pub const FOCUS_REDISCOVERY_INTERVAL: Duration = Duration::from_secs(2);
+
 /// Handle for an in-flight discovery request.
 #[derive(Clone, Debug)]
 pub struct DiscoveryRequest {
     generation: u64,
     token: CancellationToken,
+    quiet: bool,
 }
 
 impl DiscoveryRequest {
     pub fn token(&self) -> CancellationToken {
         self.token.clone()
+    }
+
+    /// Started by [`BackendController::begin_focus_discovery`].
+    pub fn quiet(&self) -> bool {
+        self.quiet
     }
 }
 
@@ -196,6 +207,7 @@ struct Inner {
     latest_completed_discovery: u64,
     discovery_token: Option<CancellationToken>,
     discovery_loading: bool,
+    last_discovery_started: Option<Instant>,
     last_discovery_error: Option<BackendSurfaceError>,
 }
 
@@ -272,22 +284,28 @@ impl BackendController {
     }
 
     pub fn begin_discovery(&self) -> DiscoveryRequest {
-        let request = {
-            let mut inner = self.inner.borrow_mut();
-            if let Some(previous) = inner.discovery_token.take() {
-                previous.cancel();
-            }
-            inner.discovery_generation += 1;
-            inner.discovery_loading = true;
-            let token = CancellationToken::new();
-            inner.discovery_token = Some(token.clone());
-            DiscoveryRequest {
-                generation: inner.discovery_generation,
-                token,
-            }
-        };
+        let request = self
+            .inner
+            .borrow_mut()
+            .begin_discovery(Instant::now(), false);
         self.emit(vec![ControllerEvent::DiscoveryStarted]);
         request
+    }
+
+    /// Rediscover because the window regained focus, since the user may have
+    /// installed or removed a model elsewhere. Refused while any discovery
+    /// runs or within [`FOCUS_REDISCOVERY_INTERVAL`] of one starting. It shows
+    /// no loading state, announces only what changed, and any other
+    /// discovery supersedes it.
+    pub fn begin_focus_discovery(&self, now: Instant) -> Option<DiscoveryRequest> {
+        let mut inner = self.inner.borrow_mut();
+        let recent = inner.last_discovery_started.is_some_and(|started| {
+            now.saturating_duration_since(started) < FOCUS_REDISCOVERY_INTERVAL
+        });
+        if inner.discovery_token.is_some() || recent {
+            return None;
+        }
+        Some(inner.begin_discovery(now, true))
     }
 
     pub fn complete_discovery(
@@ -308,15 +326,19 @@ impl BackendController {
             inner.discovery_token = None;
             match result {
                 Ok(snapshot) => {
-                    inner.last_discovery_error = None;
+                    let recovered = inner.last_discovery_error.take().is_some();
                     apply_discovery(&mut inner, snapshot, &mut events);
-                    if !events.contains(&ControllerEvent::DiscoveryChanged) {
+                    let announce = !request.quiet || recovered;
+                    if announce && !events.contains(&ControllerEvent::DiscoveryChanged) {
                         events.push(ControllerEvent::DiscoveryChanged);
                     }
                 }
                 Err(error) => {
+                    let repeated = inner.last_discovery_error.as_ref() == Some(&error);
                     inner.last_discovery_error = Some(error.clone());
-                    events.push(ControllerEvent::DiscoveryFailed(error));
+                    if !(request.quiet && repeated) {
+                        events.push(ControllerEvent::DiscoveryFailed(error));
+                    }
                 }
             }
         }
@@ -473,6 +495,24 @@ impl BackendController {
     }
 }
 
+impl Inner {
+    fn begin_discovery(&mut self, now: Instant, quiet: bool) -> DiscoveryRequest {
+        if let Some(previous) = self.discovery_token.take() {
+            previous.cancel();
+        }
+        self.discovery_generation += 1;
+        self.discovery_loading = !quiet;
+        self.last_discovery_started = Some(now);
+        let token = CancellationToken::new();
+        self.discovery_token = Some(token.clone());
+        DiscoveryRequest {
+            generation: self.discovery_generation,
+            token,
+            quiet,
+        }
+    }
+}
+
 impl Default for Inner {
     fn default() -> Self {
         Self {
@@ -483,6 +523,7 @@ impl Default for Inner {
             latest_completed_discovery: 0,
             discovery_token: None,
             discovery_loading: false,
+            last_discovery_started: None,
             last_discovery_error: None,
         }
     }
@@ -1128,5 +1169,132 @@ mod tests {
             ConfigValue::Text("parakeet".into())
         ));
         assert!(!controller.stage_edit("myna-parakeet", "engine", ConfigValue::Text("cpu".into())));
+    }
+
+    fn recorded(controller: &BackendController) -> Rc<RefCell<Vec<ControllerEvent>>> {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        controller.observe({
+            let events = events.clone();
+            move |event| events.borrow_mut().push(event.clone())
+        });
+        events
+    }
+
+    fn discovered_parakeet() -> Rc<BackendController> {
+        let controller = BackendController::detached();
+        let request = controller.begin_discovery();
+        controller.complete_discovery(request, Ok(discovery_connected_parakeet()));
+        controller
+    }
+
+    fn later() -> std::time::Instant {
+        std::time::Instant::now() + FOCUS_REDISCOVERY_INTERVAL
+    }
+
+    #[test]
+    fn focus_rediscovery_waits_out_the_interval_after_any_discovery() {
+        let controller = discovered_parakeet();
+        assert!(controller
+            .begin_focus_discovery(std::time::Instant::now())
+            .is_none());
+        let request = controller
+            .begin_focus_discovery(later())
+            .expect("admitted once the interval passed");
+        controller.complete_discovery(request, Ok(discovery_connected_parakeet()));
+        assert!(
+            controller.begin_focus_discovery(later()).is_none(),
+            "a focus rediscovery starts the interval again"
+        );
+    }
+
+    #[test]
+    fn focus_rediscovery_is_refused_while_any_discovery_runs() {
+        let controller = discovered_parakeet();
+        let _explicit = controller.begin_discovery();
+        let far = later() + FOCUS_REDISCOVERY_INTERVAL * 100;
+        assert!(controller.begin_focus_discovery(far).is_none());
+
+        let controller = discovered_parakeet();
+        assert!(controller.begin_focus_discovery(later()).is_some());
+        assert!(
+            controller.begin_focus_discovery(far).is_none(),
+            "a second focus rediscovery joins the first"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_focus_rediscovery_announces_nothing() {
+        let controller = discovered_parakeet();
+        let events = recorded(&controller);
+        let request = controller.begin_focus_discovery(later()).expect("admitted");
+        assert!(!controller.discovery_loading(), "it shows no loading state");
+        assert!(controller.complete_discovery(request, Ok(discovery_connected_parakeet())));
+        assert!(events.borrow().is_empty(), "{:?}", events.borrow());
+        assert!(!controller.discovery_loading());
+    }
+
+    #[test]
+    fn a_focus_rediscovery_announces_a_newly_installed_backend() {
+        let controller = discovered_parakeet();
+        let events = recorded(&controller);
+        let request = controller.begin_focus_discovery(later()).expect("admitted");
+        controller.complete_discovery(request, Ok(discovery_three()));
+        assert!(controller.page("myna-funasr").is_some());
+        assert!(events
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, ControllerEvent::DiscoveryChanged)));
+        assert!(!events
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, ControllerEvent::DiscoveryStarted)));
+    }
+
+    #[test]
+    fn an_explicit_discovery_supersedes_a_focus_one() {
+        let controller = discovered_parakeet();
+        let focus = controller.begin_focus_discovery(later()).expect("admitted");
+        let explicit = controller.begin_discovery();
+        assert!(focus.token().is_cancelled());
+        assert!(controller.discovery_loading());
+        assert!(!controller.complete_discovery(focus, Ok(discovery_three())));
+        assert!(controller.complete_discovery(explicit, Ok(discovery_connected_parakeet())));
+        assert!(controller.page("myna-funasr").is_none());
+    }
+
+    #[test]
+    fn a_focus_rediscovery_reports_a_failure_once() {
+        let controller = discovered_parakeet();
+        let events = recorded(&controller);
+        let error = BackendSurfaceError::new(
+            BackendSurface::Connections,
+            "snap connections failed",
+            "snapd is not running",
+        );
+        let failed = |controller: &BackendController, at| {
+            let request = controller.begin_focus_discovery(at).expect("admitted");
+            controller.complete_discovery(request, Err(error.clone()));
+        };
+        failed(&controller, later());
+        failed(&controller, later() + FOCUS_REDISCOVERY_INTERVAL);
+        let failures = events
+            .borrow()
+            .iter()
+            .filter(|event| matches!(event, ControllerEvent::DiscoveryFailed(_)))
+            .count();
+        assert_eq!(failures, 1);
+
+        let request = controller
+            .begin_focus_discovery(later() + FOCUS_REDISCOVERY_INTERVAL * 2)
+            .expect("admitted");
+        controller.complete_discovery(request, Ok(discovery_connected_parakeet()));
+        assert_eq!(controller.last_discovery_error(), None);
+        assert!(
+            matches!(
+                events.borrow().last(),
+                Some(ControllerEvent::DiscoveryChanged)
+            ),
+            "recovering clears the failure"
+        );
     }
 }

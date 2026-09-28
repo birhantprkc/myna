@@ -1,3 +1,4 @@
+use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::subclass::types::ObjectSubclassIsExt;
 use gtk::{glib, CompositeTemplate};
@@ -12,6 +13,7 @@ mod imp {
     pub struct InstallModelsDialog {
         #[template_child]
         pub families: gtk::TemplateChild<adw::PreferencesGroup>,
+        pub rows: std::cell::RefCell<Vec<adw::ActionRow>>,
     }
 
     #[glib::object_subclass]
@@ -50,6 +52,18 @@ impl InstallModelsDialog {
 
     pub fn families(&self) -> adw::PreferencesGroup {
         self.imp().families.get()
+    }
+
+    /// Show `rows` in place of the ones shown before.
+    pub fn replace_rows(&self, rows: Vec<adw::ActionRow>) {
+        let families = self.families();
+        for row in self.imp().rows.replace(Vec::new()) {
+            families.remove(&row);
+        }
+        for row in &rows {
+            families.add(row);
+        }
+        self.imp().rows.replace(rows);
     }
 }
 

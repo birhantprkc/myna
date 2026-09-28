@@ -6,6 +6,7 @@ The configuration UI is **event-driven**. A refresh cycle may spawn at most:
 | -------------------------- | ----------------------------------------------------------- |
 | Idle                       | `0`                                                         |
 | Startup                    | 3 = `snap list` + `snap connections` + `snap interface content` |
+| Window regains focus       | 3, as Startup, at most once per `FOCUS_REDISCOVERY_INTERVAL` (2 s) |
 | Backend selected           | `BACKEND_REFRESH_PROCESS_BUDGET` (9 = `snap info` + at most 4 prioritized app probes + 4 modelctl reads) |
 | Diagnostics requested (n backends) | 3 + n * `BACKEND_REFRESH_PROCESS_BUDGET`            |
 
@@ -19,14 +20,25 @@ may never lose focus to. Setting up from that step reads `snap changes`,
 and again every 2 s, for at most 15 min, while snapd still has a change in
 progress on Myna or a backend.
 
-Every discovery also runs the CPU clock probe (`docs/performance-warnings.md`)
+The settings window rediscovers each time it regains focus, because the user
+installs or removes models in App Center (the Install more models dialog sends
+them there) or a terminal. It is refused while a switch or apply holds the
+operation gate (that operation rediscovers when it completes), while any
+discovery runs, and within `FOCUS_REDISCOVERY_INTERVAL` of any discovery
+starting, so a window flapping in and out of focus spawns at most 3 processes
+per interval. Any other discovery supersedes it. It shows no loading state,
+redraws only what changed (an open Install more models dialog included), and
+skips the clock probe and the Diagnostics snapshots below; the controller
+tests in `src/backend_controller.rs` cover the throttle.
+
+Every other discovery also runs the CPU clock probe (`docs/performance-warnings.md`)
 on the blocking pool. It is a thread, not a process, so it is outside the
 budget above; it loads one core for 300 ms per frequency class and finishes
 before the snapd reads it runs alongside.
 
 Apart from that step there is **no background poll**. Refreshes are triggered
-by (a) startup, (b) selecting the Backend or Diagnostics tab, (c) a user tap on the diagnostics *Refresh* button, and (d) explicit
-apply/switch operations. User-initiated diagnostics refreshes are debounced by
+by (a) startup, (b) selecting the Backend or Diagnostics tab, (c) a user tap on the diagnostics *Refresh* button, (d) explicit
+apply/switch operations, and (e) the settings window regaining focus. User-initiated diagnostics refreshes are debounced by
 `diagnostics::REFRESH_DEBOUNCE` (250 ms).
 
 The app-probe cap does not truncate the raw `snap info` command list. Discovery
