@@ -11,11 +11,14 @@ data/onboarding-shortcut.blp
 data/onboarding-welcome.blp
 data/onboarding-window.blp
 data/operation-error-dialog.blp
+data/shortcut-dialog.blp
 data/status-page.blp
 src/app.rs
 src/active_backend.rs
 src/backend_ui.rs
+src/backend_apply.rs
 src/onboarding_ui.rs
+src/shortcut_ui.rs
 src/diagnostics.rs
 src/myna_settings.rs
 ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml
