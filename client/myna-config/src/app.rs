@@ -395,6 +395,17 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-welcome: icon shown");
+    if !one_line_each(
+        &window,
+        &[
+            "Set up Dictation",
+            "Dictation runs locally, with no data leaving your computer.",
+        ],
+    ) {
+        eprintln!("the welcome step wraps a line that fits the window");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-wrap: welcome on one line each");
 
     let forward = window.forward_button();
     if !forward.is_mapped()
@@ -436,6 +447,23 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-gate: held");
+    let paragraph = shown_lines(
+        &window,
+        &gettextrs::gettext(
+            "Copy the command below and enter them in the Terminal to install all necessary components.",
+        ),
+    );
+    let balanced = paragraph.len() == 2
+        && paragraph
+            .iter()
+            .min()
+            .zip(paragraph.iter().max())
+            .is_some_and(|(short, long)| short * 10 >= long * 6);
+    if !balanced || !one_line_each(&window, &["Install components"]) {
+        eprintln!("the component step's paragraph wraps unbalanced: {paragraph:?}");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-wrap: components paragraph balanced");
     if installed_status(&window).is_some() {
         eprintln!("the footer claims everything is installed on a bare machine");
         return glib::ExitCode::FAILURE;
@@ -870,6 +898,11 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-shortcut: headed as the design");
+    if !one_line_each(&window, &["How to dictate"]) {
+        eprintln!("the shortcut step wraps its title");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-wrap: shortcut title on one line");
     if installed_status(&window).is_some() || setup_spinner(&window) {
         eprintln!("the footer status stayed on the last step");
         return glib::ExitCode::FAILURE;
@@ -2348,7 +2381,7 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
             widget.downcast_ref::<gtk::Label>().is_some_and(|label| {
                 label.is_mapped()
                     && label.label() == text.as_str()
-                    && class.is_none_or(|class| label.has_css_class(class))
+                    && class.is_none_or(|class| styled(label, class))
             })
         })
         .is_some()
@@ -2364,6 +2397,43 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
     )
 }
 
+/// Whether `label`, or the balanced label holding it, has `class`.
+fn styled(label: &gtk::Label, class: &str) -> bool {
+    label.has_css_class(class)
+        || label
+            .parent()
+            .is_some_and(|parent| parent.is::<ui::BalancedLabel>() && parent.has_css_class(class))
+}
+
+/// The widths of the lines the mapped label showing `text` wraps into.
+fn shown_lines(window: &ui::OnboardingWindow, text: &str) -> Vec<i32> {
+    find_descendant(window.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::Label>()
+            .is_some_and(|label| label.is_mapped() && label.label() == text)
+    })
+    .and_then(|widget| widget.downcast::<gtk::Label>().ok())
+    .map(|label| {
+        let layout = label.layout();
+        (0..layout.line_count())
+            .filter_map(|line| layout.line_readonly(line))
+            .map(|line| line.pixel_extents().1.width())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Whether each of `texts` shows on a single line.
+fn one_line_each(window: &ui::OnboardingWindow, texts: &[&str]) -> bool {
+    texts.iter().all(|text| {
+        let lines = shown_lines(window, &gettextrs::gettext(*text));
+        if lines.len() != 1 {
+            eprintln!("{text:?} wraps into {lines:?}");
+        }
+        lines.len() == 1
+    })
+}
+
 /// Whether the shortcut step heads itself as the design: a regular 24 px
 /// title in the 540 px column.
 fn shortcut_headed(window: &ui::OnboardingWindow) -> bool {
@@ -2371,7 +2441,7 @@ fn shortcut_headed(window: &ui::OnboardingWindow) -> bool {
         widget.downcast_ref::<gtk::Label>().is_some_and(|label| {
             label.is_mapped()
                 && label.label() == gettextrs::gettext("How to dictate").as_str()
-                && label.has_css_class("onboarding-title")
+                && styled(label, "onboarding-title")
                 && label
                     .ancestor(adw::Clamp::static_type())
                     .and_then(|clamp| clamp.downcast::<adw::Clamp>().ok())

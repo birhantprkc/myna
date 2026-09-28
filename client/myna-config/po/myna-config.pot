@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-28 09:51+0100\n"
+"POT-Creation-Date: 2026-09-28 10:11+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,7 +46,7 @@ msgstr ""
 msgid "Revert"
 msgstr ""
 
-#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:1104
+#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:1143
 msgid "About and Diagnostics"
 msgstr ""
 
@@ -80,7 +80,7 @@ msgstr ""
 msgid "Re-read the machine, the daemon, and every backend."
 msgstr ""
 
-#: data/diagnostics-page.blp:40 data/onboarding-components.blp:55
+#: data/diagnostics-page.blp:40 data/onboarding-components.blp:51
 msgid "Copy"
 msgstr ""
 
@@ -116,7 +116,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:1099
+#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:1138
 msgid "Backend"
 msgstr ""
 
@@ -153,30 +153,30 @@ msgid "Keyboard Shortcut"
 msgstr ""
 
 #: data/myna-page.blp:36 data/myna-page.blp:54 data/onboarding-window.blp:7
-#: src/app.rs:1436 src/onboarding_ui.rs:456 src/shortcut_ui.rs:306
+#: src/app.rs:1475 src/onboarding_ui.rs:456 src/shortcut_ui.rs:306
 msgid "Dictation"
 msgstr ""
 
-#: data/myna-page.blp:46 data/onboarding-shortcut.blp:41 src/shortcut_ui.rs:190
+#: data/myna-page.blp:46 data/onboarding-shortcut.blp:37 src/shortcut_ui.rs:190
 #: src/shortcut_ui.rs:200
 msgid "Set up shortcut"
 msgstr ""
 
-#: data/onboarding-components.blp:18 src/app.rs:2351 src/onboarding_ui.rs:457
+#: data/onboarding-components.blp:18 src/app.rs:2390 src/onboarding_ui.rs:457
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:29 src/app.rs:2355
+#: data/onboarding-components.blp:27 src/app.rs:453 src/app.rs:2394
 msgid ""
 "Copy the command below and enter them in the Terminal to install all "
 "necessary components."
 msgstr ""
 
-#: data/onboarding-components.blp:63
+#: data/onboarding-components.blp:59
 msgid "Copy install commands"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:18 src/app.rs:2367 src/onboarding_ui.rs:458
+#: data/onboarding-shortcut.blp:18 src/app.rs:2443 src/onboarding_ui.rs:458
 msgid "How to dictate"
 msgstr ""
 
@@ -184,7 +184,7 @@ msgstr ""
 msgid "Set up Dictation"
 msgstr ""
 
-#: data/onboarding-welcome.blp:35
+#: data/onboarding-welcome.blp:33
 msgid "Dictation runs locally, with no data leaving your computer."
 msgstr ""
 
@@ -192,11 +192,11 @@ msgstr ""
 msgid "Setting up dictation"
 msgstr ""
 
-#: data/onboarding-window.blp:43 src/app.rs:2427
+#: data/onboarding-window.blp:43 src/app.rs:2503
 msgid "All components installed"
 msgstr ""
 
-#: data/onboarding-window.blp:48 src/app.rs:396 src/onboarding_ui.rs:351
+#: data/onboarding-window.blp:48 src/app.rs:413 src/onboarding_ui.rs:351
 msgid "Next"
 msgstr ""
 
@@ -236,11 +236,11 @@ msgstr ""
 msgid "Press Escape to cancel."
 msgstr ""
 
-#: data/status-page.blp:12 src/app.rs:1094 src/app.rs:2485
+#: data/status-page.blp:12 src/app.rs:1133 src/app.rs:2561
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:13 src/app.rs:1095 src/app.rs:2486
+#: data/status-page.blp:13 src/app.rs:1134 src/app.rs:2562
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -248,35 +248,35 @@ msgstr ""
 msgid "translator-credits"
 msgstr ""
 
-#: src/app.rs:883 src/onboarding_ui.rs:354
+#: src/app.rs:922 src/onboarding_ui.rs:354
 msgid "Done"
 msgstr ""
 
-#: src/app.rs:1100
+#: src/app.rs:1139
 msgid "Backend details will appear after discovery."
 msgstr ""
 
-#: src/app.rs:1105
+#: src/app.rs:1144
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:2382 src/shortcut_ui.rs:383
+#: src/app.rs:2458 src/shortcut_ui.rs:383
 msgid "You can trigger Dictation anytime by using the keyboard shortcut:"
 msgstr ""
 
-#: src/app.rs:2490
+#: src/app.rs:2566
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:2491
+#: src/app.rs:2567
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:2507
+#: src/app.rs:2583
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:2860
+#: src/app.rs:2936
 msgid "Could not save the setting"
 msgstr ""
 

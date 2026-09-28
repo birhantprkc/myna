@@ -11,7 +11,7 @@ mod imp {
     #[template(resource = "/com/canonical/Myna/Config/ui/onboarding-shortcut.ui")]
     pub struct OnboardingShortcut {
         #[template_child]
-        pub description: gtk::TemplateChild<gtk::Label>,
+        pub description: gtk::TemplateChild<crate::ui::BalancedLabel>,
         #[template_child]
         pub shortcut_box: gtk::TemplateChild<gtk::Box>,
         #[template_child]
@@ -25,6 +25,7 @@ mod imp {
         type ParentType = adw::Bin;
 
         fn class_init(klass: &mut Self::Class) {
+            <crate::ui::BalancedLabel as glib::prelude::StaticTypeExt>::ensure_type();
             klass.bind_template();
         }
 
@@ -51,7 +52,7 @@ impl OnboardingShortcut {
     }
 
     pub fn description(&self) -> gtk::Label {
-        self.imp().description.get()
+        self.imp().description.text_label()
     }
 
     pub fn shortcut_box(&self) -> gtk::Box {

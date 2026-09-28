@@ -14,10 +14,8 @@ template $OnboardingShortcut: Adw.Bin {
       child: Gtk.Box {
         orientation: vertical;
 
-        Gtk.Label {
+        $BalancedLabel {
           label: _("How to dictate");
-          justify: center;
-          wrap: true;
           margin-bottom: 8;
 
           styles [
@@ -25,9 +23,7 @@ template $OnboardingShortcut: Adw.Bin {
           ]
         }
 
-        Gtk.Label description {
-          justify: center;
-          wrap: true;
+        $BalancedLabel description {
           margin-bottom: 32;
         }
 

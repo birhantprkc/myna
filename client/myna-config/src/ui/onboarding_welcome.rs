@@ -17,6 +17,7 @@ mod imp {
         type ParentType = adw::Bin;
 
         fn class_init(klass: &mut Self::Class) {
+            <crate::ui::BalancedLabel as glib::prelude::StaticTypeExt>::ensure_type();
             klass.bind_template();
         }
 

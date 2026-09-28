@@ -14,10 +14,8 @@ template $OnboardingComponents: Adw.Bin {
       child: Gtk.Box {
         orientation: vertical;
 
-        Gtk.Label {
+        $BalancedLabel {
           label: _("Install components");
-          justify: center;
-          wrap: true;
           margin-bottom: 8;
 
           styles [
@@ -25,10 +23,8 @@ template $OnboardingComponents: Adw.Bin {
           ]
         }
 
-        Gtk.Label {
+        $BalancedLabel {
           label: _("Copy the command below and enter them in the Terminal to install all necessary components.");
-          justify: center;
-          wrap: true;
           margin-bottom: 24;
         }
 
