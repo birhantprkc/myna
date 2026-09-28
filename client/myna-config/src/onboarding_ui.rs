@@ -15,7 +15,7 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::active_backend::ensure_backend_active;
+use crate::active_backend::{ensure_backend_active, SnapdWait};
 use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
@@ -29,6 +29,9 @@ use crate::ui;
 /// How often the component step re-reads the machine while something is
 /// missing: one `snap list` and one discovery each time.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// How long setting up waits for snapd to finish installing Myna or a model,
+/// which may still be downloading it.
+const SNAPD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// How long "All components installed" shows before the wizard moves on by
 /// itself.
 const BEAT: Duration = Duration::from_secs(1);
@@ -260,11 +263,21 @@ impl OnboardingUi {
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
         let configurator = self.configurator.clone();
+        let interval = self.poll_interval.get();
         glib::spawn_future_local(async move {
+            let sleep = |interval| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> {
+                Box::pin(glib::timeout_future(interval))
+            };
+            let wait = SnapdWait {
+                interval,
+                timeout: SNAPD_TIMEOUT,
+                sleep: &sleep,
+            };
             let outcome = ensure_backend_active(
                 repository.as_ref(),
                 configurator.as_ref(),
                 RECOMMENDED_BACKEND_SNAP,
+                &wait,
             )
             .await;
             let Some(ui) = ui.upgrade() else {

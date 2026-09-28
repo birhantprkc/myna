@@ -1,4 +1,7 @@
 use std::cell::RefCell;
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Duration;
 
 use crate::command::{CancellationToken, CommandRequest};
 use crate::domain::{
@@ -241,6 +244,14 @@ pub async fn execute_switch(
     }
 }
 
+/// How setting up waits for snapd to finish a change to Myna or a backend:
+/// how often it looks, for how long, and what it sleeps on in between.
+pub struct SnapdWait<'a> {
+    pub interval: Duration,
+    pub timeout: Duration,
+    pub sleep: &'a dyn Fn(Duration) -> Pin<Box<dyn Future<Output = ()>>>,
+}
+
 /// Leave dictation running on a backend. With none connected, switch to
 /// `preferred`, or the first discovered backend without it; the switch
 /// restarts Myna. With one connected, only restart, because the daemon may
@@ -249,11 +260,26 @@ pub async fn ensure_backend_active(
     repository: &dyn BackendRepository,
     configurator: &dyn SystemConfigurator,
     preferred: &str,
+    wait: &SnapdWait<'_>,
 ) -> Result<(), String> {
-    let snapshot = repository
+    let mut snapshot = repository
         .refresh(CancellationToken::new())
         .await
         .map_err(|error| error.message().to_owned())?;
+    let snaps = std::iter::once(crate::onboarding::MYNA_SNAP.to_owned())
+        .chain(
+            snapshot
+                .backends()
+                .iter()
+                .map(|backend| backend.snap_name().to_owned()),
+        )
+        .collect::<Vec<_>>();
+    if wait_for_snapd(repository, &snaps, wait).await? {
+        snapshot = repository
+            .refresh(CancellationToken::new())
+            .await
+            .map_err(|error| error.message().to_owned())?;
+    }
     if let ActiveBackendState::Connected(_) = snapshot.active_state() {
         return configurator
             .restart_myna(CancellationToken::new())
@@ -289,6 +315,33 @@ pub async fn ensure_backend_active(
         SwitchOutcome::Disagreed { .. } | SwitchOutcome::StaleDiscovery { .. } => Err(
             gettextrs::gettext("The backend changed while it was being enabled."),
         ),
+    }
+}
+
+/// Wait until snapd has no change in progress naming one of `snaps`, and say
+/// whether there was one.
+async fn wait_for_snapd(
+    repository: &dyn BackendRepository,
+    snaps: &[String],
+    wait: &SnapdWait<'_>,
+) -> Result<bool, String> {
+    let mut waited = Duration::ZERO;
+    loop {
+        let changes = repository
+            .changes_in_progress(CancellationToken::new())
+            .await
+            .map_err(|error| error.message().to_owned())?;
+        let Some(change) = changes.iter().find(|change| change.touches(snaps)) else {
+            return Ok(waited > Duration::ZERO);
+        };
+        if waited >= wait.timeout {
+            return Err(gettextrs::gettext(
+                "snapd is still busy with “{change}”. Try again once it has finished.",
+            )
+            .replace("{change}", change.summary()));
+        }
+        (wait.sleep)(wait.interval).await;
+        waited += wait.interval;
     }
 }
 

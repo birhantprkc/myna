@@ -182,6 +182,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-rows: none",
         "onboarding-refresh: re-read on focus",
         "onboarding-poll: found without focus",
+        "onboarding-snapd: waits for the install to finish",
         "onboarding-auto: status before advancing",
         "onboarding-auto: set up once and advanced",
         "onboarding-poll: stopped once found",

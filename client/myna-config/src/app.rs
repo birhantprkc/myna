@@ -545,6 +545,7 @@ fn onboarding_probe() -> glib::ExitCode {
     window.forward_button().emit_clicked();
     settle_gtk();
     machine.hold_restart(true);
+    machine.hold_changes(true);
     machine.install();
     for _ in 0..100 {
         if setup_spinner(&window) {
@@ -557,6 +558,24 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-poll: found without focus");
+    // snapd shows the backend connected before its install has mounted it
+    // into Myna: restarting then leaves the daemon without it.
+    let polled = machine.change_reads();
+    for _ in 0..100 {
+        if machine.change_reads() >= polled + 2 {
+            break;
+        }
+        settle_gtk();
+    }
+    if machine.change_reads() < polled + 2
+        || machine.restarts_attempted() != 0
+        || !setup_spinner(&window)
+    {
+        eprintln!("setup restarted Myna while snapd was still installing the model");
+        return glib::ExitCode::FAILURE;
+    }
+    machine.hold_changes(false);
+    println!("onboarding-snapd: waits for the install to finish");
     // Next is the manual path; it must not start a second setup.
     window.forward_button().emit_clicked();
     machine.hold_restart(false);
@@ -1810,6 +1829,10 @@ struct ProbeMachine {
     held: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// How many daemon restarts to refuse before letting one through.
     refusals: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// snapd is still installing the model while this is set.
+    installing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    change_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    restarts_attempted: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ProbeMachine {
@@ -1826,7 +1849,24 @@ impl ProbeMachine {
             bare: std::sync::Arc::default(),
             held: std::sync::Arc::default(),
             refusals: std::sync::Arc::default(),
+            installing: std::sync::Arc::default(),
+            change_reads: std::sync::Arc::default(),
+            restarts_attempted: std::sync::Arc::default(),
         }
+    }
+
+    fn hold_changes(&self, installing: bool) {
+        self.installing
+            .store(installing, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn change_reads(&self) -> usize {
+        self.change_reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn restarts_attempted(&self) -> usize {
+        self.restarts_attempted
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn refuse_restarts(&self, count: usize) {
@@ -1876,6 +1916,18 @@ impl ProbeMachine {
             }
             ["interface", "content", "--attrs"] => {
                 fixture(include_str!("../tests/fixtures/snap-interface-content.txt"))
+            }
+            ["changes", "--abs-time"] => {
+                self.change_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let installing = self.installing.load(std::sync::atomic::Ordering::SeqCst);
+                fixture(if installing {
+                    "ID  Status  Spawn  Ready  Summary\n\
+                     9  Doing  2026-09-28T09:37:28+01:00  -  Install \"myna-parakeet\" snap\n"
+                } else {
+                    "ID  Status  Spawn  Ready  Summary\n\
+                     9  Done  2026-09-28T09:37:28+01:00  2026-09-28T09:37:36+01:00  Install \"myna-parakeet\" snap\n"
+                })
             }
             ["info", snap] => Some(
                 include_str!("../tests/fixtures/snap-info-parakeet.txt")
@@ -1932,6 +1984,8 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
         &self,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<(), crate::ports::SystemConfiguratorError> {
+        self.restarts_attempted
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         while self.held.load(std::sync::atomic::Ordering::SeqCst) {
             glib::timeout_future(Duration::from_millis(10)).await;
         }

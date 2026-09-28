@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-28 01:34+0100\n"
+"POT-Creation-Date: 2026-09-28 09:51+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,7 +46,7 @@ msgstr ""
 msgid "Revert"
 msgstr ""
 
-#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:1085
+#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:1104
 msgid "About and Diagnostics"
 msgstr ""
 
@@ -116,7 +116,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:1080
+#: data/main-window.blp:39 data/myna-page.blp:16 src/app.rs:1099
 msgid "Backend"
 msgstr ""
 
@@ -153,7 +153,7 @@ msgid "Keyboard Shortcut"
 msgstr ""
 
 #: data/myna-page.blp:36 data/myna-page.blp:54 data/onboarding-window.blp:7
-#: src/app.rs:1417 src/onboarding_ui.rs:443 src/shortcut_ui.rs:306
+#: src/app.rs:1436 src/onboarding_ui.rs:456 src/shortcut_ui.rs:306
 msgid "Dictation"
 msgstr ""
 
@@ -162,11 +162,11 @@ msgstr ""
 msgid "Set up shortcut"
 msgstr ""
 
-#: data/onboarding-components.blp:18 src/app.rs:2297 src/onboarding_ui.rs:444
+#: data/onboarding-components.blp:18 src/app.rs:2351 src/onboarding_ui.rs:457
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:29 src/app.rs:2301
+#: data/onboarding-components.blp:29 src/app.rs:2355
 msgid ""
 "Copy the command below and enter them in the Terminal to install all "
 "necessary components."
@@ -176,7 +176,7 @@ msgstr ""
 msgid "Copy install commands"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:18 src/app.rs:2313 src/onboarding_ui.rs:445
+#: data/onboarding-shortcut.blp:18 src/app.rs:2367 src/onboarding_ui.rs:458
 msgid "How to dictate"
 msgstr ""
 
@@ -192,11 +192,11 @@ msgstr ""
 msgid "Setting up dictation"
 msgstr ""
 
-#: data/onboarding-window.blp:43 src/app.rs:2373
+#: data/onboarding-window.blp:43 src/app.rs:2427
 msgid "All components installed"
 msgstr ""
 
-#: data/onboarding-window.blp:48 src/app.rs:396 src/onboarding_ui.rs:338
+#: data/onboarding-window.blp:48 src/app.rs:396 src/onboarding_ui.rs:351
 msgid "Next"
 msgstr ""
 
@@ -236,11 +236,11 @@ msgstr ""
 msgid "Press Escape to cancel."
 msgstr ""
 
-#: data/status-page.blp:12 src/app.rs:1075 src/app.rs:2431
+#: data/status-page.blp:12 src/app.rs:1094 src/app.rs:2485
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:13 src/app.rs:1076 src/app.rs:2432
+#: data/status-page.blp:13 src/app.rs:1095 src/app.rs:2486
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -248,56 +248,60 @@ msgstr ""
 msgid "translator-credits"
 msgstr ""
 
-#: src/app.rs:864 src/onboarding_ui.rs:341
+#: src/app.rs:883 src/onboarding_ui.rs:354
 msgid "Done"
 msgstr ""
 
-#: src/app.rs:1081
+#: src/app.rs:1100
 msgid "Backend details will appear after discovery."
 msgstr ""
 
-#: src/app.rs:1086
+#: src/app.rs:1105
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:2328 src/shortcut_ui.rs:383
+#: src/app.rs:2382 src/shortcut_ui.rs:383
 msgid "You can trigger Dictation anytime by using the keyboard shortcut:"
 msgstr ""
 
-#: src/app.rs:2436
+#: src/app.rs:2490
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:2437
+#: src/app.rs:2491
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:2453
+#: src/app.rs:2507
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:2806
+#: src/app.rs:2860
 msgid "Could not save the setting"
 msgstr ""
 
-#: src/active_backend.rs:115
+#: src/active_backend.rs:118
 msgid "Dictation will use {backend}. It pauses briefly while Myna restarts."
 msgstr ""
 
-#: src/active_backend.rs:271
+#: src/active_backend.rs:297
 msgid "No speech-to-text model appeared in snap connections."
 msgstr ""
 
-#: src/active_backend.rs:275
+#: src/active_backend.rs:301
 msgid "The model is not available to switch to."
 msgstr ""
 
-#: src/active_backend.rs:288
+#: src/active_backend.rs:314
 msgid "The change was cancelled."
 msgstr ""
 
-#: src/active_backend.rs:290
+#: src/active_backend.rs:316
 msgid "The backend changed while it was being enabled."
+msgstr ""
+
+#: src/active_backend.rs:339
+msgid "snapd is still busy with “{change}”. Try again once it has finished."
 msgstr ""
 
 #: src/backend_ui.rs:295
@@ -865,11 +869,11 @@ msgstr ""
 msgid "The backend may restart."
 msgstr ""
 
-#: src/onboarding_ui.rs:282
+#: src/onboarding_ui.rs:295
 msgid "Could not set up dictation"
 msgstr ""
 
-#: src/onboarding_ui.rs:405
+#: src/onboarding_ui.rs:418
 msgid "Commands copied. Paste them into a terminal."
 msgstr ""
 
