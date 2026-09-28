@@ -7,14 +7,15 @@
   outline-offset: -2px;
 }
 
-/* Keyboard caps on the onboarding shortcut step. */
+/* Keyboard caps on the onboarding shortcut step, as the design: the thick
+   bottom border is the cap's shadow. Compact ones sit in the Myna page's row. */
 .keycap {
   background: alpha(currentColor, 0.08);
   border: 1px solid alpha(currentColor, 0.2);
-  border-bottom-width: 3px;
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 1.2em;
+  border-bottom-width: 4px;
+  border-radius: 2px;
+  padding: 8px 16px;
+  font-size: 20px;
 }
 
 .keycap.compact {
