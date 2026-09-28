@@ -12,12 +12,14 @@ Client settings use GSettings schema `com.canonical.Myna.Dictation` with the key
 
 The snap stores settings below `$SNAP_USER_COMMON/.config`; unpackaged development uses the host configuration directory and requires `make install-schema`. `myna_core::Settings` is the shared access layer.
 
-`streaming-mode` is used as stored by `myna-testbed` and `myna-desktop`:
+`streaming-mode` has two values and no `auto`:
 
-- `streaming` (the default) displays committed deltas as they arrive and enables preedit when supported.
+- `streaming` displays committed deltas as they arrive and enables preedit when supported.
 - `batch` delays display and injection until the utterance completes.
 
-A stored value outside the schema enum, such as the retired `auto`, reads as the default. There is no hardware gate; a capability-based default is a future redesign.
+The mode in force comes from `myna_core::effective_mode`, the one resolver: the daemon and `myna-testbed` use it, and what Myna Settings displays must come from it too. A user value in the store always wins, including one equal to the schema default. Only with no user value does the backend's `Capabilities.streaming` decide: streaming when it streams, batch when it does not. When the backend's answer is unknown (an older server, a failed query, no press yet) the schema default `streaming` applies, and a test pins the resolver's fallback to the schema default. `Settings::streaming_mode` is therefore `Option`: it reads GSettings' user value, and a value outside the schema enum, such as the retired `auto`, reads as no choice. `myna.config reset streaming-mode` hands the choice back to the backend.
+
+The daemon asks the backend with `capabilities.query` at every press, beside the session rather than ahead of it: preedit is read per transcript event, and a backend swap or an engine setting can change the answer behind the same socket. Its journal line names the source of the preedit (flag, the user's choice, the backend's default, or the schema default), and `myna.status` prints it as `flag`, `settings`, `backend` or `built-in`. The query is bounded by `myna_orchestrator::CAPABILITIES_TIMEOUT`, so a wedged backend reads as unknown rather than hanging a press or `myna.status`.
 
 The mode is a client presentation preference, not wire negotiation. A streaming backend can feed a batch client, which accumulates committed deltas until completion.
 

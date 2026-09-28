@@ -50,7 +50,8 @@ struct Args {
     base64_audio: bool,
     ws_path: Option<String>,
     show_unstable: bool,
-    mode: myna_core::StreamingMode,
+    /// `--mode`; `None` defers to the user's choice, then the backend.
+    mode: Option<myna_core::StreamingMode>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -94,7 +95,8 @@ OPTIONS:
     --show-unstable    display unstable hypothesis deltas as `~` lines
                        (streaming mode; off by default — FR-007)
     --mode <mode>      transcription mode: `streaming` or `batch`; overrides
-                       the persisted setting
+                       the persisted setting, which overrides the backend's
+                       own mode
     --realtime         pace clips at real time, like a microphone (default: as
                        fast as the backend takes them)
     -h, --help         show this help
@@ -170,8 +172,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     if ws_path.is_some() && dialect != Dialect::Ie115 {
         return Err("--ws-path only applies to --dialect ie115".into());
     }
-    // T049/T050: the --mode flag overrides the persisted setting.
-    let mode = mode.unwrap_or_else(|| myna_core::Settings::load().streaming_mode);
     let socket = resolve_socket(&backend)?;
 
     Ok(Args {
@@ -460,13 +460,44 @@ async fn dictate<B: BackendClient>(backend: B, args: &Args) -> ExitCode {
     }
 }
 
+/// The mode the clips run in and why: `--mode`, else the user's stored
+/// choice, else the backend's own. The backend is asked only when it decides.
+async fn clip_mode(
+    flag: Option<myna_core::StreamingMode>,
+    stored: impl FnOnce() -> Option<myna_core::StreamingMode>,
+    socket: &std::path::Path,
+) -> (myna_core::StreamingMode, String) {
+    if let Some(mode) = flag {
+        return (mode, format!("streaming-mode {mode:?}, from --mode"));
+    }
+    let stored = stored();
+    let streams = match stored {
+        Some(_) => None,
+        None => match myna_orchestrator::query_capabilities(socket).await {
+            Ok(caps) => caps.streaming,
+            Err(e) => {
+                eprintln!("(capabilities query failed: {e})");
+                None
+            }
+        },
+    };
+    let mode = myna_core::effective_mode(stored, streams);
+    (mode.mode, mode.to_string())
+}
+
 /// Batch clip mode: run each clip in sequence and exit — no trigger needed.
 async fn dictate_clips<B: BackendClient>(backend: B, args: &Args) -> ExitCode {
     let n = args.clips.len();
     let plural = if n == 1 { "" } else { "s" };
     println!("dictating {n} clip{plural} to {}", args.socket.display());
 
-    println!("mode: {:?}", args.mode);
+    let (mode, reason) = clip_mode(
+        args.mode,
+        || myna_core::Settings::load().streaming_mode,
+        &args.socket,
+    )
+    .await;
+    println!("mode: {reason}");
     let mut streaming_sink = UnstableFilter {
         inner: StdoutSink,
         show_unstable: args.show_unstable,
@@ -495,7 +526,7 @@ async fn dictate_clips<B: BackendClient>(backend: B, args: &Args) -> ExitCode {
             language: args.language.clone(),
             ..Default::default()
         };
-        let outcome = match args.mode {
+        let outcome = match mode {
             myna_core::StreamingMode::Batch => {
                 run_dictation(&backend, config, source, &mut batch_sink).await
             }
@@ -667,6 +698,24 @@ mod tests {
     fn parse(flags: &[&str]) -> Result<Args, String> {
         let fixed = ["--socket", "/s", "--clip", "c.wav", "--mode", "batch"];
         parse_args(fixed.iter().chain(flags).map(|s| s.to_string()))
+    }
+
+    #[tokio::test]
+    async fn the_clip_mode_names_where_it_came_from() {
+        use myna_core::StreamingMode::{Batch, Streaming};
+        let absent = std::path::Path::new("/nonexistent/backend.sock");
+        let (mode, reason) = clip_mode(Some(Batch), || Some(Streaming), absent).await;
+        assert_eq!(
+            (mode, reason.as_str()),
+            (Batch, "streaming-mode Batch, from --mode")
+        );
+        let (mode, reason) = clip_mode(None, || Some(Batch), absent).await;
+        assert_eq!(
+            (mode, reason.as_str()),
+            (Batch, "streaming-mode Batch, set by the user")
+        );
+        let (_, reason) = clip_mode(None, || None, absent).await;
+        assert_eq!(reason, myna_core::effective_mode(None, None).to_string());
     }
 
     #[test]

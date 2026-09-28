@@ -38,7 +38,7 @@ pub mod trigger;
 pub use audio::{AudioSource, CaptureError, CaptureStream, StopHandle, WavFileSource};
 pub use backend::{
     fake::FakeBackend,
-    ws_unix::{query_capabilities, WsUnixBackend},
+    ws_unix::{query_capabilities, WsUnixBackend, CAPABILITIES_TIMEOUT},
     ws_unix_ie115::WsUnixIe115Backend,
     BackendClient, BackendError, BackendEvents, BackendHandle, BackendSink, Outbound,
 };

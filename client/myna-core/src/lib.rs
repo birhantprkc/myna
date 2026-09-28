@@ -24,6 +24,7 @@ pub mod debug;
 pub mod events;
 pub mod language;
 pub mod locale;
+pub mod mode;
 pub mod protocol;
 pub mod session;
 pub mod settings;
@@ -38,6 +39,7 @@ pub use events::{
     Disposition, ErrorData, Progress, Segment, StreamingMode, TranscriptionEvent,
     TranscriptionFinal, WireError, PHASE_PREPARING, PHASE_READY, PHASE_TRANSCRIBING,
 };
+pub use mode::{effective_mode, EffectiveMode, ModeSource};
 pub use protocol::PROTOCOL_VERSION;
 pub use session::SessionConfig;
 pub use settings::{Settings, SettingsWatch};

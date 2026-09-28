@@ -84,8 +84,8 @@ committed transcript is injected via IBus into that field.
 
 The daemon always serves com.canonical.Myna.Dictation for the GNOME Shell extension,
 picks its activation transport from how it was packaged, and decides streaming
-preedit from your persisted mode preference. A correct setup needs none of the
-overrides below.
+preedit from your mode preference, else from whether the backend streams. A
+correct setup needs none of the overrides below.
 
 OPTIONS:
     --socket <path>    Unix socket of a running myna-server
@@ -160,7 +160,7 @@ impl Activation {
 /// Everything the daemon works out for itself, resolved once at startup.
 ///
 /// A command-line flag wins, then the user's settings value, then the
-/// built-in - packaging for activation, the streaming mode for preedit.
+/// built-in - packaging for activation, the backend's own mode for preedit.
 /// Activation and the preferred shortcut are argv-only debugging overrides:
 /// they were settings keys once, and neither was worth a user-facing knob.
 #[derive(Debug, PartialEq)]
@@ -169,19 +169,42 @@ struct Resolved {
     language: Option<String>,
     hotkey: Option<String>,
     preedit: bool,
+    mode: ModeInputs,
     auto_stop: AutoStop,
 }
 
 impl Resolved {
-    fn new(args: &Args, settings: &myna_core::Settings) -> Self {
+    /// `backend_streams` is the backend's `Capabilities.streaming`, `None`
+    /// until a press has asked it.
+    fn new(args: &Args, settings: &myna_core::Settings, backend_streams: Option<bool>) -> Self {
         let activation = args.activation.unwrap_or_else(Activation::from_packaging);
+        let mode = ModeInputs {
+            choice: settings.streaming_mode,
+            backend_streams,
+        };
         Self {
             activation,
             language: args.language.clone().or_else(|| settings.language.clone()),
             hotkey: args.shortcut.clone(),
-            preedit: resolve_preedit(args.preedit, settings.streaming_mode),
+            preedit: resolve_preedit(args.preedit, mode.effective().mode),
+            mode,
             auto_stop: resolve_auto_stop(activation, args.hold, settings.silence_timeout),
         }
+    }
+}
+
+/// What the transcription mode resolves from. They arrive separately - the
+/// choice from the settings watch, the backend's mode from each press's
+/// capabilities query - so [`LiveSettings`] keeps both under one lock.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct ModeInputs {
+    choice: Option<myna_core::StreamingMode>,
+    backend_streams: Option<bool>,
+}
+
+impl ModeInputs {
+    fn effective(&self) -> myna_core::EffectiveMode {
+        myna_core::effective_mode(self.choice, self.backend_streams)
     }
 }
 
@@ -222,6 +245,7 @@ fn resolve_auto_stop(activation: Activation, hold: bool, silence_secs: u32) -> A
 #[derive(Clone)]
 struct LiveSettings {
     preedit: Live<bool>,
+    mode: Arc<std::sync::Mutex<ModeInputs>>,
     language: Live<Option<String>>,
     /// Read at every stats tick of a running session, so a changed timeout
     /// applies to the session in progress.
@@ -233,6 +257,7 @@ impl LiveSettings {
     fn new(resolved: &Resolved) -> Self {
         Self {
             preedit: Live::new(resolved.preedit),
+            mode: Arc::new(std::sync::Mutex::new(resolved.mode)),
             language: Live::new(resolved.language.clone()),
             auto_stop: Live::new(resolved.auto_stop),
             // The schema default until the first read in `follow`; a machine
@@ -250,11 +275,7 @@ impl LiveSettings {
     fn follow(&self, args: &Args, bus: Option<SharedBus>) -> Option<myna_core::SettingsWatch> {
         let watch = myna_core::settings::watch({
             let (args, live) = (args.clone(), self.clone());
-            move |settings| {
-                let now = Resolved::new(&args, &settings);
-                live.apply(&now, &preedit_reason(args.preedit, settings.streaming_mode));
-                live.carry_hud_style(&settings);
-            }
+            move |settings| live.settings_changed(&args, &settings)
         });
         if watch.is_some() {
             // The value this daemon started from was read before the
@@ -262,10 +283,7 @@ impl LiveSettings {
             // made in that window is applied instead of waiting for the next
             // one - a daemon started at login races anything the session
             // autostarts alongside it.
-            let settings = myna_core::Settings::load();
-            let now = Resolved::new(args, &settings);
-            self.apply(&now, &preedit_reason(args.preedit, settings.streaming_mode));
-            self.carry_hud_style(&settings);
+            self.settings_changed(args, &myna_core::Settings::load());
         } else {
             // Not a failure: the same missing schema that makes `Settings::load`
             // read defaults. Said out loud because "my change did nothing" is
@@ -285,6 +303,35 @@ impl LiveSettings {
             ));
         }
         watch
+    }
+
+    fn settings_changed(&self, args: &Args, settings: &myna_core::Settings) {
+        let mut mode = self.mode.lock().unwrap_or_else(|p| p.into_inner());
+        let now = Resolved::new(args, settings, mode.backend_streams);
+        *mode = now.mode;
+        self.apply(&now, &preedit_reason(args.preedit, now.mode.effective()));
+        self.carry_hud_style(settings);
+    }
+
+    /// What a press's capabilities query said about the backend now serving.
+    /// Asked per press because a backend swap or an engine setting can change
+    /// the answer behind the same socket.
+    fn backend_learned(&self, forced: Option<bool>, backend_streams: Option<bool>) {
+        let mut mode = self.mode.lock().unwrap_or_else(|p| p.into_inner());
+        if mode.backend_streams == backend_streams {
+            return;
+        }
+        myna_core::info_log!(
+            "settings",
+            "backend streams -> {}",
+            backend_streams.map_or("unknown".into(), |s| s.to_string())
+        );
+        mode.backend_streams = backend_streams;
+        let effective = mode.effective();
+        self.apply_preedit(
+            resolve_preedit(forced, effective.mode),
+            &preedit_reason(forced, effective),
+        );
     }
 
     /// Hand the `hud-style` nick to the forwarder. Unresolved and unvalidated
@@ -311,12 +358,7 @@ impl LiveSettings {
     /// tier, where it explains "I changed it and nothing happened" without
     /// filling a long-lived daemon's journal.
     fn apply(&self, resolved: &Resolved, reason: &str) {
-        if self.preedit.get() != resolved.preedit {
-            myna_core::info_log!("settings", "preedit -> {} ({reason})", resolved.preedit);
-            self.preedit.set(resolved.preedit);
-        } else {
-            myna_core::dbg_log!("settings", "preedit stays {} ({reason})", resolved.preedit);
-        }
+        self.apply_preedit(resolved.preedit, reason);
         if self.language.get() != resolved.language {
             myna_core::info_log!(
                 "settings",
@@ -332,6 +374,15 @@ impl LiveSettings {
                 resolved.auto_stop.silence
             );
             self.auto_stop.set(resolved.auto_stop);
+        }
+    }
+
+    fn apply_preedit(&self, preedit: bool, reason: &str) {
+        if self.preedit.get() != preedit {
+            myna_core::info_log!("settings", "preedit -> {preedit} ({reason})");
+            self.preedit.set(preedit);
+        } else {
+            myna_core::dbg_log!("settings", "preedit stays {preedit} ({reason})");
         }
     }
 }
@@ -416,30 +467,43 @@ fn set_activation(a: &mut Args, mode: Activation) -> Result<(), String> {
     }
 }
 
-/// Streaming preedit (R9) is a consequence of the transcription mode, not a
-/// separate preference: hypotheses only exist in streaming mode, so "show
-/// them in the field" follows the persisted mode. No server round-trip is
-/// needed, and a batch-only backend simply never emits `Unstable` anyway.
+/// Streaming preedit (R9) is a consequence of the transcription mode in
+/// force, not a separate preference: hypotheses only exist in streaming mode,
+/// so "show them in the field" follows the user's choice, else the backend's
+/// own mode ([`myna_core::effective_mode`]). A batch-only backend never emits
+/// `Unstable` anyway.
 ///
 /// The injector still has the final say downstream: the controller renders a
 /// preedit only where the backend has a real preedit region
 /// (`Injector::supports_preedit`).
-fn resolve_preedit(forced: Option<bool>, preference: myna_core::StreamingMode) -> bool {
-    forced.unwrap_or(preference == myna_core::StreamingMode::Streaming)
+fn resolve_preedit(forced: Option<bool>, mode: myna_core::StreamingMode) -> bool {
+    forced.unwrap_or(mode == myna_core::StreamingMode::Streaming)
 }
 
 /// Why preedit came out the way it did, for the journal.
 ///
 /// It is the one setting nobody typed, so "why are partials not showing" has
-/// to be answerable from the log alone: either a flag forced it, or the
-/// persisted preference decided it. Kept separate from
+/// to be answerable from the log alone: a flag forced it, the user's choice
+/// decided it, or the backend's own mode did. Kept separate from
 /// [`resolve_preedit`] so that resolving - which now happens again on every
 /// settings change - stays silent, and only the startup line and an actual
 /// change say anything.
-fn preedit_reason(forced: Option<bool>, preference: myna_core::StreamingMode) -> String {
+fn preedit_reason(forced: Option<bool>, mode: myna_core::EffectiveMode) -> String {
     match forced {
         Some(forced) => format!("forced {forced} by flag"),
-        None => format!("from streaming-mode {preference:?}"),
+        None => format!("from {mode}"),
+    }
+}
+
+/// The backend's `Capabilities.streaming`, `None` when it does not say or
+/// cannot be asked.
+async fn backend_streams(socket: &std::path::Path) -> Option<bool> {
+    match myna_orchestrator::query_capabilities(socket).await {
+        Ok(caps) => caps.streaming,
+        Err(e) => {
+            myna_core::dbg_log!("settings", "capabilities query failed: {e}");
+            None
+        }
     }
 }
 
@@ -465,7 +529,7 @@ fn control_path(args: &Args) -> PathBuf {
 /// better than a fixed string that is wrong for the shipped default.
 fn toggle_failure_hint(args: &Args) -> Vec<String> {
     let settings = myna_core::Settings::load();
-    let resolved = Resolved::new(args, &settings);
+    let resolved = Resolved::new(args, &settings, None);
     toggle_hint_for(resolved.activation, resolved.hotkey.as_deref())
 }
 
@@ -509,6 +573,8 @@ fn make_session(
     let backend_socket = args.backend.clone().expect("daemon requires a backend");
     let language = live.language.clone();
     let target = args.target.clone();
+    let forced_preedit = args.preedit;
+    let live = live.clone();
     move |events: mpsc::Sender<OrchestratorEvent>| {
         // Re-resolved per Press, so a backend connected (or refreshed, or
         // swapped) after the daemon started is picked up without a restart.
@@ -555,7 +621,14 @@ fn make_session(
         if let Some(r) = &readiness {
             r.reset();
         }
+        // Beside the session rather than ahead of it: preedit is read per
+        // transcript event, and the answer lands long before the first one.
+        let learn = {
+            let (live, socket) = (live.clone(), socket.clone());
+            async move { live.backend_learned(forced_preedit, backend_streams(&socket).await) }
+        };
         let run: SessionRun = Box::pin(async move {
+            tokio::spawn(learn);
             if let Some((bus, stats)) = pump {
                 tokio::spawn(myna_desktop::dbus::pump::run(bus, stats));
             }
@@ -928,7 +1001,7 @@ fn bind_shortcut_command() -> String {
 /// is nothing to get wrong, so an unpackaged run falls back to binding here.
 fn bind_shortcut(args: &Args) -> ExitCode {
     let settings = myna_core::Settings::load();
-    let resolved = Resolved::new(args, &settings);
+    let resolved = Resolved::new(args, &settings, None);
     if resolved.activation != Activation::Portal {
         eprintln!(
             "activation is {:?}, which takes no portal shortcut.\n  \
@@ -1013,7 +1086,7 @@ fn shortcut_install_refusal(activation: Activation, accel: &str) -> Option<Strin
 /// Refuses under portal activation - see [`shortcut_install_refusal`].
 fn install_shortcut(args: &Args, accel: &str) -> ExitCode {
     let settings = myna_core::Settings::load();
-    let resolved = Resolved::new(args, &settings);
+    let resolved = Resolved::new(args, &settings, None);
     if let Some(refusal) = shortcut_install_refusal(resolved.activation, accel) {
         eprintln!("{refusal}");
         return ExitCode::FAILURE;
@@ -1087,9 +1160,29 @@ fn host_gsettings() -> Command {
 /// it came from, because "I set that and nothing happened" is the question
 /// being asked most of the time.
 fn print_status(args: &Args) -> ExitCode {
+    let rt = match cli_runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("cannot start async runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Asked before the settings table: the mode in force depends on it.
+    let provider = args.backend.as_ref().map(BackendSocket::resolve);
+    let caps = match &provider {
+        Some(Ok(provider)) => {
+            Some(rt.block_on(myna_orchestrator::query_capabilities(&provider.socket)))
+        }
+        _ => None,
+    };
+    let backend_streams = match &caps {
+        Some(Ok(caps)) => caps.streaming,
+        _ => None,
+    };
+
     let store = myna_core::settings::Store::open();
     let settings = myna_core::Settings::load();
-    let resolved = Resolved::new(args, &settings);
+    let resolved = Resolved::new(args, &settings, backend_streams);
 
     println!(
         "settings   {} ({})",
@@ -1102,7 +1195,7 @@ fn print_status(args: &Args) -> ExitCode {
         }
     );
     let row = |key: &str, persisted: String, in_force: String, from: &str| {
-        println!("  {key:<15} {persisted:<12} -> {in_force:<22} [{from}]");
+        println!("  {key:<15} {persisted:<12} -> {in_force:<24} [{from}]");
     };
     row(
         "activation",
@@ -1152,30 +1245,34 @@ fn print_status(args: &Args) -> ExitCode {
             .unwrap_or_else(|| "(portal default)".into()),
         source(args.shortcut.is_some(), false),
     );
+    let mode = resolved.mode.effective();
     row(
         "streaming-mode",
-        format!("{:?}", settings.streaming_mode).to_lowercase(),
-        format!("preedit {}", resolved.preedit),
-        source(args.preedit.is_some(), store.is_some()),
+        resolved.mode.choice.map_or("(unset)".into(), |choice| {
+            format!("{choice:?}").to_lowercase()
+        }),
+        format!(
+            "{}, preedit {}",
+            format!("{:?}", mode.mode).to_lowercase(),
+            resolved.preedit
+        ),
+        match (args.preedit, mode.source) {
+            (Some(_), _) => "flag",
+            (None, myna_core::ModeSource::User) => "settings",
+            (None, myna_core::ModeSource::Backend) => "backend",
+            (None, myna_core::ModeSource::Unknown) => "built-in",
+        },
     );
 
-    let rt = match cli_runtime() {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("cannot start async runtime: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
     println!("\nbackend");
-    match &args.backend {
+    match args.backend.as_ref().zip(provider) {
         None => println!(
             "  {:<15} (none - pass --socket or --backend-dir)",
             "configured"
         ),
-        Some(backend) => {
+        Some((backend, provider)) => {
             println!("  {:<15} {}", "configured", backend.describe());
-            match backend.resolve() {
+            match provider {
                 Ok(provider) => {
                     if let Some(name) = &provider.snap_name {
                         println!("  {:<15} {name}", "provider");
@@ -1183,12 +1280,19 @@ fn print_status(args: &Args) -> ExitCode {
                     println!("  {:<15} {}", "resolves to", provider.socket.display());
                     // The share names the snap, not the model it serves, so
                     // ask the backend itself (T24 capabilities discovery).
-                    match rt.block_on(myna_orchestrator::query_capabilities(&provider.socket)) {
-                        Ok(caps) if caps.models.is_empty() => {
-                            println!("  {:<15} (backend did not report one)", "model");
-                        }
+                    match caps.expect("asked whenever the provider resolved") {
                         Ok(caps) => {
-                            println!("  {:<15} {}", "model", caps.models.join(", "));
+                            if caps.models.is_empty() {
+                                println!("  {:<15} (backend did not report one)", "model");
+                            } else {
+                                println!("  {:<15} {}", "model", caps.models.join(", "));
+                            }
+                            println!(
+                                "  {:<15} {}",
+                                "streams",
+                                caps.streaming
+                                    .map_or("(backend did not say)".into(), |s| s.to_string())
+                            );
                         }
                         Err(e) => println!("  {:<15} unknown ({e})", "model"),
                     }
@@ -1317,7 +1421,7 @@ fn main() -> ExitCode {
     // Everything resolvable, resolved once: flags, then the user's settings,
     // then the built-in.
     let settings = myna_core::Settings::load();
-    let resolved = Resolved::new(&args, &settings);
+    let resolved = Resolved::new(&args, &settings, None);
     // `--hold` is a portal concept (the portal reports press and release; the
     // control socket only ever delivers a single poke). Rejected against the
     // *resolved* transport rather than ignored, so "hold-to-talk silently does
@@ -1333,7 +1437,7 @@ fn main() -> ExitCode {
         resolved.language.as_deref().unwrap_or("(backend default)"),
         resolved.hotkey.as_deref().unwrap_or("(portal default)"),
         resolved.preedit,
-        preedit_reason(args.preedit, settings.streaming_mode)
+        preedit_reason(args.preedit, resolved.mode.effective())
     );
 
     run_headless(args, resolved)
@@ -1723,7 +1827,15 @@ mod tests {
     }
 
     fn resolved(args: &Args, settings: &myna_core::Settings) -> Resolved {
-        Resolved::new(args, settings)
+        Resolved::new(args, settings, None)
+    }
+
+    fn resolved_with(
+        args: &Args,
+        settings: &myna_core::Settings,
+        backend_streams: Option<bool>,
+    ) -> Resolved {
+        Resolved::new(args, settings, backend_streams)
     }
 
     #[test]
@@ -1945,6 +2057,171 @@ mod tests {
     }
 
     #[test]
+    fn with_no_choice_preedit_follows_the_backend() {
+        let a = Args::default();
+        assert!(resolved_with(&a, &unset(), Some(true)).preedit);
+        assert!(!resolved_with(&a, &unset(), Some(false)).preedit);
+        assert!(resolved_with(&a, &unset(), None).preedit);
+    }
+
+    #[test]
+    fn a_choice_beats_the_backend_and_a_flag_beats_both() {
+        let batch = myna_core::Settings {
+            streaming_mode: Some(myna_core::StreamingMode::Batch),
+            ..Default::default()
+        };
+        assert!(!resolved_with(&Args::default(), &batch, Some(true)).preedit);
+        let forced = Args {
+            preedit: Some(true),
+            ..Default::default()
+        };
+        assert!(resolved_with(&forced, &batch, Some(false)).preedit);
+    }
+
+    #[test]
+    fn the_preedit_reason_names_what_decided_it() {
+        let mode = myna_core::effective_mode(None, Some(false));
+        assert_eq!(
+            preedit_reason(None, mode),
+            "from streaming-mode Batch, the backend's default"
+        );
+        assert_eq!(preedit_reason(Some(true), mode), "forced true by flag");
+    }
+
+    /// The two inputs arrive from different places; each must resolve against
+    /// the other's latest value, not reset it.
+    #[test]
+    fn the_backend_answer_and_the_choice_resolve_together() {
+        let a = Args::default();
+        let live = LiveSettings::new(&resolved(&a, &unset()));
+        assert!(live.preedit.get(), "unknown backend: the schema default");
+
+        live.backend_learned(a.preedit, Some(false));
+        assert!(!live.preedit.get());
+
+        let streaming = myna_core::Settings {
+            streaming_mode: Some(myna_core::StreamingMode::Streaming),
+            ..Default::default()
+        };
+        live.settings_changed(&a, &streaming);
+        assert!(live.preedit.get(), "the choice wins");
+
+        live.settings_changed(&a, &unset());
+        assert!(
+            !live.preedit.get(),
+            "reset: the backend's answer still stands"
+        );
+
+        live.backend_learned(a.preedit, None);
+        assert!(live.preedit.get(), "a failed query is unknown again");
+    }
+
+    #[test]
+    fn a_forced_preedit_ignores_the_backend_answer() {
+        let a = Args {
+            preedit: Some(false),
+            ..Default::default()
+        };
+        let live = LiveSettings::new(&resolved(&a, &unset()));
+        live.backend_learned(a.preedit, Some(true));
+        assert!(!live.preedit.get());
+    }
+
+    /// A backend that answers `capabilities.query` the way `transport_ws.py`
+    /// does: greeting first, then one reply. Any other opening frame (a
+    /// session) is dropped.
+    async fn fake_backend(streaming: Option<bool>) -> (tempdir::Dir, std::path::PathBuf) {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let dir = tempdir::Dir::new(&format!("caps-{streaming:?}"));
+        let path = dir.0.join("backend.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let reply = serde_json::to_string(&myna_core::ServerControl::Capabilities {
+            data: myna_core::Capabilities {
+                streaming,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let reply = reply.clone();
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await?;
+                    ws.send(Message::text(r#"{"type": "session.created"}"#))
+                        .await?;
+                    if let Some(Ok(Message::Text(opening))) = ws.next().await {
+                        if opening.contains("capabilities.query") {
+                            ws.send(Message::text(reply)).await?;
+                        }
+                    }
+                    Ok::<_, tokio_tungstenite::tungstenite::Error>(())
+                });
+            }
+        });
+        (dir, path)
+    }
+
+    mod tempdir {
+        pub struct Dir(pub std::path::PathBuf);
+        impl Dir {
+            pub fn new(tag: &str) -> Self {
+                let path = std::env::temp_dir().join(format!(
+                    "myna-desktop-{tag}-{}-{:?}",
+                    std::process::id(),
+                    std::thread::current().id()
+                ));
+                std::fs::create_dir_all(&path).unwrap();
+                Self(path)
+            }
+        }
+        impl Drop for Dir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_press_asks_the_backend_whether_it_streams() {
+        for streaming in [Some(true), Some(false), None] {
+            let (_dir, path) = fake_backend(streaming).await;
+            assert_eq!(backend_streams(&path).await, streaming);
+        }
+    }
+
+    /// The wiring: a press's session asks the backend it resolved, and the
+    /// answer reaches the cell the controller reads, whatever the session
+    /// itself then does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_press_session_learns_the_backend_mode() {
+        let (_dir, path) = fake_backend(Some(false)).await;
+        let args = Args {
+            backend: Some(BackendSocket::Fixed(path)),
+            ..Default::default()
+        };
+        let live = LiveSettings::new(&resolved(&args, &unset()));
+        assert!(live.preedit.get());
+        let mut factory = make_session(&args, &live, None, None);
+        let (events_tx, _events_rx) = mpsc::channel(16);
+        let session = factory(events_tx);
+        session.stop.stop();
+        let _ = tokio::time::timeout(Duration::from_secs(5), session.run).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while live.preedit.get() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!live.preedit.get(), "the batch backend's answer landed");
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_backend_streams_unknown() {
+        let dir = tempdir::Dir::new("caps-missing");
+        assert_eq!(backend_streams(&dir.0.join("absent.sock")).await, None);
+    }
+
+    #[test]
     fn portal_shortcut_explicit() {
         let result = parse_args_from(args(&[
             "--portal",
@@ -1987,7 +2264,7 @@ mod tests {
             "test setup: readiness should start warm"
         );
 
-        let resolved = Resolved::new(&args, &myna_core::Settings::default());
+        let resolved = Resolved::new(&args, &myna_core::Settings::default(), None);
         let mut factory = make_session(
             &args,
             &LiveSettings::new(&resolved),

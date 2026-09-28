@@ -1,6 +1,5 @@
-//! Client settings: the persisted streaming-mode preference (T047/T048).
-//!
-//! One setting today: [`StreamingMode`] (Streaming | Batch).
+//! Client settings: the persisted dictation preferences under one GSettings
+//! schema.
 //!
 //! ## Where it lives
 //!
@@ -58,7 +57,10 @@ pub const DEFAULT_SILENCE_TIMEOUT_SECS: u32 = 30;
 /// want change notification should hold a [`Store`] instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
-    pub streaming_mode: StreamingMode,
+    /// The user's explicit choice, `None` when the key holds no user value.
+    /// Unset is not "streaming": [`crate::effective_mode`] turns it into the
+    /// backend's default.
+    pub streaming_mode: Option<StreamingMode>,
     /// `None` where the key is empty - "unset" and "" are the same intent, and
     /// GSettings has no null.
     pub language: Option<String>,
@@ -73,7 +75,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            streaming_mode: StreamingMode::default(),
+            streaming_mode: None,
             language: None,
             hud_style: None,
             silence_timeout: DEFAULT_SILENCE_TIMEOUT_SECS,
@@ -83,7 +85,7 @@ impl Default for Settings {
 
 impl Settings {
     /// Read the store. A missing schema or an unreadable backend yields
-    /// defaults (streaming) - a broken settings store must never break
+    /// defaults - a broken settings store must never break
     /// dictation.
     pub fn load() -> Self {
         match Store::open() {
@@ -137,10 +139,14 @@ impl Store {
         }
     }
 
-    /// The persisted preference; an unset key reads the schema default
-    /// (streaming).
-    pub fn streaming_mode(&self) -> StreamingMode {
-        mode_from_nick(self.settings.string(KEY_STREAMING_MODE).as_str()).unwrap_or_default()
+    /// The user's choice, or `None` when the key holds no user value. A
+    /// written value equal to the schema default is still a choice, and a
+    /// value outside the schema enum (the retired `auto`) is none.
+    pub fn streaming_mode(&self) -> Option<StreamingMode> {
+        self.settings
+            .user_value(KEY_STREAMING_MODE)?
+            .str()
+            .and_then(mode_from_nick)
     }
 
     /// A string-valued key, with empty read as absent: a user clearing a field
@@ -379,17 +385,42 @@ mod tests {
     fn settings_persist_across_load() {
         let store = test_store();
         set_mode(&store, StreamingMode::Batch);
-        assert_eq!(store.streaming_mode(), StreamingMode::Batch);
+        assert_eq!(store.streaming_mode(), Some(StreamingMode::Batch));
         set_mode(&store, StreamingMode::Streaming);
-        assert_eq!(store.streaming_mode(), StreamingMode::Streaming);
+        assert_eq!(store.streaming_mode(), Some(StreamingMode::Streaming));
     }
 
-    /// An untouched store reads the schema's own default, so a fresh machine
-    /// streams without anything having to write it first.
+    /// An untouched store holds no choice, so the backend's default applies;
+    /// the no-schema fallback agrees.
     #[test]
-    fn an_unset_key_reads_the_schema_default() {
-        assert_eq!(test_store().streaming_mode(), StreamingMode::Streaming);
-        assert_eq!(Settings::default().streaming_mode, StreamingMode::Streaming);
+    fn an_unset_key_is_no_choice() {
+        assert_eq!(test_store().streaming_mode(), None);
+        assert_eq!(Settings::default().streaming_mode, None);
+    }
+
+    /// Choosing the value that happens to be the schema default is still a
+    /// choice, and only a reset gives it up.
+    #[test]
+    fn the_default_value_written_is_a_choice_until_reset() {
+        let store = test_store();
+        set_mode(&store, StreamingMode::Streaming);
+        assert_eq!(store.streaming_mode(), Some(StreamingMode::Streaming));
+        store.settings.reset(KEY_STREAMING_MODE);
+        assert_eq!(store.streaming_mode(), None);
+    }
+
+    /// The resolver's fallback for an unknown backend is the schema default,
+    /// so the two must not drift.
+    #[test]
+    fn the_unknown_backend_fallback_is_the_schema_default() {
+        let default = test_store()
+            .settings
+            .default_value(KEY_STREAMING_MODE)
+            .expect("the key has a default");
+        assert_eq!(
+            default.str().and_then(mode_from_nick),
+            Some(crate::effective_mode(None, None).mode)
+        );
     }
 
     /// The silence timeout's schema default and the no-schema fallback are
@@ -419,20 +450,15 @@ mod tests {
         let store = test_store();
         for mode in [StreamingMode::Streaming, StreamingMode::Batch] {
             set_mode(&store, mode);
-            assert_eq!(store.streaming_mode(), mode);
+            assert_eq!(store.streaming_mode(), Some(mode));
             assert_eq!(mode_from_nick(mode_nick(mode)), Some(mode));
         }
     }
 
-    /// Where the old JSON store fell back on a malformed file, this falls back
-    /// on a value the schema allows but this build does not know.
+    /// A nick this build does not know is no mode at all, never a guess.
     #[test]
-    fn an_unknown_nick_falls_back_to_the_default() {
+    fn an_unknown_nick_is_no_mode() {
         assert_eq!(mode_from_nick("supersonic"), None);
-        assert_eq!(
-            mode_from_nick("supersonic").unwrap_or_default(),
-            StreamingMode::Streaming
-        );
     }
 
     /// A style retired from the schema can still sit in a user's keyfile, and
@@ -453,17 +479,17 @@ mod tests {
     }
 
     /// `auto` left the schema with the tier gate, but a keyfile written before
-    /// that still holds it; it must read as the default like any other value
+    /// that still holds it; it must read as no choice like any other value
     /// the schema does not know.
     #[test]
-    fn a_streaming_mode_outside_the_schema_reads_the_default() {
+    fn a_streaming_mode_outside_the_schema_is_no_choice() {
         let path =
             std::env::temp_dir().join(format!("myna-streaming-mode-{}.ini", std::process::id()));
         for retired in ["auto", "supersonic"] {
             std::fs::write(&path, format!("[dictation]\nstreaming-mode='{retired}'\n")).unwrap();
             assert_eq!(
                 Settings::from_store(&store_on(&path)).streaming_mode,
-                StreamingMode::Streaming,
+                None,
                 "{retired}"
             );
         }
@@ -506,7 +532,7 @@ mod tests {
         let seen = rx
             .recv_timeout(Duration::from_secs(5))
             .expect("the change is delivered");
-        assert_eq!(seen.streaming_mode, StreamingMode::Batch);
+        assert_eq!(seen.streaming_mode, Some(StreamingMode::Batch));
 
         // Dropping the handle ends the subscription (and joins the thread,
         // which is what would hang here if `quit` had raced `run`).

@@ -87,7 +87,33 @@ impl BackendClient for WsUnixBackend {
 /// `session.created` greeting, send `capabilities.query` as the shape-sniffed
 /// first frame (`transport_ws.py`'s `_SessionHandler.handle`), and return what
 /// comes back. Doesn't open a session, so it can't wake a lazily-loaded model.
+///
+/// Bounded by [`CAPABILITIES_TIMEOUT`]: a wedged backend is an error, not a
+/// hang.
 pub async fn query_capabilities(
+    socket_path: &std::path::Path,
+) -> Result<Capabilities, BackendError> {
+    query_capabilities_within(socket_path, CAPABILITIES_TIMEOUT).await
+}
+
+/// How long [`query_capabilities`] waits. Local socket, answered from the
+/// greeting's loop, so anything near this is a wedged server.
+pub const CAPABILITIES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn query_capabilities_within(
+    socket_path: &std::path::Path,
+    timeout: std::time::Duration,
+) -> Result<Capabilities, BackendError> {
+    tokio::time::timeout(timeout, query_capabilities_unbounded(socket_path))
+        .await
+        .unwrap_or_else(|_| {
+            Err(BackendError::Transport(format!(
+                "no capabilities reply within {timeout:?}"
+            )))
+        })
+}
+
+async fn query_capabilities_unbounded(
     socket_path: &std::path::Path,
 ) -> Result<Capabilities, BackendError> {
     let stream = UnixStream::connect(socket_path)
@@ -232,5 +258,36 @@ fn preview(text: &str) -> String {
     } else {
         let head: String = text.chars().take(max).collect();
         format!("{head}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Accepts and upgrades, then never sends the greeting.
+    async fn wedged_backend(tag: &str) -> (std::path::PathBuf, tokio::task::JoinHandle<()>) {
+        let path =
+            std::env::temp_dir().join(format!("myna-orch-{tag}-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let task = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(tokio_tungstenite::accept_async(stream).await);
+            }
+        });
+        (path, task)
+    }
+
+    #[tokio::test]
+    async fn a_wedged_backend_is_an_error_not_a_hang() {
+        let (path, task) = wedged_backend("wedged").await;
+        let started = std::time::Instant::now();
+        let got = query_capabilities_within(&path, std::time::Duration::from_millis(200)).await;
+        task.abort();
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(got, Err(BackendError::Transport(_))), "{got:?}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 }

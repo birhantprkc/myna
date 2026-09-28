@@ -45,7 +45,8 @@ once; accept it and pick a key. If step 4 misbehaves, jump to
 
 No activation, indicator or preedit flags: packaged, `myna` uses the
 GlobalShortcuts portal, always serves `com.canonical.Myna.Dictation`, and turns
-streaming preedit on whenever `streaming-mode` is `streaming` (the default). See
+streaming preedit on whenever the transcription mode in force is `streaming`:
+your `streaming-mode` if you set one, else the backend's own mode. See
 **Activation** for forcing any of them.
 
 ## The daemon
@@ -233,9 +234,10 @@ session bus is unreachable - so there is no flag to set. `myna --no-dbus`
 forces the notification path for debugging. The experimental GTK `--overlay`
 was removed (T150).
 
-**Preedit**: in-field unstable hypotheses are on exactly when the persisted
-`streaming-mode` is `streaming` (see `client/.kb/runtime-settings.md`) *and*
-the injector has a real preedit region. `myna --preedit` / `myna --no-preedit` force it either way.
+**Preedit**: in-field unstable hypotheses are on exactly when the mode in force
+is `streaming` - your `streaming-mode` if set, else whether the backend streams
+(see `client/.kb/runtime-settings.md`) - *and* the injector has a real preedit
+region. `myna --preedit` / `myna --no-preedit` force it either way.
 
 **Env knobs**: `MYNA_BACKEND_SOCKET`, `MYNA_LANGUAGE`.
 (`MYNA_ACTIVATION` is gone - use `--portal` / `--control` / `--stdin`.)
@@ -257,20 +259,22 @@ The four planes that answer "why is it doing that" used to be four places: the
 persisted values in the settings store, what they resolved to in a journal
 line printed once at startup, the backend socket nowhere at all, and the live
 state on the bus. This prints the composition, including *which* plane won each
-value - flag, settings or built-in - because "I set that and nothing happened"
+value - flag, settings, backend or built-in - because "I set that and nothing happened"
 is the question being asked.
 
 ```
 settings   com.canonical.Myna.Dictation (schema installed)
-  activation      (unset)      -> Portal (packaged)      [built-in]
-  language        (unset)      -> (backend default)      [built-in]
-  hotkey          (unset)      -> (portal default)       [built-in]
-  streaming-mode  streaming    -> preedit true           [settings]
+  activation      (unset)      -> Portal (packaged)        [built-in]
+  language        (unset)      -> (backend default)        [built-in]
+  hotkey          (unset)      -> (portal default)         [built-in]
+  streaming-mode  (unset)      -> batch, preedit false     [backend]
 
 backend
   configured      /var/snap/myna/current/backend/*/provider.env
   provider        myna-whisper
   resolves to     /var/snap/myna/current/backend/provider/myna.sock
+  model           tiny
+  streams         false
 
 daemon     com.canonical.Myna.Dictation
   state           idle
@@ -408,7 +412,7 @@ myna.config reset streaming-mode
 
 | key | values | effect |
 |---|---|---|
-| `streaming-mode` | `streaming` \| `batch` | emission mode, and with it in-field partials |
+| `streaming-mode` | `streaming` \| `batch` | emission mode, and with it in-field partials; unset follows the backend |
 | `language` | any short code | session language hint |
 | `activation` | `auto` \| `portal` \| `control` | how a press reaches the daemon |
 | `hotkey` | `'<Super>d'` | the accelerator offered to the portal |
@@ -417,7 +421,9 @@ The daemon logs what it resolved at every start:
 
 ```shell
 journalctl --user -u snap.myna.myna | grep settings:
-#  settings: activation Portal, language (backend default), hotkey (portal default), preedit true (from streaming-mode Streaming)
+#  settings: activation Portal, language (backend default), hotkey (portal default), preedit true (from streaming-mode Streaming, the schema default while the backend's is unknown)
+#  settings: backend streams -> false
+#  settings: preedit -> false (from streaming-mode Batch, the backend's default)
 ```
 
 Notes:
