@@ -60,7 +60,14 @@ components installed" left of it.
 ## Finishing setup
 
 Leaving the component step makes a backend active and restarts the daemon, so
-the shortcut step finds dictation running. Both snaps share a publisher, so
+the shortcut step finds dictation running. When a re-assessment finds the last
+missing component while the step shows, the step does this by itself: a
+spinner takes the footer status's place, then "All components installed" shows
+for a second and the wizard moves on. Only that transition counts: opening the
+step with everything already installed waits for Next, so a re-run of the
+wizard does not rush past it. Next during the pause moves on at once without
+setting up again; a failed setup shows the error dialog and leaves Next to
+retry. Both snaps share a publisher, so
 snapd's base declaration auto-connects `myna:backend` to the new backend's
 slot and the step only restarts. Otherwise it runs the active-backend switch,
 which costs one polkit prompt: snapd's `manage-interfaces` action is
@@ -90,7 +97,12 @@ caller's app id and grants one only through that dialog. The description
 
 **Control (Noble).** The key is a GNOME custom shortcut to
 `/snap/bin/myna.toggle`, the entry `myna.install-shortcut` writes; this
-application is unconfined and writes it itself. Set Up installs Super+J;
+application is unconfined and writes it itself. Finishing setup installs
+Super+J without asking once the restarted daemon reports `control`, unless
+Myna's entry already has a key or another shortcut holds Super+J: a key the
+user chose is never replaced silently. Under the portal setup binds nothing,
+because only the portal's own dialog may, and the shortcut step's button
+raises it. Set Up installs Super+J;
 Change captures a key in a dialog that:
 
 - takes a chord with Ctrl, Alt or Super, or a lone function or media key, so
