@@ -788,6 +788,7 @@ class ParakeetAdapter:
             input_formats=(PARAKEET_FORMAT,),
             punctuation=True,  # Parakeet v3 emits punctuation + capitalisation
             translation=False,
+            streaming=self._streaming,
         )
 
     async def _load_model(self) -> _ParakeetOnnx:

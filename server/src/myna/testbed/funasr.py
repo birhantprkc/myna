@@ -157,6 +157,7 @@ class FunasrAdapter:
             # woitn decodes the same model to unpunctuated, uncased text.
             punctuation=self._textnorm == "withitn",
             translation=False,
+            streaming=self.streaming,
         )
 
     # ------------------------------------------------------------------

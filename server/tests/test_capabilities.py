@@ -18,6 +18,7 @@ def test_round_trip_preserves_all_fields():
         input_formats=(AudioFormat(16_000, 1, 2),),
         punctuation=True,
         translation=False,
+        streaming=True,
     )
     assert capabilities_from_wire(capabilities_to_wire(caps)) == caps
 
@@ -37,3 +38,15 @@ def test_defaults_are_conservative():
     assert caps.input_formats == (AudioFormat(),)
     assert caps.punctuation is False
     assert caps.translation is False
+    assert caps.streaming is None
+
+
+def test_a_server_predating_streaming_decodes_as_unknown():
+    wire = capabilities_to_wire(Capabilities(models=("whisper-small",)))
+    del wire["streaming"]
+    assert capabilities_from_wire(wire).streaming is None
+
+
+def test_wire_carries_streaming_as_a_plain_boolean():
+    wire = json.loads(json.dumps(capabilities_to_wire(Capabilities(streaming=False))))
+    assert wire["streaming"] is False

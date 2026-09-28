@@ -45,6 +45,9 @@ class Capabilities:
     - ``punctuation``: the model emits punctuation/capitalisation natively.
     - ``translation``: the service can output a language different from the
       input (IE114 ``output-language``).
+    - ``streaming``: the service commits text while audio is still arriving,
+      rather than once the client finishes. ``None`` means unknown: a server
+      that predates the field.
     """
 
     models: tuple[str, ...] = ()
@@ -52,6 +55,7 @@ class Capabilities:
     input_formats: tuple[AudioFormat, ...] = (AudioFormat(),)
     punctuation: bool = False
     translation: bool = False
+    streaming: bool | None = None
 
 
 def capabilities_to_wire(caps: Capabilities) -> dict[str, Any]:

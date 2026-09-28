@@ -116,7 +116,7 @@ mod tests {
                 r#"{"type": "capabilities", "data": {
                     "models": ["parakeet-tdt-0.6b-v2"], "languages": ["*"],
                     "input_formats": [{"sample_rate_hz": 16000, "channels": 1, "sample_width_bytes": 2}],
-                    "punctuation": false, "translation": false}}"#
+                    "punctuation": false, "translation": false, "streaming": null}}"#
             )
         );
     }

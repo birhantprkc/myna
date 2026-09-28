@@ -270,6 +270,7 @@ class FasterWhisperAdapter:
             # Whisper can translate→English, but this adapter doesn't wire
             # output_language to the translate task yet — advertise honestly.
             translation=False,
+            streaming=self._streaming,
         )
 
     def _check_compute_type(self) -> None:

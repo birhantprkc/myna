@@ -77,8 +77,8 @@ class FakeAdapter:
 
     def capabilities(self) -> Capabilities:
         # The fixture pins the discovery surface (T24) without a model: a single
-        # default format, no language/punctuation/translation claims.
-        return Capabilities(models=("fake",))
+        # default format, batch, no language/punctuation/translation claims.
+        return Capabilities(models=("fake",), streaming=False)
 
     async def run_session(
         self,

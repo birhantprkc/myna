@@ -27,6 +27,10 @@ pub struct Capabilities {
     /// The service can output a language different from the input.
     #[serde(default)]
     pub translation: bool,
+    /// The service commits text while audio is still arriving. `None` means
+    /// unknown: a server that predates the field.
+    #[serde(default)]
+    pub streaming: Option<bool>,
 }
 
 fn default_languages() -> Vec<String> {
@@ -45,6 +49,7 @@ impl Default for Capabilities {
             input_formats: default_input_formats(),
             punctuation: false,
             translation: false,
+            streaming: None,
         }
     }
 }
@@ -69,6 +74,24 @@ mod tests {
         assert_eq!(caps.input_formats, vec![AudioFormat::default()]);
         assert!(!caps.punctuation);
         assert!(!caps.translation);
+        assert_eq!(caps.streaming, None);
+    }
+
+    #[test]
+    fn a_server_predating_streaming_parses_as_unknown() {
+        let caps: Capabilities = serde_json::from_value(golden(
+            r#"{"models": ["whisper-small"], "languages": ["*"],
+                "input_formats": [{"sample_rate_hz": 16000, "channels": 1, "sample_width_bytes": 2}],
+                "punctuation": true, "translation": false}"#,
+        ))
+        .unwrap();
+        assert_eq!(caps.streaming, None);
+        assert!(caps.punctuation);
+    }
+
+    #[test]
+    fn unknown_streaming_matches_python_none() {
+        assert_eq!(wire(&Capabilities::default())["streaming"], Value::Null);
     }
 
     #[test]
@@ -79,13 +102,14 @@ mod tests {
             input_formats: vec![AudioFormat::default()],
             punctuation: true,
             translation: false,
+            streaming: Some(true),
         };
         assert_eq!(
             wire(&caps),
             golden(
                 r#"{"models": ["whisper-small"], "languages": ["*"],
                     "input_formats": [{"sample_rate_hz": 16000, "channels": 1, "sample_width_bytes": 2}],
-                    "punctuation": true, "translation": false}"#
+                    "punctuation": true, "translation": false, "streaming": true}"#
             )
         );
     }
@@ -94,6 +118,7 @@ mod tests {
     fn round_trip() {
         let caps = Capabilities {
             models: vec!["parakeet-tdt".into()],
+            streaming: Some(false),
             ..Capabilities::default()
         };
         let decoded: Capabilities = serde_json::from_value(wire(&caps)).unwrap();
