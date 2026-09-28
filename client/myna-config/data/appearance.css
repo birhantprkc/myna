@@ -45,9 +45,10 @@ button.outlined:active {
   font-weight: normal;
 }
 
-/* The install commands on the onboarding component step. */
+/* The install commands on the onboarding component step. A tint of the text
+   colour: Yaru's dark sidebar colour is barely off the window's. */
 .command-block {
-  background-color: @sidebar_bg_color;
+  background-color: alpha(currentColor, 0.05);
   border-radius: 6px;
   padding: 8px;
 }
