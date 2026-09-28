@@ -37,3 +37,4 @@ Only the two configs stayed here:
 | `adapter_coverage.py`, `coverage_populations.py`, `coverage_lib.py`, `gjs_coverage.py`, `patch_cov.py` | Coverage reports and gates behind `make coverage`. |
 | `exercise.sh`, `gated-tests.sh`, `transcribe.py`, `capabilities.py` | Manual drivers for a running server. |
 | `i18n.sh`, `ibus-doctor.sh` | Translation templates, IBus diagnosis. |
+| `purge.sh` | Remove every trace of a Myna install (snaps, snapd flag, shortcuts, dconf, stray files) to test a fresh install; `--deb` also purges myna-config. |

@@ -1,0 +1,146 @@
+#!/bin/bash
+# purge.sh - return a machine to "Myna was never installed", for testing a
+# fresh install and the onboarding wizard end to end.
+#
+# Removes, for the user running it:
+#   - every installed myna* snap, with --purge (data, snapshots, components)
+#   - the `experimental.user-daemons` snapd flag onboarding asks the user to set
+#   - the GNOME custom keybinding myna-config installs where there is no
+#     GlobalShortcuts portal, and the portal's stored grant for myna_myna
+#   - Myna Settings' dconf keys and notification entry
+#   - hand-installed desktop files, icons and a ~/.local shell extension copy
+#   - pre-rename leftovers: /org/myna/ in dconf, ~/.config/myna, and an
+#     unpackaged org.myna.dictation schema
+# The myna-config deb stays unless --deb: it is what a fresh install starts
+# from. ~/.cache/myna (model downloads) always stays.
+#
+#   dev/purge.sh --dry-run   # print what would go
+#   dev/purge.sh             # ask once, then purge
+#   dev/purge.sh --yes --deb # no question; also purge the myna-config deb
+#
+# Log out and back in afterwards: gnome-shell and gsd-media-keys keep the
+# shortcut grabs they already hold until then.
+set -euo pipefail
+
+DRY=0
+YES=0
+DEB=0
+for arg in "$@"; do
+    case $arg in
+        -n | --dry-run) DRY=1 ;;
+        -y | --yes) YES=1 ;;
+        --deb) DEB=1 ;;
+        *)
+            sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'
+            exit 2
+            ;;
+    esac
+done
+
+KEYBINDING=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/myna/
+GLOBAL_SHORTCUTS=/org/gnome/settings-daemon/global-shortcuts/
+PORTAL_APP=myna_myna
+NOTIFICATIONS=/org/gnome/desktop/notifications/
+NOTIFICATION_APP=com-canonical-myna-config
+EXTENSION=myna-shell@canonical.com
+SCHEMA_DIR=/usr/share/glib-2.0/schemas
+LEGACY_SCHEMA=$SCHEMA_DIR/org.myna.dictation.gschema.xml
+
+run() {
+    printf '  %s\n' "$*"
+    [ "$DRY" -eq 1 ] || "$@"
+}
+
+# Print a GVariant string array without one element, or nothing when the
+# element is absent.
+without() {
+    python3 -c '
+import ast, sys
+text, drop = sys.argv[1], sys.argv[2]
+items = ast.literal_eval(text.removeprefix("@as ").strip())
+if drop in items:
+    kept = [item for item in items if item != drop]
+    print(repr(kept) if kept else "@as []")
+' "$1" "$2"
+}
+
+# Drop `value` from the string-array dconf key `key`, if it is there.
+dconf_drop() {
+    local key=$1 value=$2 current next
+    current=$(dconf read "$key")
+    [ -n "$current" ] || return 0
+    next=$(without "$current" "$value")
+    [ -n "$next" ] || return 0
+    run dconf write "$key" "$next"
+}
+
+dconf_reset_dir() {
+    [ -n "$(dconf list "$1" 2>/dev/null)" ] || return 0
+    run dconf reset -f "$1"
+}
+
+remove_path() {
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    run rm -rf "$1"
+}
+
+mapfile -t snaps < <(snap list 2>/dev/null | awk 'NR > 1 && $1 ~ /^myna(-|$)/ { print $1 }')
+# Backends first: removing myna last means its daemon never sees a backend
+# disappear while it is still running.
+mapfile -t snaps < <(printf '%s\n' "${snaps[@]}" | sort -r | grep . || true)
+
+echo "Purging Myna for $(id -un) on $(hostname)$([ "$DRY" -eq 1 ] && echo ' (dry run)'):"
+[ "${#snaps[@]}" -eq 0 ] || echo "  snaps: ${snaps[*]}"
+[ "$DEB" -eq 0 ] || echo "  deb: myna-config"
+if [ "$DRY" -eq 0 ] && [ "$YES" -eq 0 ]; then
+    read -r -p "Continue? [y/N] " answer
+    [ "$answer" = y ] || [ "$answer" = Y ] || exit 1
+fi
+
+echo "processes:"
+pgrep -x myna-config >/dev/null && run pkill -x myna-config
+
+echo "snaps:"
+for snap in "${snaps[@]}"; do
+    run sudo snap remove --purge "$snap"
+done
+# Reading the flag needs root too, and unsetting an unset key is a no-op.
+run sudo snap unset system experimental.user-daemons
+for dir in "$HOME"/snap/myna "$HOME"/snap/myna-*; do
+    remove_path "$dir"
+done
+
+echo "shortcuts:"
+dconf_drop "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings" "$KEYBINDING"
+dconf_reset_dir "$KEYBINDING"
+dconf_drop "${GLOBAL_SHORTCUTS}applications" "$PORTAL_APP"
+dconf_reset_dir "$GLOBAL_SHORTCUTS$PORTAL_APP/"
+
+echo "settings:"
+dconf_reset_dir /com/canonical/myna/
+dconf_reset_dir /org/myna/
+dconf_drop "${NOTIFICATIONS}application-children" "$NOTIFICATION_APP"
+dconf_reset_dir "${NOTIFICATIONS}application/$NOTIFICATION_APP/"
+remove_path "$HOME/.config/myna"
+
+echo "files:"
+remove_path "$HOME/.local/share/applications/com.canonical.Myna.Config.desktop"
+remove_path "$HOME/.local/share/icons/hicolor/scalable/apps/com.canonical.Myna.Config.svg"
+remove_path "$HOME/.local/share/icons/hicolor/scalable/apps/com.canonical.Myna.svg"
+remove_path "$HOME/.local/share/gnome-shell/extensions/$EXTENSION"
+# A packaged copy (gnome-shell-ubuntu-extensions) keeps its enablement.
+if [ ! -e "/usr/share/gnome-shell/extensions/$EXTENSION" ]; then
+    dconf_drop /org/gnome/shell/enabled-extensions "$EXTENSION"
+fi
+if [ -e "$LEGACY_SCHEMA" ] && ! dpkg -S "$LEGACY_SCHEMA" >/dev/null 2>&1; then
+    run sudo rm -f "$LEGACY_SCHEMA"
+    run sudo glib-compile-schemas "$SCHEMA_DIR"
+fi
+
+if [ "$DEB" -eq 1 ] && dpkg -s myna-config >/dev/null 2>&1; then
+    echo "deb:"
+    mapfile -t debs < <(dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'myna-config*' 2>/dev/null | awk '$1 == "ii" { print $2 }')
+    run sudo apt-get purge -y "${debs[@]}"
+fi
+
+echo "done$([ "$DRY" -eq 1 ] && echo ' (dry run, nothing changed)'). Log out and back in before testing."
