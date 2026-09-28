@@ -44,6 +44,11 @@ impl ModelFamily {
     pub fn takes_spoken_language(self) -> bool {
         self == Self::Whisper
     }
+
+    /// The `streaming` value the family's snap installs with.
+    pub fn streams_by_default(self) -> bool {
+        self == Self::Parakeet
+    }
 }
 
 /// The parakeet-tdt-0.6b-v3 card's 25 languages.

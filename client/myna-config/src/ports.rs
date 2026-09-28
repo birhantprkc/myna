@@ -20,6 +20,9 @@ pub trait ClientSettings {
     fn list(&self) -> Result<Vec<ClientSettingMetadata>, ClientSettingsError>;
     fn get(&self, key: &str) -> Result<ClientSettingValue, ClientSettingsError>;
     fn set(&self, key: &str, value: ClientSettingValue) -> Result<(), ClientSettingsError>;
+    /// Whether the store holds a value for `key`, rather than the schema
+    /// default standing in for one.
+    fn has_user_value(&self, key: &str) -> Result<bool, ClientSettingsError>;
     fn subscribe(
         &self,
         callback: ClientSettingsCallback,

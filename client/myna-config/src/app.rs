@@ -1180,14 +1180,19 @@ fn build_settings_window(application: &adw::Application) {
         #[weak]
         window,
         move || {
-            let (myna_page, spoken_language) = match GioClientSettings::open() {
+            let (myna_page, general_settings) = match GioClientSettings::open() {
                 Ok(settings) => {
                     let writer = PersistenceWriter::spawn(GioClientSettings::open);
                     let controller =
                         MynaSettingsController::load(Rc::new(settings) as Rc<dyn ClientSettings>);
                     let spoken_language = crate::backend_ui::spoken_language_group();
-                    let page = build_myna_page(controller, writer, &overlay, &spoken_language);
-                    (page, Some(spoken_language))
+                    let page =
+                        build_myna_page(controller.clone(), writer, &overlay, &spoken_language);
+                    let general = crate::backend_ui::GeneralSettings {
+                        spoken_language,
+                        controller,
+                    };
+                    (page, Some(general))
                 }
                 Err(error) => (error_page(&error.to_string()), None),
             };
@@ -1199,7 +1204,7 @@ fn build_settings_window(application: &adw::Application) {
                 &diagnostics_nav,
                 &overlay,
                 myna_page,
-                spoken_language,
+                general_settings,
                 diagnostics_page,
             );
             ui.install_window_actions(&window);
@@ -2219,18 +2224,19 @@ fn backends_probe() -> glib::ExitCode {
     let diagnostics_nav = window.diagnostics_nav();
     let overlay = window.overlay();
     let spoken_language = crate::backend_ui::spoken_language_group();
-    let myna_page = match GioClientSettings::open() {
-        Ok(settings) => build_myna_page(
-            MynaSettingsController::load(Rc::new(settings) as Rc<dyn ClientSettings>),
-            PersistenceWriter::spawn(GioClientSettings::open),
-            &overlay,
-            &spoken_language,
-        ),
+    let client_settings = match GioClientSettings::open() {
+        Ok(settings) => MynaSettingsController::load(Rc::new(settings) as Rc<dyn ClientSettings>),
         Err(error) => {
             eprintln!("myna-config backends probe could not open the settings store: {error}");
             return glib::ExitCode::FAILURE;
         }
     };
+    let myna_page = build_myna_page(
+        client_settings.clone(),
+        PersistenceWriter::spawn(GioClientSettings::open),
+        &overlay,
+        &spoken_language,
+    );
     general_nav.replace(std::slice::from_ref(&myna_page));
     window.present();
     let general = myna_page.clone().upcast::<gtk::Widget>();
@@ -2246,7 +2252,10 @@ fn backends_probe() -> glib::ExitCode {
         &diagnostics_nav,
         &overlay,
         myna_page,
-        Some(spoken_language),
+        Some(crate::backend_ui::GeneralSettings {
+            spoken_language,
+            controller: client_settings,
+        }),
         status_page("About and Diagnostics", "", "dialog-information-symbolic"),
     );
     ui.install_window_actions(&window);
@@ -2439,6 +2448,28 @@ fn backends_probe() -> glib::ExitCode {
             .iter()
             .any(|operation| operation == &["connect", "myna:backend", "myna-whisper:provider"])
     };
+    // With no choice stored, "When to transcribe" shows what the active
+    // backend does: Parakeet streams, Whisper waits.
+    let mode_row = || {
+        descendants(&general, &|widget| {
+            widget
+                .downcast_ref::<adw::ComboRow>()
+                .is_some_and(|row| row.title() == "When to transcribe")
+        })
+        .into_iter()
+        .next()
+        .and_then(|row| row.downcast::<adw::ComboRow>().ok())
+        .expect("When to transcribe row")
+    };
+    let mode_shown = || {
+        mode_row()
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|item| item.string().to_string())
+            .unwrap_or_default()
+    };
+    let as_you_speak = gettextrs::gettext("As you speak");
+    let when_you_stop = gettextrs::gettext("When you stop");
     if !settles_unasked(&|| connected_whisper() && idle() && chosen() == ["Whisper"]) || asked.get()
     {
         eprintln!(
@@ -2447,6 +2478,10 @@ fn backends_probe() -> glib::ExitCode {
             machine.applied(),
             asked.get()
         );
+        return glib::ExitCode::FAILURE;
+    }
+    if mode_shown() != when_you_stop {
+        eprintln!("with Whisper active the mode shows {:?}", mode_shown());
         return glib::ExitCode::FAILURE;
     }
     if !spinning().is_empty() || insensitive() {
@@ -2481,6 +2516,46 @@ fn backends_probe() -> glib::ExitCode {
     }
     quiesce();
     println!("model-group: choosing a model switches to it");
+    if mode_shown() != as_you_speak {
+        eprintln!("with Parakeet active the mode shows {:?}", mode_shown());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("mode: shows the active backend's default");
+
+    // Picking a mode stores it as the user's own.
+    let stored_choice = || {
+        GioClientSettings::open()
+            .ok()
+            .filter(|settings| {
+                settings
+                    .has_user_value(myna_core::settings::KEY_STREAMING_MODE)
+                    .unwrap_or(false)
+            })
+            .and_then(|settings| settings.get(myna_core::settings::KEY_STREAMING_MODE).ok())
+    };
+    if stored_choice().is_some() {
+        eprintln!("showing the default stored {:?}", stored_choice());
+        return glib::ExitCode::FAILURE;
+    }
+    let row = mode_row();
+    let batch_index = (0..row.model().map_or(0, |model| model.n_items()))
+        .find(|index| {
+            row.model()
+                .and_then(|model| model.item(*index))
+                .and_downcast::<gtk::StringObject>()
+                .is_some_and(|item| item.string() == when_you_stop.as_str())
+        })
+        .expect("a When you stop item");
+    row.set_selected(batch_index);
+    if !settles(&|| stored_choice() == Some(ClientSettingValue::Choice("batch".into()))) {
+        eprintln!("picking When you stop stored {:?}", stored_choice());
+        return glib::ExitCode::FAILURE;
+    }
+    if mode_shown() != when_you_stop {
+        eprintln!("after the choice the mode shows {:?}", mode_shown());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("mode: a choice is stored as the user's");
 
     // A refused switch puts the radio back and says so in a toast whose
     // Details button opens the full report.
@@ -3152,9 +3227,10 @@ fn ready_page(
                     .sensitive(plan.writable)
                     .build();
                 describe(&row, &plan.description);
-                if let Some(index) = setting
-                    .value()
-                    .as_str()
+                if let Some(index) = controller
+                    .shown_value(&plan.key)
+                    .as_ref()
+                    .and_then(ClientSettingValue::as_str)
                     .and_then(|value| plan.choices.iter().position(|choice| choice == value))
                 {
                     row.set_selected(index as u32);
@@ -3355,10 +3431,9 @@ fn ready_page(
                     if let Some(binding) = bindings.borrow().get(&key) {
                         if let Some(controller) = observed_controller.upgrade() {
                             binding.apply(
-                                controller
-                                    .row(&key)
-                                    .expect("event refers to an existing row")
-                                    .value(),
+                                &controller
+                                    .shown_value(&key)
+                                    .expect("event refers to an existing row"),
                                 false,
                             );
                         }

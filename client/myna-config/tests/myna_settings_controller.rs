@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use myna_config::domain::{
@@ -17,6 +17,8 @@ use myna_config::ports::{
 struct FakeSettings {
     rows: RefCell<Vec<ClientSettingMetadata>>,
     values: RefCell<BTreeMap<String, ClientSettingValue>>,
+    /// Keys holding a user value; the rest read their schema default.
+    user_keys: RefCell<BTreeSet<String>>,
     callbacks: RefCell<Vec<ClientSettingsCallback>>,
     writes: RefCell<Vec<(String, ClientSettingValue)>>,
     list_error: RefCell<Option<ClientSettingsError>>,
@@ -39,7 +41,34 @@ impl FakeSettings {
         })
     }
 
+    fn with_user_values(rows: Vec<ClientSettingMetadata>, keys: &[&str]) -> Rc<Self> {
+        let fake = Self::with_rows(rows);
+        fake.user_keys
+            .borrow_mut()
+            .extend(keys.iter().map(|key| key.to_string()));
+        fake
+    }
+
+    /// `myna.config reset <key>`: the user value goes and the default shows.
+    fn external_reset(&self, key: &str) {
+        self.user_keys.borrow_mut().remove(key);
+        let default = self
+            .rows
+            .borrow()
+            .iter()
+            .find(|row| row.key().as_str() == key)
+            .unwrap()
+            .default_value()
+            .clone();
+        self.notify(key, default);
+    }
+
     fn external_change(&self, key: &str, value: ClientSettingValue) {
+        self.user_keys.borrow_mut().insert(key.to_owned());
+        self.notify(key, value);
+    }
+
+    fn notify(&self, key: &str, value: ClientSettingValue) {
         self.values
             .borrow_mut()
             .insert(key.to_owned(), value.clone());
@@ -77,7 +106,12 @@ impl ClientSettings for FakeSettings {
             return Err(error);
         }
         self.values.borrow_mut().insert(key.to_owned(), value);
+        self.user_keys.borrow_mut().insert(key.to_owned());
         Ok(())
+    }
+
+    fn has_user_value(&self, key: &str) -> Result<bool, ClientSettingsError> {
+        Ok(self.user_keys.borrow().contains(key))
     }
 
     fn subscribe(
@@ -503,4 +537,123 @@ fn enum_display_labels_are_extracted_into_the_gettext_template() {
     for label in ["As you speak", "When you stop", "VU meter", "Default"] {
         assert!(pot.contains(&format!("msgid \"{label}\"")), "{label}");
     }
+}
+
+fn batch() -> ClientSettingValue {
+    ClientSettingValue::Choice("batch".into())
+}
+
+fn streaming() -> ClientSettingValue {
+    ClientSettingValue::Choice("streaming".into())
+}
+
+fn shown_mode(controller: &MynaSettingsController) -> ClientSettingValue {
+    controller.shown_value("streaming-mode").unwrap()
+}
+
+#[test]
+fn with_no_choice_the_mode_shown_is_the_backends_default() {
+    let fake = FakeSettings::with_rows(rows());
+    let controller = MynaSettingsController::load(fake.clone());
+    let events = Rc::new(RefCell::new(Vec::new()));
+    controller.observe({
+        let events = events.clone();
+        move |event| events.borrow_mut().push(event)
+    });
+    assert_eq!(shown_mode(&controller), streaming(), "unknown backend");
+
+    controller.set_backend_streams(Some(false));
+    assert_eq!(shown_mode(&controller), batch());
+    assert!(matches!(
+        events.borrow().last(),
+        Some(SettingsEvent::RowChanged { key, value, pending: false })
+            if key == "streaming-mode" && *value == batch()
+    ));
+
+    controller.set_backend_streams(Some(true));
+    assert_eq!(shown_mode(&controller), streaming());
+    assert!(fake.writes.borrow().is_empty(), "displaying wrote a value");
+    assert_eq!(
+        controller.row("streaming-mode").unwrap().value(),
+        &streaming()
+    );
+}
+
+#[test]
+fn a_stored_choice_is_shown_whatever_the_backend() {
+    let fake = FakeSettings::with_user_values(rows(), &["streaming-mode"]);
+    let controller = MynaSettingsController::load(fake);
+    controller.set_backend_streams(Some(false));
+    assert_eq!(shown_mode(&controller), streaming());
+}
+
+#[test]
+fn choosing_writes_a_value_that_outlives_a_backend_switch() {
+    let fake = FakeSettings::with_rows(rows());
+    let controller = MynaSettingsController::load(fake.clone());
+    controller.set_backend_streams(Some(true));
+
+    let request = controller.set("streaming-mode", batch()).unwrap();
+    let result = request.persist(fake.as_ref());
+    controller.complete(request, result);
+    controller.set_backend_streams(Some(false));
+    controller.set_backend_streams(Some(true));
+
+    assert_eq!(
+        fake.writes.borrow().as_slice(),
+        &[("streaming-mode".into(), batch())]
+    );
+    assert_eq!(shown_mode(&controller), batch());
+}
+
+#[test]
+fn a_reset_hands_the_mode_back_to_the_backend() {
+    let mut stored = rows();
+    stored[0] = ClientSettingMetadata::new(
+        ClientSettingKey::new("streaming-mode").unwrap(),
+        None,
+        None,
+        streaming(),
+        SettingRange::Choices(vec!["streaming".into(), "batch".into()]),
+        batch(),
+        true,
+    );
+    let fake = FakeSettings::with_user_values(stored, &["streaming-mode"]);
+    let controller = MynaSettingsController::load(fake.clone());
+    controller.set_backend_streams(Some(true));
+    assert_eq!(shown_mode(&controller), batch());
+
+    fake.external_reset("streaming-mode");
+    assert_eq!(shown_mode(&controller), streaming());
+    controller.set_backend_streams(Some(false));
+    assert_eq!(shown_mode(&controller), batch());
+}
+
+#[test]
+fn a_failed_choice_falls_back_to_the_backends_default() {
+    let fake = FakeSettings::with_rows(rows());
+    *fake.write_error.borrow_mut() = Some(ClientSettingsError::StoreUnavailable {
+        message: "disk is read-only".into(),
+    });
+    let controller = MynaSettingsController::load(fake.clone());
+    controller.set_backend_streams(Some(false));
+
+    let request = controller.set("streaming-mode", streaming()).unwrap();
+    let result = request.persist(fake.as_ref());
+    controller.complete(request, result);
+
+    assert_eq!(shown_mode(&controller), batch());
+    controller.set_backend_streams(Some(true));
+    assert_eq!(shown_mode(&controller), streaming());
+}
+
+#[test]
+fn only_the_mode_follows_the_backend() {
+    let fake = FakeSettings::with_rows(rows());
+    let controller = MynaSettingsController::load(fake);
+    controller.set_backend_streams(Some(false));
+    assert_eq!(
+        controller.shown_value("language").unwrap(),
+        ClientSettingValue::Text(String::new())
+    );
 }

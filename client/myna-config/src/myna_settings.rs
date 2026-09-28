@@ -1,10 +1,13 @@
 //! GTK-independent state and behavior for the Myna preferences page.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+
+use myna_core::settings::KEY_STREAMING_MODE;
+use myna_core::{effective_mode, StreamingMode};
 
 use crate::domain::{ClientSettingMetadata, ClientSettingValue, SettingRange};
 use crate::ports::{ClientSettings, ClientSettingsError, ClientSettingsSubscription};
@@ -147,6 +150,8 @@ pub struct SettingRow {
     metadata: ClientSettingMetadata,
     value: ClientSettingValue,
     pending: bool,
+    /// The store holds a value rather than falling back to the default.
+    user_set: bool,
 }
 
 impl SettingRow {
@@ -343,6 +348,7 @@ pub struct MynaSettingsController {
     observed_echoes: RefCell<BTreeMap<String, u64>>,
     expected_echoes: RefCell<BTreeMap<String, Vec<ClientSettingValue>>>,
     observers: RefCell<Vec<Observer>>,
+    backend_streams: Cell<Option<bool>>,
     _subscription: RefCell<Option<Box<dyn ClientSettingsSubscription>>>,
 }
 
@@ -356,6 +362,7 @@ impl MynaSettingsController {
             observed_echoes: RefCell::new(BTreeMap::new()),
             expected_echoes: RefCell::new(BTreeMap::new()),
             observers: RefCell::new(Vec::new()),
+            backend_streams: Cell::new(None),
             _subscription: RefCell::new(None),
         });
 
@@ -365,6 +372,7 @@ impl MynaSettingsController {
                 rows.into_iter()
                     .map(|metadata| SettingRow {
                         value: metadata.current_value().clone(),
+                        user_set: controller.user_set_in_store(metadata.key().as_str()),
                         metadata,
                         pending: false,
                     })
@@ -406,6 +414,32 @@ impl MynaSettingsController {
         .flatten()
     }
 
+    /// What the row shows: the stored value, except that `streaming-mode`
+    /// without a user value shows what the active backend does by default,
+    /// resolved as the daemon resolves it.
+    pub fn shown_value(&self, key: &str) -> Option<ClientSettingValue> {
+        let row = self.row(key)?;
+        if key != KEY_STREAMING_MODE || row.user_set {
+            return Some(row.value);
+        }
+        let nick = match effective_mode(None, self.backend_streams.get()).mode {
+            StreamingMode::Streaming => "streaming",
+            StreamingMode::Batch => "batch",
+        };
+        Some(ClientSettingValue::Choice(nick.to_owned()))
+    }
+
+    /// Whether the active backend streams by default, `None` when there is
+    /// no single active backend.
+    pub fn set_backend_streams(&self, streams: Option<bool>) {
+        if self.backend_streams.replace(streams) == streams {
+            return;
+        }
+        if let Some(row) = self.row(KEY_STREAMING_MODE) {
+            self.emit_shown(KEY_STREAMING_MODE, row.pending);
+        }
+    }
+
     pub fn observe(&self, observer: impl Fn(SettingsEvent) + 'static) {
         self.observers.borrow_mut().push(Box::new(observer));
     }
@@ -423,6 +457,7 @@ impl MynaSettingsController {
             })?
             .value;
         let (revision, gate) = self.next_revision(key);
+        self.set_user_set(key, true);
         self.update_row(key, value.clone(), true);
         Ok(PersistenceRequest {
             key: key.to_owned(),
@@ -462,6 +497,7 @@ impl MynaSettingsController {
             }
             Ok(PersistenceCompletion::Superseded) => {}
             Err(error) => {
+                self.set_user_set(&request.key, self.user_set_in_store(&request.key));
                 self.update_row(&request.key, request.rollback_value(), false);
                 self.emit(SettingsEvent::SaveFailed {
                     key: request.key,
@@ -498,6 +534,7 @@ impl MynaSettingsController {
             if let Ok(mut persisted) = gate.persisted.lock() {
                 *persisted = value.clone();
             }
+            self.set_user_set(key, self.user_set_in_store(key));
             self.update_row(key, value, false);
         }
     }
@@ -551,14 +588,36 @@ impl MynaSettingsController {
                 .iter_mut()
                 .find(|row| row.metadata.key().as_str() == key)
             {
-                row.value = value.clone();
+                row.value = value;
                 row.pending = pending;
             }
         });
-        self.emit(SettingsEvent::RowChanged {
-            key: key.to_owned(),
-            value,
-            pending,
+        self.emit_shown(key, pending);
+    }
+
+    fn emit_shown(&self, key: &str, pending: bool) {
+        if let Some(value) = self.shown_value(key) {
+            self.emit(SettingsEvent::RowChanged {
+                key: key.to_owned(),
+                value,
+                pending,
+            });
+        }
+    }
+
+    /// An unreadable answer counts as set, so the row shows what is stored.
+    fn user_set_in_store(&self, key: &str) -> bool {
+        self.settings.has_user_value(key).unwrap_or(true)
+    }
+
+    fn set_user_set(&self, key: &str, user_set: bool) {
+        self.with_rows_mut(|rows| {
+            if let Some(row) = rows
+                .iter_mut()
+                .find(|row| row.metadata.key().as_str() == key)
+            {
+                row.user_set = user_set;
+            }
         });
     }
 

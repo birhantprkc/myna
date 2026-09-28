@@ -39,7 +39,7 @@ pub use events::{
     Disposition, ErrorData, Progress, Segment, StreamingMode, TranscriptionEvent,
     TranscriptionFinal, WireError, PHASE_PREPARING, PHASE_READY, PHASE_TRANSCRIBING,
 };
-pub use mode::{effective_mode, EffectiveMode, ModeSource};
+pub use mode::{effective_mode, streams_by_default, EffectiveMode, ModeSource};
 pub use protocol::PROTOCOL_VERSION;
 pub use session::SessionConfig;
 pub use settings::{Settings, SettingsWatch};

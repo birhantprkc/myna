@@ -51,6 +51,15 @@ pub fn effective_mode(user: Option<StreamingMode>, backend_streams: Option<bool>
     }
 }
 
+/// Whether a backend snap streams when nobody set its engine's `streaming`,
+/// for Settings, which has no socket to ask. Its installer's default, so it
+/// matches `Capabilities.streaming` until someone overrides the engine by
+/// hand. A snap Myna does not know is taken as batch, like the fake backend.
+pub fn streams_by_default(snap_name: &str) -> bool {
+    crate::language::ModelFamily::from_snap_name(snap_name)
+        .is_some_and(crate::language::ModelFamily::streams_by_default)
+}
+
 impl fmt::Display for EffectiveMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mode = self.mode;
@@ -114,6 +123,14 @@ mod tests {
                 source: ModeSource::Unknown
             }
         );
+    }
+
+    #[test]
+    fn only_parakeet_streams_out_of_the_box() {
+        assert!(streams_by_default("myna-parakeet"));
+        assert!(!streams_by_default("myna-whisper"));
+        assert!(!streams_by_default("myna-funasr"));
+        assert!(!streams_by_default("myna-fake-backend"));
     }
 
     #[test]

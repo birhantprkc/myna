@@ -293,6 +293,9 @@ pub struct BackendUi {
     /// The spoken-language row's group, built with General's rows and shown
     /// on the Model tab while the active backend takes it.
     spoken_language: Option<adw::PreferencesGroup>,
+    /// General's settings, told what the active backend does by default so
+    /// "When to transcribe" can show it.
+    client_settings: Option<Rc<crate::myna_settings::MynaSettingsController>>,
     /// The General tab's model rows and the backend each one chooses.
     model_rows: RefCell<Vec<ModelRow>>,
     /// Never shown. GTK draws a check button as a radio only while it is in a
@@ -422,6 +425,12 @@ fn abandon_all_apply_state(
     }
 }
 
+/// General's GSettings rows that follow the connected backend.
+pub struct GeneralSettings {
+    pub spoken_language: adw::PreferencesGroup,
+    pub controller: Rc<crate::myna_settings::MynaSettingsController>,
+}
+
 impl BackendUi {
     pub fn install(
         view_stack: &adw::ViewStack,
@@ -429,7 +438,7 @@ impl BackendUi {
         diagnostics_nav: &adw::NavigationView,
         overlay: &adw::ToastOverlay,
         myna_page: adw::NavigationPage,
-        spoken_language: Option<adw::PreferencesGroup>,
+        general_settings: Option<GeneralSettings>,
         diagnostics_page: adw::NavigationPage,
     ) -> Rc<Self> {
         let repository: Rc<dyn BackendRepository> =
@@ -444,7 +453,7 @@ impl BackendUi {
             diagnostics_nav,
             overlay,
             myna_page,
-            spoken_language,
+            general_settings,
             diagnostics_page,
         );
         ui.read_preferred_languages(|| {
@@ -462,10 +471,13 @@ impl BackendUi {
         diagnostics_nav: &adw::NavigationView,
         overlay: &adw::ToastOverlay,
         myna_page: adw::NavigationPage,
-        spoken_language: Option<adw::PreferencesGroup>,
+        general_settings: Option<GeneralSettings>,
         diagnostics_page: adw::NavigationPage,
     ) -> Rc<Self> {
         let controller = BackendController::new(repository);
+        let (spoken_language, client_settings) = general_settings
+            .map(|settings| (settings.spoken_language, settings.controller))
+            .unzip();
         let myna_selector = myna_page.downcast::<ui::MynaPage>().ok();
         let operation_coordinator = OperationCoordinator::new();
         diagnostics_nav.replace(std::slice::from_ref(&diagnostics_page));
@@ -483,6 +495,7 @@ impl BackendUi {
             overlay: overlay.clone(),
             myna_selector,
             spoken_language,
+            client_settings,
             active_backend: ActiveBackendController::with_coordinator(
                 crate::domain::ConnectionSnapshot::new(
                     Vec::new(),
@@ -638,7 +651,20 @@ impl BackendUi {
         self.sync_backend_tab();
     }
 
+    fn sync_backend_streams(&self) {
+        let Some(settings) = &self.client_settings else {
+            return;
+        };
+        settings.set_backend_streams(match self.active_backend.snapshot().active_state() {
+            ActiveBackendState::Connected(identity) => {
+                Some(myna_core::streams_by_default(identity.snap_name()))
+            }
+            _ => None,
+        });
+    }
+
     fn render_model_group(&self) {
+        self.sync_backend_streams();
         let Some(page) = self.myna_selector.as_ref() else {
             return;
         };
@@ -3027,6 +3053,7 @@ mod tests {
             overlay: adw::ToastOverlay::new(),
             myna_selector,
             spoken_language,
+            client_settings: None,
             active_backend: ActiveBackendController::with_coordinator(
                 crate::domain::ConnectionSnapshot::new(
                     Vec::new(),

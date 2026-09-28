@@ -98,6 +98,29 @@ fn enumerates_the_real_schema_and_its_metadata() {
 }
 
 #[test]
+fn a_value_equal_to_the_default_still_counts_as_the_users() {
+    let files = TestFiles::new("user-value");
+    let adapter = open_adapter(&files);
+    assert!(!adapter.has_user_value("streaming-mode").unwrap());
+
+    adapter
+        .set(
+            "streaming-mode",
+            ClientSettingValue::Choice("streaming".into()),
+        )
+        .unwrap();
+    assert!(adapter.has_user_value("streaming-mode").unwrap());
+    assert!(open_adapter(&files)
+        .has_user_value("streaming-mode")
+        .unwrap());
+    assert!(!adapter.has_user_value("hud-style").unwrap());
+    assert!(matches!(
+        adapter.has_user_value("no-such-key"),
+        Err(ClientSettingsError::UnknownKey { .. })
+    ));
+}
+
+#[test]
 fn every_real_schema_key_round_trips_in_the_private_keyfile() {
     let files = TestFiles::new("round-trip");
     let adapter = open_adapter(&files);

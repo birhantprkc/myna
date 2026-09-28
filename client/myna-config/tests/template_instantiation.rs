@@ -400,6 +400,8 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
             "DBUS_SESSION_BUS_ADDRESS",
             "unix:path=/nonexistent/myna-config-probe",
         )
+        // The probe writes a choice; keep it out of the live snap store.
+        .env("SNAP_USER_COMMON", &store)
         .env("MYNA_CONFIG_BACKENDS_TEST", "1")
         .output()
         .expect("run backends probe");
@@ -414,6 +416,8 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
         "model-group: a pending switch spins on its target",
         "model-group: choosing a model switches to it",
         "model-group: a refused switch reverts with a toast",
+        "mode: shows the active backend's default",
+        "mode: a choice is stored as the user's",
         "backend-snapshot: read",
         "backend-edit: staged",
         "backend-apply: read back",

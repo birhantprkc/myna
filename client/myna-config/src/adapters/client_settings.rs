@@ -140,6 +140,11 @@ impl ClientSettings for GioClientSettings {
         Ok(())
     }
 
+    fn has_user_value(&self, key: &str) -> Result<bool, ClientSettingsError> {
+        self.schema_key(key)?;
+        Ok(self.settings.user_value(key).is_some())
+    }
+
     fn subscribe(
         &self,
         callback: ClientSettingsCallback,
