@@ -517,6 +517,51 @@ fn onboarding_probe() -> glib::ExitCode {
     window.close();
     settle_gtk();
 
+    // Components installed while the step shows are found without the
+    // window ever losing focus, and the looking stops once they are.
+    let machine = ProbeMachine::bare();
+    let window = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine::default()),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    machine.install();
+    let found = || installed_status(&window) == Some(true);
+    for _ in 0..100 {
+        if found() {
+            break;
+        }
+        settle_gtk();
+    }
+    if !found() || step(&window) != "components" {
+        eprintln!("components installed while the step showed were never found");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-poll: found without focus");
+    let reads = machine.reads();
+    for _ in 0..5 {
+        settle_gtk();
+    }
+    if machine.reads() != reads {
+        eprintln!("the component step kept polling once everything was found");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-poll: stopped once found");
+    window.close();
+    settle_gtk();
+
     // A machine whose snaps cannot be read fails to finish setting up, says
     // so, and stays on the component step.
     let installed = [crate::diagnostics::InstalledSnap {
@@ -1387,6 +1432,8 @@ struct ProbeMachine {
     configuration: std::sync::Arc<std::sync::Mutex<BTreeMap<String, String>>>,
     applied: std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>,
     reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Nothing is installed yet: every `snap` read fails, as on a bare machine.
+    bare: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ProbeMachine {
@@ -1400,7 +1447,21 @@ impl ProbeMachine {
             configuration: std::sync::Arc::new(std::sync::Mutex::new(configuration)),
             applied: std::sync::Arc::default(),
             reads: std::sync::Arc::default(),
+            bare: std::sync::Arc::default(),
         }
+    }
+
+    /// The machine before the user pastes the install commands.
+    fn bare() -> Self {
+        let machine = Self::new();
+        machine
+            .bare
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        machine
+    }
+
+    fn install(&self) {
+        self.bare.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn reads(&self) -> usize {
@@ -1412,6 +1473,9 @@ impl ProbeMachine {
     }
 
     fn snap(&self, arguments: &[&str]) -> Option<String> {
+        if self.bare.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
         let fixture = |text: &str| Some(text.to_owned());
         match arguments {
             ["list", "--unicode=never"] => fixture(

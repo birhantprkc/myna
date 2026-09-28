@@ -181,6 +181,8 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-commands: the block copies all three",
         "onboarding-rows: none",
         "onboarding-refresh: re-read on focus",
+        "onboarding-poll: found without focus",
+        "onboarding-poll: stopped once found",
         "onboarding-setup-failure: reported",
         "onboarding-installed: shown in the footer",
         "onboarding-setup: restarted the daemon",

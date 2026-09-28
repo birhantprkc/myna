@@ -114,6 +114,13 @@ pub fn can_advance(step: Step, components: &[Component]) -> bool {
     }
 }
 
+/// Whether the step re-reads the machine on its own. The component step does
+/// while something is missing: the user installs in another window, which the
+/// wizard may never lose focus to.
+pub fn polls(step: Step, components: &[Component]) -> bool {
+    step == Step::Components && needs_onboarding(components)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +156,16 @@ mod tests {
         assert!(!can_advance(Step::Components, &model_missing));
         let ready = assess(Machine::new(&[snap("myna")], 1));
         assert!(can_advance(Step::Components, &ready));
+    }
+
+    #[test]
+    fn only_the_component_step_polls_and_only_while_something_is_missing() {
+        let bare = assess(Machine::default());
+        let ready = assess(Machine::new(&[snap("myna")], 1));
+        assert!(polls(Step::Components, &bare));
+        assert!(!polls(Step::Components, &ready));
+        assert!(!polls(Step::Welcome, &bare));
+        assert!(!polls(Step::Shortcut, &bare));
     }
 
     #[test]

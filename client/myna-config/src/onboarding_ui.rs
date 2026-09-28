@@ -8,6 +8,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gtk::glib;
 use gtk4 as gtk;
@@ -19,10 +20,15 @@ use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::onboarding::{
-    assess, can_advance, needs_onboarding, Component, Machine, Step, RECOMMENDED_BACKEND_SNAP,
+    assess, can_advance, needs_onboarding, polls, Component, Machine, Step,
+    RECOMMENDED_BACKEND_SNAP,
 };
 use crate::ports::{BackendRepository, SystemConfigurator};
 use crate::ui;
+
+/// How often the component step re-reads the machine while something is
+/// missing: one `snap list` and one discovery each time.
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 pub struct OnboardingUi {
     window: ui::OnboardingWindow,
@@ -32,6 +38,9 @@ pub struct OnboardingUi {
     step: Cell<Step>,
     components: RefCell<Vec<Component>>,
     busy: Cell<bool>,
+    assessing: Cell<bool>,
+    poll_interval: Cell<Duration>,
+    poll: RefCell<Option<glib::SourceId>>,
     finished: RefCell<Option<Box<dyn Fn()>>>,
 }
 
@@ -105,6 +114,9 @@ impl OnboardingUi {
             step: Cell::new(Step::first()),
             components: RefCell::new(initial),
             busy: Cell::new(false),
+            assessing: Cell::new(false),
+            poll_interval: Cell::new(POLL_INTERVAL),
+            poll: RefCell::new(None),
             finished: RefCell::new(Some(finished)),
         });
 
@@ -175,8 +187,11 @@ impl OnboardingUi {
 
     /// Re-read the machine and re-render. Costs one `snap list` and one
     /// discovery, and runs when the window regains focus on the component
-    /// step.
+    /// step and while that step polls.
     fn refresh_assessment(self: &Rc<Self>) {
+        if self.assessing.replace(true) {
+            return;
+        }
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
         glib::spawn_future_local(async move {
@@ -184,6 +199,7 @@ impl OnboardingUi {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
+            ui.assessing.set(false);
             ui.components.replace(components);
             ui.render();
         });
@@ -238,6 +254,11 @@ impl OnboardingUi {
         });
     }
 
+    /// The probe polls faster than a person needs.
+    pub fn set_poll_interval(&self, interval: Duration) {
+        self.poll_interval.set(interval);
+    }
+
     /// The widgets the headless probe drives the wizard through. It holds
     /// these and drops the controller, the way the application does.
     pub fn window(&self) -> ui::OnboardingWindow {
@@ -276,11 +297,43 @@ impl OnboardingUi {
         self.window
             .installed_status()
             .set_visible(step == Step::Components && !needs_onboarding(&components));
+        self.watch(!self.busy.get() && polls(step, &components));
+    }
+
+    /// Start or stop the component step's poll.
+    fn watch(self: &Rc<Self>, wanted: bool) {
+        let mut poll = self.poll.borrow_mut();
+        if !wanted {
+            if let Some(source) = poll.take() {
+                source.remove();
+            }
+            return;
+        }
+        if poll.is_none() {
+            let ui = Rc::downgrade(self);
+            *poll = Some(glib::timeout_add_local(
+                self.poll_interval.get(),
+                move || {
+                    if let Some(ui) = ui.upgrade() {
+                        ui.refresh_assessment();
+                    }
+                    glib::ControlFlow::Continue
+                },
+            ));
+        }
     }
 
     fn report_failure(self: &Rc<Self>, title: &str, details: &str) {
         let dialog = ui::OperationErrorDialog::new(title, title, details);
         dialog.present(Some(&self.window));
+    }
+}
+
+impl Drop for OnboardingUi {
+    fn drop(&mut self) {
+        if let Some(source) = self.poll.take() {
+            source.remove();
+        }
     }
 }
 

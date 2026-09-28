@@ -13,15 +13,17 @@ Startup additionally pays one startup-sized assessment before any window
 exists, to decide between the settings window and the onboarding wizard
 (`docs/onboarding.md`). The result is handed to the wizard rather than
 re-read there. The wizard re-assesses, at the same cost, each time it regains
-focus on its component step, because the user installs in another window.
+focus on its component step, and every 2 s while that step shows and something
+is still missing, because the user installs in another window that the wizard
+may never lose focus to.
 
 Every discovery also runs the CPU clock probe (`docs/performance-warnings.md`)
 on the blocking pool. It is a thread, not a process, so it is outside the
 budget above; it loads one core for 300 ms per frequency class and finishes
 before the snapd reads it runs alongside.
 
-There is **no background poll**. Refreshes are triggered by (a) startup, (b) selecting the Backend or Diagnostics tab,
-(c) a user tap on the diagnostics *Refresh* button, and (d) explicit
+Apart from that step there is **no background poll**. Refreshes are triggered
+by (a) startup, (b) selecting the Backend or Diagnostics tab, (c) a user tap on the diagnostics *Refresh* button, and (d) explicit
 apply/switch operations. User-initiated diagnostics refreshes are debounced by
 `diagnostics::REFRESH_DEBOUNCE` (250 ms).
 

@@ -52,7 +52,8 @@ is a working backend: the install hook selects an engine, and selecting one
 installs its model component.
 
 The installs happen in another window, so the component step re-assesses the
-machine whenever the wizard regains focus. Next stays insensitive until both
+machine whenever the wizard regains focus, and every 2 s while something is
+missing: a terminal beside the wizard may never take its focus. Next stays insensitive until both
 components are found; then the footer shows a success checkmark and "All
 components installed" left of it.
 
@@ -109,5 +110,6 @@ The startup assessment is the same two subprocesses as a startup
 refresh, run before any window exists, and it is handed to the wizard rather
 than repeated there. The shortcut proxy spawns nothing: it is one D-Bus match
 per surface. Regaining focus on the component step costs another `snap list`
-plus a discovery. Reopening the wizard from the menu costs one assessment, and
-closing it one startup-sized refresh of the settings window.
+plus a discovery, and so does each poll while a component is missing.
+Reopening the wizard from the menu costs one assessment, and closing it one
+startup-sized refresh of the settings window.
