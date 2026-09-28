@@ -12,7 +12,7 @@ use crate::adapters::client_settings::GioClientSettings;
 use crate::domain::ClientSettingValue;
 use crate::myna_settings::{
     choice_display_label, widget_plan, DebouncedTextCommit, MynaSettingsController, PageState,
-    PersistenceRequest, PersistenceWriter, SettingRow, SettingsEvent, WidgetKind,
+    PersistenceRequest, PersistenceWriter, Placement, SettingRow, SettingsEvent, WidgetKind,
 };
 use crate::onboarding::needs_onboarding;
 use crate::ports::{ClientSettings, ClientSettingsError};
@@ -1180,14 +1180,16 @@ fn build_settings_window(application: &adw::Application) {
         #[weak]
         window,
         move || {
-            let myna_page = match GioClientSettings::open() {
+            let (myna_page, spoken_language) = match GioClientSettings::open() {
                 Ok(settings) => {
                     let writer = PersistenceWriter::spawn(GioClientSettings::open);
                     let controller =
                         MynaSettingsController::load(Rc::new(settings) as Rc<dyn ClientSettings>);
-                    build_myna_page(controller, writer, &overlay)
+                    let spoken_language = crate::backend_ui::spoken_language_group();
+                    let page = build_myna_page(controller, writer, &overlay, &spoken_language);
+                    (page, Some(spoken_language))
                 }
-                Err(error) => error_page(&error.to_string()),
+                Err(error) => (error_page(&error.to_string()), None),
             };
             general_nav.replace(std::slice::from_ref(&myna_page));
 
@@ -1197,6 +1199,7 @@ fn build_settings_window(application: &adw::Application) {
                 &diagnostics_nav,
                 &overlay,
                 myna_page,
+                spoken_language,
                 diagnostics_page,
             );
             ui.install_window_actions(&window);
@@ -1312,8 +1315,10 @@ fn typing_probe() -> glib::ExitCode {
         eprintln!("myna-config typing probe found no settings rows");
         return glib::ExitCode::FAILURE;
     };
-    let page = ready_page(controller, writer, rows, &overlay);
-    overlay.set_child(Some(&page));
+    // The only text row is the spoken language, which the Model tab shows.
+    let model_settings = adw::PreferencesGroup::new();
+    let _page = ready_page(controller, writer, rows, &overlay, &model_settings);
+    overlay.set_child(Some(&model_settings));
     let window = adw::Window::builder().content(&overlay).build();
     window.present();
     settle_gtk();
@@ -1683,7 +1688,13 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
         eprintln!("myna-config shortcut probe found no settings rows");
         return glib::ExitCode::FAILURE;
     };
-    let page = ready_page(controller, writer, rows, &overlay);
+    let page = ready_page(
+        controller,
+        writer,
+        rows,
+        &overlay,
+        &adw::PreferencesGroup::new(),
+    );
     let Ok(myna) = page.clone().downcast::<ui::MynaPage>() else {
         eprintln!("the settings page is not the Myna page");
         return glib::ExitCode::FAILURE;
@@ -2207,11 +2218,13 @@ fn backends_probe() -> glib::ExitCode {
     let backend_nav = window.backend_nav();
     let diagnostics_nav = window.diagnostics_nav();
     let overlay = window.overlay();
+    let spoken_language = crate::backend_ui::spoken_language_group();
     let myna_page = match GioClientSettings::open() {
         Ok(settings) => build_myna_page(
             MynaSettingsController::load(Rc::new(settings) as Rc<dyn ClientSettings>),
             PersistenceWriter::spawn(GioClientSettings::open),
             &overlay,
+            &spoken_language,
         ),
         Err(error) => {
             eprintln!("myna-config backends probe could not open the settings store: {error}");
@@ -2233,6 +2246,7 @@ fn backends_probe() -> glib::ExitCode {
         &diagnostics_nav,
         &overlay,
         myna_page,
+        Some(spoken_language),
         status_page("About and Diagnostics", "", "dialog-information-symbolic"),
     );
     ui.install_window_actions(&window);
@@ -2937,10 +2951,13 @@ fn settle_gtk() {
     }
 }
 
+/// Rows placed with the active model go into `model_settings`, which the
+/// Model tab shows.
 fn build_myna_page(
     controller: Rc<MynaSettingsController>,
     writer: PersistenceWriter,
     overlay: &adw::ToastOverlay,
+    model_settings: &adw::PreferencesGroup,
 ) -> adw::NavigationPage {
     match controller.state() {
         PageState::Loading => status_page(
@@ -2954,7 +2971,7 @@ fn build_myna_page(
             "edit-clear-all-symbolic",
         ),
         PageState::Error(message) => error_page(&message),
-        PageState::Ready(rows) => ready_page(controller, writer, rows, overlay),
+        PageState::Ready(rows) => ready_page(controller, writer, rows, overlay, model_settings),
     }
 }
 
@@ -3090,6 +3107,7 @@ fn ready_page(
     writer: PersistenceWriter,
     rows: Vec<SettingRow>,
     overlay: &adw::ToastOverlay,
+    model_settings: &adw::PreferencesGroup,
 ) -> adw::NavigationPage {
     let page = ui::MynaPage::new();
     crate::shortcut_ui::ShortcutControl::attach(
@@ -3102,11 +3120,23 @@ fn ready_page(
             move |state, _| row.set_subtitle(&crate::shortcut_ui::row_subtitle(state))
         }),
     );
-    let group = page.settings_group();
+    let dictation = page.settings_group();
     let bindings = Rc::new(RefCell::new(BTreeMap::<String, RowBinding>::new()));
 
     for setting in rows {
         let plan = widget_plan(setting.metadata());
+        let group = match plan.placement {
+            Placement::Dictation => &dictation,
+            Placement::ActiveModel => model_settings,
+        };
+        let widget_name = (plan.placement == Placement::ActiveModel)
+            .then(|| crate::backend_ui::client_setting_widget_name(&plan.key));
+        let add = |row: &gtk::Widget| {
+            if let Some(name) = &widget_name {
+                row.set_widget_name(name);
+            }
+            group.add(row);
+        };
         match plan.kind {
             WidgetKind::Choice => {
                 let display_labels: Vec<_> = plan
@@ -3162,7 +3192,7 @@ fn ready_page(
                         updating,
                     },
                 );
-                group.add(&row);
+                add(row.upcast_ref());
             }
             WidgetKind::Number => {
                 let (minimum, maximum) = plan.bounds.expect("Number plans carry bounds");
@@ -3197,7 +3227,7 @@ fn ready_page(
                         updating,
                     },
                 );
-                group.add(&row);
+                add(row.upcast_ref());
             }
             WidgetKind::Text => {
                 let row = adw::EntryRow::builder()
@@ -3286,7 +3316,7 @@ fn ready_page(
                         writer: writer.clone(),
                     },
                 );
-                group.add(&row);
+                add(row.upcast_ref());
             }
         }
     }

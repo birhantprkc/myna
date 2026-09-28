@@ -290,6 +290,9 @@ pub struct BackendUi {
     diagnostics_nav: adw::NavigationView,
     overlay: adw::ToastOverlay,
     myna_selector: Option<ui::MynaPage>,
+    /// The spoken-language row's group, built with General's rows and shown
+    /// on the Model tab while the active backend takes it.
+    spoken_language: Option<adw::PreferencesGroup>,
     /// The General tab's model rows and the backend each one chooses.
     model_rows: RefCell<Vec<ModelRow>>,
     /// Never shown. GTK draws a check button as a radio only while it is in a
@@ -426,6 +429,7 @@ impl BackendUi {
         diagnostics_nav: &adw::NavigationView,
         overlay: &adw::ToastOverlay,
         myna_page: adw::NavigationPage,
+        spoken_language: Option<adw::PreferencesGroup>,
         diagnostics_page: adw::NavigationPage,
     ) -> Rc<Self> {
         let repository: Rc<dyn BackendRepository> =
@@ -440,6 +444,7 @@ impl BackendUi {
             diagnostics_nav,
             overlay,
             myna_page,
+            spoken_language,
             diagnostics_page,
         );
         ui.read_preferred_languages(|| {
@@ -457,6 +462,7 @@ impl BackendUi {
         diagnostics_nav: &adw::NavigationView,
         overlay: &adw::ToastOverlay,
         myna_page: adw::NavigationPage,
+        spoken_language: Option<adw::PreferencesGroup>,
         diagnostics_page: adw::NavigationPage,
     ) -> Rc<Self> {
         let controller = BackendController::new(repository);
@@ -476,6 +482,7 @@ impl BackendUi {
             diagnostics_nav: diagnostics_nav.clone(),
             overlay: overlay.clone(),
             myna_selector,
+            spoken_language,
             active_backend: ActiveBackendController::with_coordinator(
                 crate::domain::ConnectionSnapshot::new(
                     Vec::new(),
@@ -1417,8 +1424,32 @@ impl BackendUi {
                 gettextrs::gettext("Choose a single backend on the General tab to make it active."),
             ),
         };
+        self.detach_spoken_language();
         let page = model_status_page(&title, &description, "audio-x-generic-symbolic");
         self.backend_nav.replace(&[page]);
+    }
+
+    /// Moves the spoken-language group onto `preferences`, the shown
+    /// backend's page, when `snap_name`'s family takes it.
+    fn place_spoken_language(&self, preferences: &adw::PreferencesPage, snap_name: &str) {
+        self.detach_spoken_language();
+        let takes = myna_core::language::ModelFamily::from_snap_name(snap_name)
+            .is_some_and(|family| family.takes_spoken_language());
+        if let (true, Some(group)) = (takes, &self.spoken_language) {
+            preferences.add(group);
+        }
+    }
+
+    fn detach_spoken_language(&self) {
+        let Some(group) = &self.spoken_language else {
+            return;
+        };
+        if let Some(page) = group
+            .ancestor(adw::PreferencesPage::static_type())
+            .and_downcast::<adw::PreferencesPage>()
+        {
+            page.remove(group);
+        }
     }
 
     /// The snap whose page the Model tab shows, if any.
@@ -1470,7 +1501,7 @@ impl BackendUi {
 
     fn backend_focus(&self, snap_name: &str) -> Option<BackendFocus> {
         let page = self.backend_pages.borrow().get(snap_name)?.clone();
-        let window = self.overlay.root()?.downcast::<gtk::Window>().ok()?;
+        let window = self.backend_nav.root()?.downcast::<gtk::Window>().ok()?;
         let mut current = gtk::prelude::GtkWindowExt::focus(&window);
         while let Some(widget) = current {
             let widget_name = widget.widget_name();
@@ -2057,6 +2088,23 @@ fn setting_widget_name(key: &str) -> String {
     format!("myna-setting-{}", key.replace('.', "-"))
 }
 
+/// The Model tab's group for the spoken-language row, which General's
+/// settings page fills.
+pub(crate) fn spoken_language_group() -> adw::PreferencesGroup {
+    adw::PreferencesGroup::builder()
+        .title(gettextrs::gettext("Language"))
+        .description(gettextrs::gettext(
+            "A code such as en, fr or zh. Leave it empty to detect the language.",
+        ))
+        .build()
+}
+
+/// Widget name of a row General builds from GSettings and the Model tab
+/// shows, so a page rebuild hands focus back to it.
+pub(crate) fn client_setting_widget_name(key: &str) -> String {
+    setting_widget_name(&format!("client-{key}"))
+}
+
 /// Widget name of the staged-changes group, so it can be replaced in place.
 const STAGED_CHANGES_GROUP: &str = "myna-staged-changes";
 
@@ -2145,6 +2193,9 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
         overview.add(&service_row);
     }
     preferences.add(&overview);
+    if ui.shown_backend().as_deref() == Some(page.identity().snap_name()) {
+        ui.place_spoken_language(&preferences, page.identity().snap_name());
+    }
 
     if page.loading() && page.snapshot().is_none() {
         let loading = adw::PreferencesGroup::builder()
@@ -2941,6 +2992,14 @@ mod tests {
         controller: Rc<BackendController>,
         myna_selector: Option<ui::MynaPage>,
     ) -> TestUi {
+        test_ui_full(controller, myna_selector, None)
+    }
+
+    fn test_ui_full(
+        controller: Rc<BackendController>,
+        myna_selector: Option<ui::MynaPage>,
+        spoken_language: Option<adw::PreferencesGroup>,
+    ) -> TestUi {
         let view_stack = adw::ViewStack::new();
         let backend_nav = adw::NavigationView::new();
         let diagnostics_nav = adw::NavigationView::new();
@@ -2967,6 +3026,7 @@ mod tests {
             diagnostics_nav,
             overlay: adw::ToastOverlay::new(),
             myna_selector,
+            spoken_language,
             active_backend: ActiveBackendController::with_coordinator(
                 crate::domain::ConnectionSnapshot::new(
                     Vec::new(),
@@ -3017,6 +3077,91 @@ mod tests {
     const PARAKEET_CONNECTED_WHISPER_INSTALLED: &str = "Interface Plug Slot Notes\n\
          content[inference-provider] myna:backend myna-parakeet:provider manual\n\
          content - myna-whisper:provider -\n";
+
+    const WHISPER_CONNECTED_PARAKEET_INSTALLED: &str = "Interface Plug Slot Notes\n\
+         content - myna-parakeet:provider -\n\
+         content[inference-provider] myna:backend myna-whisper:provider manual\n";
+
+    const NEITHER_CONNECTED: &str = "Interface Plug Slot Notes\n\
+         content - myna-parakeet:provider -\n\
+         content - myna-whisper:provider -\n";
+
+    /// The Model tab over `connections`, with a spoken-language group holding
+    /// one entry row, shown on screen.
+    fn spoken_language_ui(connections: &str) -> (Rc<BackendUi>, adw::EntryRow, gtk::Window) {
+        ui::register_resources();
+        let row = adw::EntryRow::builder()
+            .title("Spoken language")
+            .name(client_setting_widget_name("language"))
+            .build();
+        let group = adw::PreferencesGroup::new();
+        group.add(&row);
+        let TestUi { ui, view_stack } = test_ui_full(
+            discovered_with(connections, PARAKEET_AND_WHISPER_SLOTS),
+            None,
+            Some(group),
+        );
+        view_stack.set_visible_child_name("model");
+        let window = gtk::Window::builder().child(&view_stack).build();
+        window.present();
+        ui.sync_active_backend();
+        (ui, row, window)
+    }
+
+    fn on_model_tab(ui: &BackendUi, row: &adw::EntryRow) -> bool {
+        ui.backend_nav
+            .visible_page()
+            .is_some_and(|page| row.is_ancestor(&page))
+    }
+
+    fn rediscover_as(ui: &Rc<BackendUi>, connections: &str) {
+        let request = ui.controller.begin_discovery();
+        let snapshot = crate::domain::parse_connections(connections, PARAKEET_AND_WHISPER_SLOTS)
+            .expect("connections parse");
+        ui.controller.complete_discovery(request, Ok(snapshot));
+        ui.sync_active_backend();
+    }
+
+    #[test]
+    fn the_spoken_language_shows_on_the_model_tab_only_for_whisper() {
+        on_gtk_thread(|| {
+            let (ui, row, _window) = spoken_language_ui(WHISPER_CONNECTED_PARAKEET_INSTALLED);
+            assert!(on_model_tab(&ui, &row), "missing with Whisper active");
+
+            rediscover_as(&ui, PARAKEET_CONNECTED_WHISPER_INSTALLED);
+            assert!(!on_model_tab(&ui, &row), "shown with Parakeet active");
+            assert!(row.root().is_none(), "left on a page with Parakeet active");
+
+            rediscover_as(&ui, WHISPER_CONNECTED_PARAKEET_INSTALLED);
+            assert!(on_model_tab(&ui, &row), "missing after switching back");
+
+            rediscover_as(&ui, NEITHER_CONNECTED);
+            assert!(row.root().is_none(), "left on a page with nothing active");
+        });
+    }
+
+    #[test]
+    fn a_rebuilt_whisper_page_keeps_the_spoken_language_focused() {
+        on_gtk_thread(|| {
+            let (ui, row, window) = spoken_language_ui(WHISPER_CONNECTED_PARAKEET_INSTALLED);
+            row.set_text("fr");
+            row.grab_focus();
+            row.set_position(1);
+
+            ui.rebuild_backend_page("myna-whisper");
+            // GTK moves the focus off a detached widget on a later idle.
+            while glib::MainContext::default().iteration(false) {}
+
+            assert!(on_model_tab(&ui, &row));
+            let focus = gtk::prelude::GtkWindowExt::focus(&window).expect("a focus widget");
+            assert!(
+                focus.has_focus() && focus.is_ancestor(&row),
+                "focus left the row"
+            );
+            assert_eq!(row.text().as_str(), "fr");
+            assert_eq!(row.position(), 1);
+        });
+    }
 
     /// Never answers, so a read the UI starts stays in flight.
     struct UnansweredRepository;

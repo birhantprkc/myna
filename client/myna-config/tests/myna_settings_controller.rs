@@ -7,7 +7,7 @@ use myna_config::domain::{
 };
 use myna_config::myna_settings::{
     choice_display_label, widget_plan, DebouncedTextCommit, MynaSettingsController, PageState,
-    SettingsEvent, WidgetKind,
+    Placement, SettingsEvent, WidgetKind,
 };
 use myna_config::ports::{
     ClientSettings, ClientSettingsCallback, ClientSettingsError, ClientSettingsSubscription,
@@ -351,6 +351,25 @@ fn widget_plans_map_schema_metadata_to_widget_kinds() {
     assert_eq!(plans[0].kind, WidgetKind::Choice);
     assert_eq!(plans[1].kind, WidgetKind::Text);
     assert_eq!(widget_plan(&unrestricted).kind, WidgetKind::Text);
+}
+
+#[test]
+fn the_spoken_language_sits_with_the_model_and_the_rest_with_dictation() {
+    let placements: Vec<_> = rows()
+        .iter()
+        .map(|row| {
+            let plan = widget_plan(row);
+            (plan.key, plan.placement)
+        })
+        .collect();
+
+    assert_eq!(
+        placements,
+        [
+            ("streaming-mode".to_owned(), Placement::Dictation),
+            ("language".to_owned(), Placement::ActiveModel),
+        ]
+    );
 }
 
 #[test]

@@ -38,6 +38,12 @@ impl ModelFamily {
             Self::FunAsr => FUNASR_LANGUAGES,
         }
     }
+
+    /// Whether the backend decodes in the spoken-language setting. Parakeet
+    /// and SenseVoice detect the language themselves and ignore it.
+    pub fn takes_spoken_language(self) -> bool {
+        self == Self::Whisper
+    }
 }
 
 /// The parakeet-tdt-0.6b-v3 card's 25 languages.
@@ -286,6 +292,15 @@ fn recommend_among<S: AsRef<str>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_whisper_takes_the_spoken_language() {
+        let takers: Vec<ModelFamily> = ModelFamily::ALL
+            .into_iter()
+            .filter(|family| family.takes_spoken_language())
+            .collect();
+        assert_eq!(takers, [ModelFamily::Whisper]);
+    }
 
     #[test]
     fn european_languages_go_to_parakeet_whatever_the_region() {

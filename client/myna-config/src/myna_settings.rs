@@ -17,6 +17,15 @@ pub enum WidgetKind {
     Number,
 }
 
+/// Where a setting's row sits in the window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// The Dictation group on General.
+    Dictation,
+    /// The Model tab, and only while the active backend takes the setting.
+    ActiveModel,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WidgetPlan {
     pub key: String,
@@ -27,6 +36,7 @@ pub struct WidgetPlan {
     /// The schema's inclusive bounds; present exactly for [`WidgetKind::Number`].
     pub bounds: Option<(i64, i64)>,
     pub writable: bool,
+    pub placement: Placement,
 }
 
 pub fn widget_plan(metadata: &ClientSettingMetadata) -> WidgetPlan {
@@ -53,6 +63,11 @@ pub fn widget_plan(metadata: &ClientSettingMetadata) -> WidgetPlan {
         },
         bounds,
         writable: metadata.writable(),
+        placement: if metadata.key().as_str() == myna_core::settings::KEY_LANGUAGE {
+            Placement::ActiveModel
+        } else {
+            Placement::Dictation
+        },
     }
 }
 
