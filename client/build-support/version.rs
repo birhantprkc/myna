@@ -12,37 +12,39 @@ pub struct Resolved {
     pub watch: Vec<PathBuf>,
 }
 
-// `workspace` is the Cargo workspace root, `fallback` the Cargo version.
-pub fn resolve(workspace: &Path, fallback: &str) -> Resolved {
+// `workspace` is the Cargo workspace root, `checkout` the repository it came
+// from. The Cargo version is a placeholder, so there is no fallback.
+pub fn resolve(workspace: &Path, checkout: &Path) -> Result<Resolved, String> {
     // A snap build instance has no .git, so the packaging stages the version.
     let staged = workspace.join(".version");
     if let Ok(version) = std::fs::read_to_string(&staged) {
-        return Resolved {
+        return Ok(Resolved {
             version: version.trim().to_owned(),
             watch: vec![staged],
-        };
+        });
     }
-    from_checkout(workspace).unwrap_or_else(|| Resolved {
-        version: fallback.to_owned(),
-        watch: Vec::new(),
+    from_checkout(checkout).ok_or_else(|| {
+        format!(
+            "no version: {} is not staged and {} is not a git checkout with dev/version.sh",
+            staged.display(),
+            checkout.display()
+        )
     })
 }
 
 // Only HEAD and the refs are watched, so -dirty is never reported: watching
 // the working tree would rebuild on every edit.
-fn from_checkout(workspace: &Path) -> Option<Resolved> {
-    let script = workspace.join("../dev/version.sh");
+fn from_checkout(checkout: &Path) -> Option<Resolved> {
+    let script = checkout.join("dev/version.sh");
     let version = stdout(&mut Command::new(&script))?;
     let mut watch = vec![script];
     for name in ["HEAD", "packed-refs", "refs/heads", "refs/tags"] {
-        let path = PathBuf::from(stdout(
-            Command::new("git").arg("-C").arg(workspace).args([
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                name,
-            ]),
-        )?);
+        let path = PathBuf::from(stdout(Command::new("git").arg("-C").arg(checkout).args([
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            name,
+        ]))?);
         if path.exists() {
             watch.push(path);
         }
@@ -59,8 +61,14 @@ fn stdout(command: &mut Command) -> Option<String> {
 pub fn emit() {
     let manifest =
         PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let fallback = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
-    let resolved = resolve(&manifest.join(".."), &fallback);
+    let workspace = manifest.join("..");
+    // cargo-mutants builds a copy of client/ alone; MYNA_REPO_ROOT names the
+    // checkout it was copied from.
+    println!("cargo:rerun-if-env-changed=MYNA_REPO_ROOT");
+    let checkout = std::env::var_os("MYNA_REPO_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace.join(".."));
+    let resolved = resolve(&workspace, &checkout).unwrap_or_else(|error| panic!("{error}"));
     for path in &resolved.watch {
         println!("cargo:rerun-if-changed={}", path.display());
     }

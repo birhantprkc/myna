@@ -15,11 +15,10 @@ use version::resolve;
 
 /// The checkout. `MYNA_REPO_ROOT` names it when `client/` runs as a copy of
 /// its own, which is how cargo-mutants builds.
-fn script() -> PathBuf {
+fn repo_root() -> PathBuf {
     std::env::var_os("MYNA_REPO_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-        .join("dev/version.sh")
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -50,7 +49,11 @@ fn git(repo: &Path, args: &[&str]) -> String {
 fn checkout(name: &str) -> (PathBuf, String) {
     let repo = scratch(name);
     fs::create_dir_all(repo.join("dev")).unwrap();
-    fs::copy(script(), repo.join("dev/version.sh")).unwrap();
+    fs::copy(
+        repo_root().join("dev/version.sh"),
+        repo.join("dev/version.sh"),
+    )
+    .unwrap();
     fs::write(repo.join("client/Cargo.toml"), "").unwrap();
     git(&repo, &["init", "-q"]);
     git(&repo, &["add", "-A"]);
@@ -65,7 +68,7 @@ fn a_staged_version_is_reported_verbatim() {
     let staged = dir.join("client/.version");
     fs::write(&staged, "0+git.abc1234-dirty\n").unwrap();
 
-    let resolved = resolve(&dir.join("client"), "0.1.0");
+    let resolved = resolve(&dir.join("client"), &dir).unwrap();
 
     assert_eq!(resolved.version, "0+git.abc1234-dirty");
     assert_eq!(resolved.watch, vec![staged]);
@@ -77,7 +80,7 @@ fn the_staged_version_wins_over_the_checkout() {
     fs::write(repo.join("client/.version"), "0+git.fromsnap\n").unwrap();
 
     assert_eq!(
-        resolve(&repo.join("client"), "0.1.0").version,
+        resolve(&repo.join("client"), &repo).unwrap().version,
         "0+git.fromsnap"
     );
 }
@@ -86,7 +89,7 @@ fn the_staged_version_wins_over_the_checkout() {
 fn a_checkout_reports_the_version_of_head() {
     let (repo, sha) = checkout("git");
 
-    let resolved = resolve(&repo.join("client"), "0.1.0");
+    let resolved = resolve(&repo.join("client"), &repo).unwrap();
 
     assert_eq!(resolved.version, format!("0+git.{sha}"));
 }
@@ -95,7 +98,7 @@ fn a_checkout_reports_the_version_of_head() {
 fn a_checkout_watches_head_and_the_refs_that_exist() {
     let (repo, _) = checkout("watch");
 
-    let resolved = resolve(&repo.join("client"), "0.1.0");
+    let resolved = resolve(&repo.join("client"), &repo).unwrap();
 
     let git_dir = repo.join(".git").canonicalize().unwrap();
     for expected in [
@@ -121,19 +124,29 @@ fn a_checkout_does_not_report_dirty() {
     fs::write(repo.join("client/Cargo.toml"), "# edited").unwrap();
 
     assert_eq!(
-        resolve(&repo.join("client"), "0.1.0").version,
+        resolve(&repo.join("client"), &repo).unwrap().version,
         format!("0+git.{sha}")
     );
 }
 
 #[test]
-fn without_a_staged_version_or_a_checkout_the_fallback_is_reported() {
-    let dir = scratch("fallback");
+fn without_a_staged_version_or_a_checkout_there_is_no_version() {
+    let dir = scratch("unversioned");
 
-    let resolved = resolve(&dir.join("client"), "0.1.0");
+    let error = resolve(&dir.join("client"), &dir).err().unwrap();
 
-    assert_eq!(resolved.version, "0.1.0");
-    assert!(resolved.watch.is_empty());
+    assert!(error.contains(".version"), "{error}");
+}
+
+#[test]
+fn the_checkout_need_not_contain_the_workspace() {
+    let (repo, sha) = checkout("copied");
+    let copy = scratch("copy");
+
+    assert_eq!(
+        resolve(&copy.join("client"), &repo).unwrap().version,
+        format!("0+git.{sha}")
+    );
 }
 
 #[test]
@@ -148,7 +161,7 @@ fn myna_config_reports_the_resolved_version_not_the_cargo_one() {
         String::from_utf8(output.stdout).unwrap().trim(),
         format!(
             "myna-config {}",
-            resolve(&workspace, env!("CARGO_PKG_VERSION")).version
+            resolve(&workspace, &repo_root()).unwrap().version
         )
     );
 }
