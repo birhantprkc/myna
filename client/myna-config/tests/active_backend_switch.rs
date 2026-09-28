@@ -8,7 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use myna_config::active_backend::{
     ensure_backend_active, execute_switch, myna_restart_request, ActiveBackendController,
-    PrepareSwitchError, SnapdWait, SwitchOutcome, SwitchPlan,
+    PrepareSwitchError, SnapdWait, SwitchNotice, SwitchOutcome, SwitchPlan,
 };
 use myna_config::backend_apply::ApplyPreview;
 use myna_config::command::{CancellationToken, CommandRequest};
@@ -712,6 +712,63 @@ fn a_pending_switch_marks_its_target_chosen_until_it_completes() {
         Some(BackendIdentity::new("myna-parakeet", "provider"))
     );
     assert_eq!(controller.switching_to(), None);
+}
+
+#[test]
+fn only_a_switch_that_did_not_take_is_announced() {
+    let snapshot = connections(&["myna-parakeet"], &["myna-parakeet"]);
+    let notice = |outcome: SwitchOutcome| outcome.notice();
+    let unread = || BackendSurfaceError::new(BackendSurface::Connections, "unreadable", "");
+    assert_eq!(
+        notice(SwitchOutcome::Applied {
+            completed: Vec::new(),
+            final_snapshot: snapshot.clone(),
+        }),
+        SwitchNotice::None
+    );
+    assert_eq!(
+        notice(SwitchOutcome::Noop {
+            final_snapshot: snapshot.clone(),
+        }),
+        SwitchNotice::None
+    );
+    assert_eq!(
+        notice(SwitchOutcome::Cancelled {
+            completed: Vec::new(),
+            final_snapshot: None,
+            discovery_error: Some(unread()),
+        }),
+        SwitchNotice::None
+    );
+    assert_eq!(
+        notice(SwitchOutcome::Failed {
+            completed: Vec::new(),
+            error: SystemConfiguratorError::authorization_denied("snap", Vec::new(), None, ""),
+            final_snapshot: Some(snapshot.clone()),
+            discovery_error: None,
+        }),
+        SwitchNotice::Failed
+    );
+    assert_eq!(
+        notice(SwitchOutcome::Disagreed {
+            completed: Vec::new(),
+            final_snapshot: snapshot.clone(),
+        }),
+        SwitchNotice::Failed
+    );
+    assert_eq!(
+        notice(SwitchOutcome::StaleDiscovery {
+            final_snapshot: snapshot,
+        }),
+        SwitchNotice::Failed
+    );
+    assert_eq!(
+        notice(SwitchOutcome::FinalDiscoveryFailed {
+            completed: Vec::new(),
+            error: unread(),
+        }),
+        SwitchNotice::Unconfirmed
+    );
 }
 
 /// A store install auto-connects a same-publisher backend, and the daemon may

@@ -1901,6 +1901,8 @@ struct ProbeMachine {
     connected: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// The user dismisses the authorization prompt of every switch.
     dismissing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// snapd refuses every switch.
+    denying: std::sync::Arc<std::sync::atomic::AtomicBool>,
     switches_attempted: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -1923,6 +1925,7 @@ impl ProbeMachine {
             restarts_attempted: std::sync::Arc::default(),
             connected: std::sync::Arc::new(std::sync::Mutex::new(vec!["myna-parakeet".to_owned()])),
             dismissing: std::sync::Arc::default(),
+            denying: std::sync::Arc::default(),
             switches_attempted: std::sync::Arc::default(),
         }
     }
@@ -1930,6 +1933,11 @@ impl ProbeMachine {
     fn dismiss_authorization(&self, dismissing: bool) {
         self.dismissing
             .store(dismissing, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn deny_switches(&self, denying: bool) {
+        self.denying
+            .store(denying, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn switches_attempted(&self) -> usize {
@@ -2111,6 +2119,17 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
             return Err(crate::ports::SystemConfiguratorFailure::new(
                 Vec::new(),
                 crate::ports::SystemConfiguratorError::Cancelled,
+            ));
+        }
+        if self.denying.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::ports::SystemConfiguratorFailure::new(
+                Vec::new(),
+                crate::ports::SystemConfiguratorError::authorization_denied(
+                    "snap",
+                    vec!["disconnect".to_owned()],
+                    None,
+                    "access denied",
+                ),
             ));
         }
         Ok(self.record(plan.operations()))
@@ -2438,8 +2457,84 @@ fn backends_probe() -> glib::ExitCode {
         eprintln!("switching back left {:?} chosen", chosen());
         return glib::ExitCode::FAILURE;
     }
+    if toasts() != 0 {
+        eprintln!("a successful switch was announced");
+        return glib::ExitCode::FAILURE;
+    }
     quiesce();
     println!("model-group: choosing a model switches to it");
+
+    // A refused switch puts the radio back and says so in a toast whose
+    // Details button opens the full report.
+    let toast_texts = || {
+        descendants(overlay.upcast_ref(), &|widget| {
+            widget.type_().name() == "AdwToastWidget"
+        })
+        .iter()
+        .flat_map(|toast| {
+            descendants(toast, &|widget| widget.is::<gtk::Label>())
+                .into_iter()
+                .filter_map(|label| label.downcast::<gtk::Label>().ok())
+                .filter(|label| label.is_visible())
+                .map(|label| label.label().to_string())
+        })
+        .collect::<Vec<_>>()
+    };
+    let failed_title =
+        gettextrs::gettext("Changing to {model} failed").replace("{model}", "Whisper");
+    let details_label = gettextrs::gettext("Details");
+    machine.deny_switches(true);
+    adw::prelude::ActionRowExt::activate(&whisper_row());
+    let announced = || toast_texts() == [failed_title.clone(), details_label.clone()];
+    if !settles_unasked(&|| {
+        machine.switches_attempted() == 4 && idle() && chosen() == ["Parakeet"] && announced()
+    }) || asked.get()
+    {
+        eprintln!(
+            "a refused switch left {:?} chosen after {} switches and toasts {:?}, asked first: {}",
+            chosen(),
+            machine.switches_attempted(),
+            toast_texts(),
+            asked.get()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    machine.deny_switches(false);
+    let details_button = descendants(overlay.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::Button>()
+            .is_some_and(|button| button.label().as_deref() == Some(details_label.as_str()))
+    })
+    .into_iter()
+    .next()
+    .and_then(|button| button.downcast::<gtk::Button>().ok())
+    .expect("details button");
+    details_button.emit_clicked();
+    let report = || {
+        window
+            .visible_dialog()
+            .and_then(|dialog| dialog.downcast::<ui::OperationErrorDialog>().ok())
+    };
+    if !settles(&|| {
+        report().is_some_and(|dialog| {
+            dialog.heading().as_deref() == Some(failed_title.as_str())
+                && dialog.details_text().contains("access denied")
+        })
+    }) {
+        eprintln!("the Details button did not open the failure report");
+        return glib::ExitCode::FAILURE;
+    }
+    // libadwaita 1.5 ignores a close that lands during the open animation.
+    for _ in 0..8 {
+        settle_gtk();
+    }
+    report().expect("failure report").force_close();
+    if !settles(&|| window.visible_dialog().is_none()) {
+        eprintln!("the failure report did not close");
+        return glib::ExitCode::FAILURE;
+    }
+    quiesce();
+    println!("model-group: a refused switch reverts with a toast");
 
     if view_stack
         .child_by_name("model")

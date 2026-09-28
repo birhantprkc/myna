@@ -412,6 +412,7 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
         "model-group: a dismissed prompt reverts silently",
         "model-group: a pending switch spins on its target",
         "model-group: choosing a model switches to it",
+        "model-group: a refused switch reverts with a toast",
         "backend-snapshot: read",
         "backend-edit: staged",
         "backend-apply: read back",

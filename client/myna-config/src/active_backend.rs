@@ -153,7 +153,27 @@ pub enum SwitchOutcome {
     },
 }
 
+/// What a finished switch tells the user; the radio shows the rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwitchNotice {
+    None,
+    /// The model asked for is not the one connected.
+    Failed,
+    /// The commands ran, but the connections could not be read back.
+    Unconfirmed,
+}
+
 impl SwitchOutcome {
+    pub fn notice(&self) -> SwitchNotice {
+        match self {
+            Self::Applied { .. } | Self::Noop { .. } | Self::Cancelled { .. } => SwitchNotice::None,
+            Self::Failed { .. } | Self::Disagreed { .. } | Self::StaleDiscovery { .. } => {
+                SwitchNotice::Failed
+            }
+            Self::FinalDiscoveryFailed { .. } => SwitchNotice::Unconfirmed,
+        }
+    }
+
     pub fn final_snapshot(&self) -> Option<&ConnectionSnapshot> {
         match self {
             Self::Applied { final_snapshot, .. }

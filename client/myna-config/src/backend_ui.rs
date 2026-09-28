@@ -16,7 +16,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use crate::active_backend::{
-    execute_switch, ActiveBackendController, PrepareSwitchError, SwitchOutcome,
+    execute_switch, ActiveBackendController, PrepareSwitchError, SwitchNotice, SwitchOutcome,
 };
 use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
@@ -316,81 +316,38 @@ impl BackendUi {
             if let Some(ui) = ui.upgrade() {
                 if ui.active_backend.complete(operation_token, outcome.clone()) {
                     ui.render_model_group();
-                    ui.present_switch_outcome(&outcome);
+                    ui.present_switch_outcome(plan.selected(), &outcome);
                     ui.trigger_discovery();
                 }
             }
         });
     }
 
-    fn present_switch_outcome(&self, outcome: &SwitchOutcome) {
-        let (message, error_dialog) = match outcome {
-            // The radio already shows what is connected again.
-            SwitchOutcome::Cancelled { .. } => return,
-            SwitchOutcome::Applied { .. } => {
-                (gettextrs::gettext("Active backend switched."), None)
+    /// Only a switch that did not take is announced: a toast naming the
+    /// model, whose Details button opens the full report.
+    fn present_switch_outcome(&self, target: &BackendIdentity, outcome: &SwitchOutcome) {
+        let model = model_family(target.snap_name()).name;
+        let heading = match outcome.notice() {
+            SwitchNotice::None => return,
+            SwitchNotice::Failed => gettextrs::gettext("Changing to {model} failed"),
+            SwitchNotice::Unconfirmed => {
+                gettextrs::gettext("Changing to {model} could not be confirmed")
             }
-            SwitchOutcome::Noop { .. } => (
-                gettextrs::gettext("That backend is already the sole active connection."),
-                None,
-            ),
-            SwitchOutcome::Disagreed { .. } => (
-                gettextrs::gettext(
-                    "Commands completed, but the connections now differ from the requested state.",
-                ),
-                None,
-            ),
-            SwitchOutcome::StaleDiscovery { .. } => (
-                gettextrs::gettext(
-                    "Connections changed before authorization. Review the refreshed state and try again.",
-                ),
-                None,
-            ),
-            SwitchOutcome::Failed {
-                error,
-                discovery_error,
-                completed,
-                final_snapshot,
-            } => {
-                let concise = if discovery_error.is_some() {
-                    gettextrs::gettext(
-                        "Backend switch failed and final connections could not be refreshed.",
-                    )
-                } else {
-                    gettextrs::gettext("Backend switch failed. Actual connections were refreshed.")
-                };
-                let details = switch_failure_details(
-                    error,
-                    discovery_error.as_ref(),
-                    completed,
-                    final_snapshot.as_ref(),
-                );
-                (
-                    concise.clone(),
-                    Some((
-                        gettextrs::gettext("Backend switch failed"),
-                        concise,
-                        details,
-                    )),
-                )
-            }
-            SwitchOutcome::FinalDiscoveryFailed { error, completed } => {
-                let concise = gettextrs::gettext("Could not verify final backend connections.");
-                let details = final_discovery_details(error, completed);
-                (
-                    format!("{} {}", concise.clone(), diagnostics::redact_text(error.message())),
-                    Some((
-                        gettextrs::gettext("Backend switch verification failed"),
-                        concise,
-                        details,
-                    )),
-                )
-            }
-        };
-        self.overlay.add_toast(adw::Toast::new(&message));
-        if let Some((heading, summary, details)) = error_dialog {
-            self.present_operation_error_dialog(&heading, &summary, &details);
         }
+        .replace("{model}", &model);
+        let (summary, details) = switch_report(outcome);
+        let toast = adw::Toast::builder()
+            .title(escape_markup(&heading))
+            .button_label(gettextrs::gettext("Details"))
+            .build();
+        toast.connect_button_clicked({
+            let overlay = self.overlay.clone();
+            move |_| {
+                ui::OperationErrorDialog::new(&heading, &summary, &details)
+                    .present(Some(overlay.upcast_ref::<gtk::Widget>()));
+            }
+        });
+        self.overlay.add_toast(toast);
     }
 
     fn present_operation_error_dialog(&self, heading: &str, summary: &str, details: &str) {
@@ -2365,120 +2322,107 @@ fn mismatch_summary(mismatches: &[crate::backend_apply::ReadBackMismatch]) -> St
         .join(" · ")
 }
 
-/// Redact and format the full details for a failed backend switch operation.
-/// Includes:
-///
-/// * a short reconciliation header describing whether the final snapshot
-///   agrees with the requested change,
-/// * every completed command (executable + argv), and
-/// * the primary error message.
-///
-/// All fields go through [`diagnostics::redact_text`] so no absolute paths or
-/// secret-looking values reach the dialog.
-fn switch_failure_details(
-    error: &crate::ports::SystemConfiguratorError,
-    discovery_error: Option<&crate::domain::BackendSurfaceError>,
-    completed: &[crate::domain::CommandResult],
-    final_snapshot: Option<&crate::domain::ConnectionSnapshot>,
-) -> String {
-    let mut out = String::new();
-    out.push_str(&gettextrs::gettext("Backend switch failed."));
-    out.push('\n');
-    match final_snapshot {
-        Some(snapshot) => {
-            out.push_str(&format!(
-                "{} {}\n",
-                gettextrs::gettext("Final connections:"),
-                connection_state_summary(snapshot)
-            ));
+/// A one-line reason and the copyable report for a switch that did not take.
+/// Everything goes through [`diagnostics::redact_text`], so no absolute path
+/// or secret-looking value reaches the dialog.
+fn switch_report(outcome: &SwitchOutcome) -> (String, String) {
+    let mut details = String::new();
+    let summary = match outcome {
+        SwitchOutcome::Failed {
+            error,
+            discovery_error,
+            completed,
+            final_snapshot,
+        } => {
+            push_final_connections(
+                &mut details,
+                final_snapshot.as_ref(),
+                discovery_error.as_ref(),
+            );
+            push_completed_operations(&mut details, completed);
+            details.push_str(&gettextrs::gettext("Error:\n"));
+            details.push_str(&system_error_details(error));
+            gettextrs::gettext("snapd could not make the change.")
         }
-        None => {
-            if let Some(discovery_error) = discovery_error {
-                out.push_str(&format!(
-                    "{} {}\n",
-                    gettextrs::gettext("Final connections could not be verified:"),
-                    diagnostics::redact_text(discovery_error.message())
-                ));
-            } else {
-                out.push_str(&gettextrs::gettext(
-                    "Final connections could not be verified.\n",
-                ));
-            }
+        SwitchOutcome::Disagreed {
+            completed,
+            final_snapshot,
+        } => {
+            push_final_connections(&mut details, Some(final_snapshot), None);
+            push_completed_operations(&mut details, completed);
+            gettextrs::gettext("The change ran, but the connections do not match it.")
         }
-    }
-    out.push('\n');
-    if completed.is_empty() {
-        out.push_str(&gettextrs::gettext("No snapd operations completed.\n"));
-    } else {
-        out.push_str(&gettextrs::gettext("Completed snapd operations:\n"));
-        for result in completed {
-            out.push_str("  ");
-            out.push_str(&diagnostics::redact_text(result.executable()));
-            for arg in result.arguments() {
-                out.push(' ');
-                out.push_str(&diagnostics::redact_text(arg));
-            }
-            out.push_str(&format!(
-                "\n    {} {}\n",
-                gettextrs::gettext("Exit status:"),
-                result
-                    .exit_status()
-                    .map(|code| code.to_string())
-                    .unwrap_or_else(|| "—".to_owned()),
-            ));
-            if !result.stderr().trim().is_empty() {
-                out.push_str(&format!(
-                    "    {}\n    {}\n",
-                    gettextrs::gettext("Standard error:"),
-                    diagnostics::redact_text(result.stderr()).replace('\n', "\n    "),
-                ));
-            }
+        SwitchOutcome::StaleDiscovery { final_snapshot } => {
+            push_final_connections(&mut details, Some(final_snapshot), None);
+            gettextrs::gettext("The connections changed before the change could start. Try again.")
         }
-    }
-    out.push('\n');
-    out.push_str(&gettextrs::gettext("Error:\n"));
-    out.push_str(&system_error_details(error));
-    out
+        SwitchOutcome::FinalDiscoveryFailed { error, completed } => {
+            push_completed_operations(&mut details, completed);
+            details.push_str(&gettextrs::gettext("Discovery error:\n"));
+            details.push_str(&diagnostics::redact_text(error.message()));
+            gettextrs::gettext("The change ran, but the connections could not be read back.")
+        }
+        SwitchOutcome::Applied { .. }
+        | SwitchOutcome::Noop { .. }
+        | SwitchOutcome::Cancelled { .. } => String::new(),
+    };
+    (summary, details.trim_end().to_owned())
 }
 
-fn final_discovery_details(
-    error: &crate::domain::BackendSurfaceError,
-    completed: &[crate::domain::CommandResult],
-) -> String {
-    let mut out = String::new();
-    out.push_str(&gettextrs::gettext(
-        "Backend switch succeeded, but the final connection state could not be verified.\n\n",
-    ));
-    if !completed.is_empty() {
-        out.push_str(&gettextrs::gettext("Completed snapd operations:\n"));
-        for result in completed {
-            out.push_str("  ");
-            out.push_str(&diagnostics::redact_text(result.executable()));
-            for arg in result.arguments() {
-                out.push(' ');
-                out.push_str(&diagnostics::redact_text(arg));
-            }
-            out.push_str(&format!(
-                "\n    {} {}\n",
-                gettextrs::gettext("Exit status:"),
-                result
-                    .exit_status()
-                    .map(|code| code.to_string())
-                    .unwrap_or_else(|| "—".to_owned()),
-            ));
-            if !result.stderr().trim().is_empty() {
-                out.push_str(&format!(
-                    "    {}\n    {}\n",
-                    gettextrs::gettext("Standard error:"),
-                    diagnostics::redact_text(result.stderr()).replace('\n', "\n    "),
-                ));
-            }
-        }
-        out.push('\n');
+fn push_final_connections(
+    out: &mut String,
+    final_snapshot: Option<&crate::domain::ConnectionSnapshot>,
+    discovery_error: Option<&crate::domain::BackendSurfaceError>,
+) {
+    match (final_snapshot, discovery_error) {
+        (Some(snapshot), _) => out.push_str(&format!(
+            "{} {}\n",
+            gettextrs::gettext("Final connections:"),
+            connection_state_summary(snapshot)
+        )),
+        (None, Some(discovery_error)) => out.push_str(&format!(
+            "{} {}\n",
+            gettextrs::gettext("Final connections could not be verified:"),
+            diagnostics::redact_text(discovery_error.message())
+        )),
+        (None, None) => out.push_str(&gettextrs::gettext(
+            "Final connections could not be verified.\n",
+        )),
     }
-    out.push_str(&gettextrs::gettext("Discovery error:\n"));
-    out.push_str(&diagnostics::redact_text(error.message()));
-    out
+    out.push('\n');
+}
+
+fn push_completed_operations(out: &mut String, completed: &[crate::domain::CommandResult]) {
+    if completed.is_empty() {
+        out.push_str(&gettextrs::gettext("No snapd operations completed.\n"));
+        out.push('\n');
+        return;
+    }
+    out.push_str(&gettextrs::gettext("Completed snapd operations:\n"));
+    for result in completed {
+        out.push_str("  ");
+        out.push_str(&diagnostics::redact_text(result.executable()));
+        for arg in result.arguments() {
+            out.push(' ');
+            out.push_str(&diagnostics::redact_text(arg));
+        }
+        out.push_str(&format!(
+            "\n    {} {}\n",
+            gettextrs::gettext("Exit status:"),
+            result
+                .exit_status()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "-".to_owned()),
+        ));
+        if !result.stderr().trim().is_empty() {
+            out.push_str(&format!(
+                "    {}\n    {}\n",
+                gettextrs::gettext("Standard error:"),
+                diagnostics::redact_text(result.stderr()).replace('\n', "\n    "),
+            ));
+        }
+    }
+    out.push('\n');
 }
 
 fn connection_state_summary(snapshot: &crate::domain::ConnectionSnapshot) -> String {
@@ -2868,6 +2812,83 @@ mod tests {
 
         let problem = problem_from_surface_error(&error);
         assert_eq!(problem, "Backend connections: snap connections failed");
+    }
+
+    #[test]
+    fn a_switch_report_says_what_ran_and_what_is_connected_now() {
+        let parakeet = BackendIdentity::new("myna-parakeet", "provider");
+        let snapshot = crate::domain::ConnectionSnapshot::new(
+            vec![parakeet.clone()],
+            ActiveBackendState::Connected(parakeet),
+        );
+        let ran = || {
+            vec![crate::domain::CommandResult::new(
+                "snap",
+                vec!["disconnect".to_owned(), "myna:backend".to_owned()],
+                Some(1),
+                "",
+                "cannot disconnect",
+            )]
+        };
+        let unread = crate::domain::BackendSurfaceError::new(
+            crate::domain::BackendSurface::Connections,
+            "snap connections failed",
+            "",
+        );
+
+        let (summary, details) = switch_report(&SwitchOutcome::Failed {
+            completed: ran(),
+            error: crate::ports::SystemConfiguratorError::authorization_denied(
+                "snap",
+                Vec::new(),
+                None,
+                "access denied",
+            ),
+            final_snapshot: None,
+            discovery_error: Some(unread.clone()),
+        });
+        assert_eq!(summary, "snapd could not make the change.");
+        for fact in [
+            "Final connections could not be verified: snap connections failed",
+            "snap disconnect myna:backend",
+            "cannot disconnect",
+            "access denied",
+        ] {
+            assert!(details.contains(fact), "{fact:?} missing from {details}");
+        }
+
+        let (summary, details) = switch_report(&SwitchOutcome::Disagreed {
+            completed: ran(),
+            final_snapshot: snapshot.clone(),
+        });
+        assert_eq!(
+            summary,
+            "The change ran, but the connections do not match it."
+        );
+        assert!(details.contains("Final connections: connected"));
+        assert!(details.contains("myna-parakeet"));
+        assert!(details.contains("snap disconnect myna:backend"));
+
+        let (summary, details) = switch_report(&SwitchOutcome::StaleDiscovery {
+            final_snapshot: snapshot,
+        });
+        assert_eq!(
+            summary,
+            "The connections changed before the change could start. Try again."
+        );
+        assert!(details.contains("Final connections: connected"));
+        assert!(!details.contains("snapd operations"));
+
+        let (summary, details) = switch_report(&SwitchOutcome::FinalDiscoveryFailed {
+            completed: Vec::new(),
+            error: unread,
+        });
+        assert_eq!(
+            summary,
+            "The change ran, but the connections could not be read back."
+        );
+        assert!(details.contains("No snapd operations completed."));
+        assert!(details.ends_with("snap connections failed"));
     }
 
     #[test]
