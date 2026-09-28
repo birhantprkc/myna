@@ -8,7 +8,7 @@
 }
 
 /* Keyboard caps on the onboarding shortcut step, as the design: the thick
-   bottom border is the cap's shadow. Compact ones sit in the Myna page's row. */
+   bottom border is the cap's shadow. */
 .keycap {
   background: alpha(currentColor, 0.08);
   border: 1px solid alpha(currentColor, 0.2);
@@ -20,15 +20,8 @@
 }
 
 /* The "+" between caps, at the caps' size. */
-.keycap:not(.compact) + label {
+.keycap + label {
   font-size: 20px;
-}
-
-.keycap.compact {
-  border-bottom-width: 2px;
-  padding: 2px 8px;
-  min-width: 0;
-  font-size: 1em;
 }
 
 /* A secondary button drawn as an outline on the window, as the design;

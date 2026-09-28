@@ -1704,25 +1704,37 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
     };
     let button = myna.shortcut_button();
     let keys = myna.shortcut_keys();
-    let caps = || {
-        let mut caps = Vec::new();
+    // The row shows the key as one line of dim text, not key caps.
+    let shown = || {
+        let mut text = Vec::new();
         let mut child = keys.first_child();
         while let Some(widget) = child {
-            if widget.has_css_class("keycap") {
-                if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
-                    caps.push(label.label().to_string());
+            match widget.clone().downcast::<gtk::Label>() {
+                Ok(label) if label.has_css_class("dim-label") && !label.has_css_class("keycap") => {
+                    text.push(label.label().to_string());
                 }
+                _ => text.push(format!("<{}>", widget.type_().name())),
             }
             child = widget.next_sibling();
         }
-        caps
+        text.join("")
     };
 
+    if myna.shortcut_group().title() != "Keyboard shortcut"
+        || myna.shortcut_row().title() != "Press to start and stop"
+    {
+        eprintln!(
+            "the shortcut row reads {:?} / {:?}",
+            myna.shortcut_group().title(),
+            myna.shortcut_row().title()
+        );
+        return glib::ExitCode::FAILURE;
+    }
     if !settles(&|| button.is_sensitive()) {
         eprintln!("the shortcut row never offered to bind against a running daemon");
         return glib::ExitCode::FAILURE;
     }
-    if button.label().as_deref() != Some("Set up shortcut") || keys.is_visible() {
+    if button.label().as_deref() != Some("Set up") || keys.is_visible() {
         eprintln!(
             "an unbound daemon rendered {:?} with keys visible: {}",
             button.label(),
@@ -1745,12 +1757,12 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
     }
 
     button.emit_clicked();
-    if !settles(&|| !caps().is_empty()) {
-        eprintln!("the granted shortcut never rendered as keys");
+    if !settles(&|| !shown().is_empty()) {
+        eprintln!("the granted shortcut never rendered");
         return glib::ExitCode::FAILURE;
     }
-    if caps() != ["Super", "J"] {
-        eprintln!("expected Super+J key caps, got {:?}", caps());
+    if shown() != "Super + J" {
+        eprintln!("expected Super + J as dim text, got {:?}", shown());
         return glib::ExitCode::FAILURE;
     }
     let expected_ask = if control { None } else { Some("") };
@@ -1761,7 +1773,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
         );
         return glib::ExitCode::FAILURE;
     }
-    if button.label().as_deref() != Some("Change shortcut") {
+    if button.label().as_deref() != Some("Change") {
         eprintln!("a bound shortcut offered {:?}", button.label());
         return glib::ExitCode::FAILURE;
     }
@@ -1774,7 +1786,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             .visible_dialog()
             .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
         else {
-            eprintln!("Change shortcut opened no capture dialog");
+            eprintln!("Change opened no capture dialog");
             return glib::ExitCode::FAILURE;
         };
         // Key events travel only to the focused widget and its ancestors.
@@ -1789,8 +1801,8 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             gtk::gdk::Key::d,
             gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK,
         );
-        if !settles(&|| caps() == ["Ctrl", "Alt", "D"]) {
-            eprintln!("the captured shortcut rendered as {:?}", caps());
+        if !settles(&|| shown() == "Ctrl + Alt + D") {
+            eprintln!("the captured shortcut rendered as {:?}", shown());
             return glib::ExitCode::FAILURE;
         }
         println!("shortcut-changed: Ctrl+Alt+D");
@@ -1803,7 +1815,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             .visible_dialog()
             .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
         else {
-            eprintln!("Change shortcut opened no capture dialog the second time");
+            eprintln!("Change opened no capture dialog the second time");
             return glib::ExitCode::FAILURE;
         };
         dialog.press(gtk::gdk::Key::a, gtk::gdk::ModifierType::empty());
@@ -1827,7 +1839,7 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             .visible_dialog()
             .and_then(|dialog| dialog.downcast::<ui::ShortcutDialog>().ok())
         else {
-            eprintln!("Change shortcut opened no capture dialog the third time");
+            eprintln!("Change opened no capture dialog the third time");
             return glib::ExitCode::FAILURE;
         };
         // Super+O is rotation lock's -static key, which cannot be taken.
@@ -2736,7 +2748,7 @@ fn ready_page(
         page.shortcut_keys(),
         page.shortcut_button(),
         overlay.clone(),
-        true,
+        crate::shortcut_ui::Surface::Row,
         Box::new({
             let row = page.shortcut_row();
             move |state, _| row.set_subtitle(&crate::shortcut_ui::row_subtitle(state))

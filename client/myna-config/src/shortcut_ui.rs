@@ -28,11 +28,20 @@ const BIND_TIMEOUT_MS: i32 = 150_000;
 /// Sets a surface's own text for a state.
 type Describe = Box<dyn Fn(&ShortcutState, ShortcutPath)>;
 
+/// How a surface draws the key and words its button.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Surface {
+    /// Onboarding's step: large key caps, a button that names the shortcut.
+    Onboarding,
+    /// A settings row: the key as dim text, a one-word button.
+    Row,
+}
+
 pub struct ShortcutControl {
     keys: gtk::Box,
     button: gtk::Button,
     overlay: adw::ToastOverlay,
-    compact: bool,
+    surface: Surface,
     describe: Describe,
     proxy: RefCell<Option<gio::DBusProxy>>,
     desktop: Option<DesktopShortcut>,
@@ -50,14 +59,14 @@ impl ShortcutControl {
         keys: gtk::Box,
         button: gtk::Button,
         overlay: adw::ToastOverlay,
-        compact: bool,
+        surface: Surface,
         describe: Describe,
     ) -> Rc<Self> {
         let control = Rc::new(Self {
             keys,
             button: button.clone(),
             overlay,
-            compact,
+            surface,
             describe,
             proxy: RefCell::new(None),
             desktop: DesktopShortcut::open(),
@@ -176,31 +185,30 @@ impl ShortcutControl {
         match &state {
             ShortcutState::Bound(description) => {
                 self.keys.set_visible(true);
-                fill_keys(&self.keys, description, self.compact);
+                fill_keys(&self.keys, description, self.surface);
             }
             _ => self.keys.set_visible(false),
         }
 
-        let (label, help) = match (path, &state) {
-            (ShortcutPath::Control, ShortcutState::Bound(_)) => (
-                gettextrs::gettext("Change shortcut"),
-                gettextrs::gettext("Press a different keyboard shortcut for dictation."),
+        let bound = matches!(state, ShortcutState::Bound(_) | ShortcutState::Unpublished);
+        let label = match (self.surface, bound) {
+            (Surface::Onboarding, true) => gettextrs::gettext("Change shortcut"),
+            (Surface::Onboarding, false) => gettextrs::gettext("Set up shortcut"),
+            (Surface::Row, true) => gettextrs::gettext("Change"),
+            (Surface::Row, false) => gettextrs::gettext("Set up"),
+        };
+        let help = match (path, &state) {
+            (ShortcutPath::Control, ShortcutState::Bound(_)) => {
+                gettextrs::gettext("Press a different keyboard shortcut for dictation.")
+            }
+            (ShortcutPath::Control, ShortcutState::Unbound | ShortcutState::NotRunning) => {
+                gettextrs::gettext("Add a keyboard shortcut for dictation to the desktop.")
+            }
+            (_, ShortcutState::Bound(_) | ShortcutState::Unpublished) => gettextrs::gettext(
+                "Open Myna in the desktop's Apps settings, where the dictation shortcut is changed.",
             ),
-            (ShortcutPath::Control, ShortcutState::Unbound | ShortcutState::NotRunning) => (
-                gettextrs::gettext("Set up shortcut"),
-                gettextrs::gettext("Add a keyboard shortcut for dictation to the desktop."),
-            ),
-            (_, ShortcutState::Bound(_) | ShortcutState::Unpublished) => (
-                gettextrs::gettext("Change shortcut"),
-                gettextrs::gettext(
-                    "Open Myna in the desktop's Apps settings, where the dictation shortcut is changed.",
-                ),
-            ),
-            (_, ShortcutState::Unbound | ShortcutState::NotRunning) => (
-                gettextrs::gettext("Set up shortcut"),
-                gettextrs::gettext(
-                    "Open the desktop's dialog to confirm a keyboard shortcut for dictation.",
-                ),
+            (_, ShortcutState::Unbound | ShortcutState::NotRunning) => gettextrs::gettext(
+                "Open the desktop's dialog to confirm a keyboard shortcut for dictation.",
             ),
         };
         self.button.set_label(&label);
@@ -406,25 +414,32 @@ pub fn row_subtitle(state: &ShortcutState) -> String {
     }
 }
 
-/// Key caps for the first accelerator in `description`, or the description
-/// itself when it names none GTK can parse.
-fn fill_keys(keys: &gtk::Box, description: &str, compact: bool) {
+/// The first accelerator in `description` drawn for `surface`, or the
+/// description itself when it names none GTK can parse.
+fn fill_keys(keys: &gtk::Box, description: &str, surface: Surface) {
     let caps = accelerators(description)
         .first()
         .and_then(|accelerator| key_caps(accelerator));
     let Some(caps) = caps else {
-        keys.append(&gtk::Label::new(Some(description)));
+        let label = gtk::Label::new(Some(description));
+        if surface == Surface::Row {
+            label.add_css_class("dim-label");
+        }
+        keys.append(&label);
         return;
     };
+    if surface == Surface::Row {
+        let label = gtk::Label::new(Some(&caps.join(" + ")));
+        label.add_css_class("dim-label");
+        keys.append(&label);
+        return;
+    }
     for (index, cap) in caps.iter().enumerate() {
         if index > 0 {
             keys.append(&gtk::Label::new(Some("+")));
         }
         let label = gtk::Label::new(Some(cap));
         label.add_css_class("keycap");
-        if compact {
-            label.add_css_class("compact");
-        }
         keys.append(&label);
     }
 }

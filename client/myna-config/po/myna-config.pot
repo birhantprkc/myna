@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-28 15:09+0100\n"
+"POT-Creation-Date: 2026-09-28 15:17+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -22,7 +22,7 @@ msgid "Switch active backend?"
 msgstr ""
 
 #: data/active-backend-dialog.blp:10 data/apply-dialog.blp:10
-#: src/backend_ui.rs:2038 src/shortcut_ui.rs:273
+#: src/backend_ui.rs:2038 src/shortcut_ui.rs:281
 msgid "Cancel"
 msgstr ""
 
@@ -116,7 +116,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:39 src/app.rs:1155 src/app.rs:2186
+#: data/main-window.blp:39 src/app.rs:1155 src/app.rs:2198
 #: src/diagnostics.rs:535
 msgid "Model"
 msgstr ""
@@ -154,24 +154,27 @@ msgid "Switch"
 msgstr ""
 
 #: data/myna-page.blp:33
-msgid "Keyboard Shortcut"
+msgid "Keyboard shortcut"
 msgstr ""
 
-#: data/myna-page.blp:36 data/myna-page.blp:54 data/onboarding-window.blp:7
-#: src/app.rs:1492 src/onboarding_ui.rs:456 src/shortcut_ui.rs:306
+#: data/myna-page.blp:36
+msgid "Press to start and stop"
+msgstr ""
+
+#: data/myna-page.blp:46 src/shortcut_ui.rs:198
+msgid "Set up"
+msgstr ""
+
+#: data/myna-page.blp:54 data/onboarding-window.blp:7 src/app.rs:1492
+#: src/onboarding_ui.rs:456 src/shortcut_ui.rs:314
 msgid "Dictation"
 msgstr ""
 
-#: data/myna-page.blp:46 data/onboarding-shortcut.blp:37 src/shortcut_ui.rs:190
-#: src/shortcut_ui.rs:200
-msgid "Set up shortcut"
-msgstr ""
-
-#: data/onboarding-components.blp:18 src/app.rs:2416 src/onboarding_ui.rs:457
+#: data/onboarding-components.blp:18 src/app.rs:2428 src/onboarding_ui.rs:457
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:27 src/app.rs:453 src/app.rs:2420
+#: data/onboarding-components.blp:27 src/app.rs:453 src/app.rs:2432
 msgid ""
 "Copy the command below and enter them in the Terminal to install all "
 "necessary components."
@@ -181,8 +184,12 @@ msgstr ""
 msgid "Copy install commands"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:18 src/app.rs:2469 src/onboarding_ui.rs:458
+#: data/onboarding-shortcut.blp:18 src/app.rs:2481 src/onboarding_ui.rs:458
 msgid "How to dictate"
+msgstr ""
+
+#: data/onboarding-shortcut.blp:37 src/shortcut_ui.rs:196
+msgid "Set up shortcut"
 msgstr ""
 
 #: data/onboarding-welcome.blp:24
@@ -197,7 +204,7 @@ msgstr ""
 msgid "Setting up dictation"
 msgstr ""
 
-#: data/onboarding-window.blp:43 src/app.rs:2529
+#: data/onboarding-window.blp:43 src/app.rs:2541
 msgid "All components installed"
 msgstr ""
 
@@ -241,11 +248,11 @@ msgstr ""
 msgid "Press Escape to cancel."
 msgstr ""
 
-#: data/status-page.blp:8 src/app.rs:1150 src/app.rs:2587
+#: data/status-page.blp:8 src/app.rs:1150 src/app.rs:2599
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:9 src/app.rs:1151 src/app.rs:2588
+#: data/status-page.blp:9 src/app.rs:1151 src/app.rs:2600
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -265,23 +272,23 @@ msgstr ""
 msgid "Backend diagnostics will appear after discovery."
 msgstr ""
 
-#: src/app.rs:2484 src/shortcut_ui.rs:383
+#: src/app.rs:2496 src/shortcut_ui.rs:391
 msgid "You can trigger Dictation anytime by using the keyboard shortcut:"
 msgstr ""
 
-#: src/app.rs:2592
+#: src/app.rs:2604
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:2593
+#: src/app.rs:2605
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:2609
+#: src/app.rs:2621
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:2962
+#: src/app.rs:2974
 msgid "Could not save the setting"
 msgstr ""
 
@@ -882,82 +889,86 @@ msgstr ""
 msgid "Commands copied. Paste them into a terminal."
 msgstr ""
 
-#: src/shortcut_ui.rs:186 src/shortcut_ui.rs:194
+#: src/shortcut_ui.rs:195
 msgid "Change shortcut"
 msgstr ""
 
-#: src/shortcut_ui.rs:187
+#: src/shortcut_ui.rs:197
+msgid "Change"
+msgstr ""
+
+#: src/shortcut_ui.rs:202
 msgid "Press a different keyboard shortcut for dictation."
 msgstr ""
 
-#: src/shortcut_ui.rs:191
+#: src/shortcut_ui.rs:205
 msgid "Add a keyboard shortcut for dictation to the desktop."
 msgstr ""
 
-#: src/shortcut_ui.rs:196
+#: src/shortcut_ui.rs:208
 msgid ""
 "Open Myna in the desktop's Apps settings, where the dictation shortcut is "
 "changed."
 msgstr ""
 
-#: src/shortcut_ui.rs:202
+#: src/shortcut_ui.rs:211
 msgid "Open the desktop's dialog to confirm a keyboard shortcut for dictation."
 msgstr ""
 
-#: src/shortcut_ui.rs:245
+#: src/shortcut_ui.rs:253
 msgid "{keys} is reserved for “{action}”. Press a different shortcut."
 msgstr ""
 
-#: src/shortcut_ui.rs:267
+#: src/shortcut_ui.rs:275
 msgid ""
 "{keys} is already used for “{action}”. Replacing it removes it from there."
 msgstr ""
 
-#: src/shortcut_ui.rs:272
+#: src/shortcut_ui.rs:280
 msgid "Replace Shortcut?"
 msgstr ""
 
-#: src/shortcut_ui.rs:274
+#: src/shortcut_ui.rs:282
 msgid "Replace"
 msgstr ""
 
-#: src/shortcut_ui.rs:293 src/shortcut_ui.rs:314 src/shortcut_ui.rs:354
+#: src/shortcut_ui.rs:301 src/shortcut_ui.rs:322 src/shortcut_ui.rs:362
 msgid "Could not set up the shortcut"
 msgstr ""
 
-#: src/shortcut_ui.rs:370
+#: src/shortcut_ui.rs:378
 msgid "Could not open the desktop settings"
 msgstr ""
 
-#: src/shortcut_ui.rs:380
+#: src/shortcut_ui.rs:388
 msgid "Set up a keyboard shortcut to trigger Dictation."
 msgstr ""
 
-#: src/shortcut_ui.rs:386
+#: src/shortcut_ui.rs:394
 msgid ""
 "Set up a keyboard shortcut to trigger Dictation. The desktop asks you to "
 "confirm it."
 msgstr ""
 
-#: src/shortcut_ui.rs:389
+#: src/shortcut_ui.rs:397
 msgid "Myna is not running yet. The shortcut can be set up once it starts."
 msgstr ""
 
-#: src/shortcut_ui.rs:392
+#: src/shortcut_ui.rs:400
 msgid ""
 "Dictation is triggered by the keyboard shortcut you chose the first time "
 "Myna asked for one. It is listed under Myna in the desktop's Apps settings."
 msgstr ""
 
-#: src/shortcut_ui.rs:401
+#: src/shortcut_ui.rs:409
 msgid "Not set up"
 msgstr ""
 
-#: src/shortcut_ui.rs:402
+#: src/shortcut_ui.rs:410
 msgid "Myna is not running"
 msgstr ""
 
-#: src/shortcut_ui.rs:404
+#: src/shortcut_ui.rs:412
 msgid "Listed under Myna in the desktop's Apps settings"
 msgstr ""
 

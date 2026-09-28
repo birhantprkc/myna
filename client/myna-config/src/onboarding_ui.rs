@@ -119,7 +119,7 @@ impl OnboardingUi {
             shortcut_page.shortcut_box(),
             shortcut_page.shortcut_button(),
             window.overlay(),
-            false,
+            crate::shortcut_ui::Surface::Onboarding,
             Box::new({
                 let description = shortcut_page.description();
                 move |state, path| {
