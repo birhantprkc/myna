@@ -13,7 +13,7 @@ The repository also contains model evaluation, benchmarking, packaging, and desk
 # Important
 
 - A change is done when `make check` and `make test-<component>` are green for every component touched, and `make coverage` passes its patch gate when logic was added or moved. `make preflight` is the merge bar. The rules, the red/green test discipline and when to reach for mutation testing are in `.kb/verification.md`.
-- Everything built from the tree carries one version, `dev/version.sh`'s, derived from the last `vX.Y.Z` tag: the snaps, the deb, the client binaries and the extension tarball. The Cargo and pyproject versions are `0.0.0` placeholders. Never hardcode a version in packaging.
+- Everything built from the tree carries one version, `dev/version.sh`'s, derived from the last `vX.Y.Z` tag: the snaps, the deb, the client binaries and the extension tarball. Releasing is tagging; the Cargo and pyproject `0.0.0` versions are placeholders, never bumped. Never hardcode a version in packaging. See `.kb/versioning.md`.
 
 # Architecture
 
@@ -43,6 +43,7 @@ The client pushes PCM to a backend; inference snaps never access the microphone.
 - `.kb/repository-layout.md` - Repository boundaries and placement rules.
 - `.kb/session-contract.md` - Durable cross-language session and streaming semantics.
 - `.kb/system-architecture.md` - High-level runtime components and trust boundaries.
+- `.kb/versioning.md` - The single version source, how each artifact receives it, and why the manifests say `0.0.0`.
 - `.kb/verification.md` - What done means: the gates, patch coverage, red/green tests and scoped mutation testing.
 - `client/AGENTS.md` - Rust client architecture and local knowledge.
 - `server/AGENTS.md` - Python server, inference, packaging, and benchmark knowledge.
