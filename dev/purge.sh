@@ -127,6 +127,12 @@ echo "files:"
 remove_path "$HOME/.local/share/applications/com.canonical.Myna.Config.desktop"
 remove_path "$HOME/.local/share/icons/hicolor/scalable/apps/com.canonical.Myna.Config.svg"
 remove_path "$HOME/.local/share/icons/hicolor/scalable/apps/com.canonical.Myna.svg"
+# GTK trusts the cache over the directory: a cache still listing the removed
+# icons hides every other copy of them.
+ICONS="$HOME/.local/share/icons/hicolor"
+if [ -f "$ICONS/icon-theme.cache" ]; then
+    run gtk-update-icon-cache -f -t -q "$ICONS"
+fi
 remove_path "$HOME/.local/share/gnome-shell/extensions/$EXTENSION"
 # A packaged copy (gnome-shell-ubuntu-extensions) keeps its enablement.
 if [ ! -e "/usr/share/gnome-shell/extensions/$EXTENSION" ]; then
