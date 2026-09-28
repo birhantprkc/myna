@@ -171,6 +171,48 @@ fn load_builds_rows_only_from_adapter_metadata() {
 }
 
 #[test]
+fn dictation_rows_follow_the_designed_order_not_the_schema_order() {
+    let text = |key| {
+        metadata(
+            key,
+            ClientSettingValue::Text(String::new()),
+            SettingRange::Unrestricted,
+            true,
+        )
+    };
+    let fake = FakeSettings::with_rows(
+        [
+            "a-future-key",
+            "hud-style",
+            "language",
+            "silence-timeout",
+            "streaming-mode",
+        ]
+        .map(text)
+        .to_vec(),
+    );
+    let controller = MynaSettingsController::load(fake);
+
+    let PageState::Ready(loaded) = controller.state() else {
+        panic!("expected ready state");
+    };
+    let keys: Vec<_> = loaded
+        .iter()
+        .map(|row| row.metadata().key().as_str().to_owned())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "streaming-mode",
+            "hud-style",
+            "silence-timeout",
+            "a-future-key",
+            "language",
+        ]
+    );
+}
+
+#[test]
 fn edit_saves_immediately_and_marks_only_that_row_pending() {
     let fake = FakeSettings::with_rows(rows());
     let controller = MynaSettingsController::load(fake.clone());

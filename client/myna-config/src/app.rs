@@ -2284,6 +2284,38 @@ fn backends_probe() -> glib::ExitCode {
     }
     println!("backends-discovered: 2");
 
+    let groups = descendants(&general, &|widget| widget.is::<adw::PreferencesGroup>())
+        .into_iter()
+        .filter_map(|group| group.downcast::<adw::PreferencesGroup>().ok())
+        .filter(|group| group.is_visible())
+        .collect::<Vec<_>>();
+    let group_titles: Vec<_> = groups
+        .iter()
+        .map(|group| group.title().to_string())
+        .collect();
+    if group_titles != ["Keyboard shortcut", "Dictation", "Model"] {
+        eprintln!("General's groups read {group_titles:?}");
+        return glib::ExitCode::FAILURE;
+    }
+    let dictation_rows: Vec<_> = descendants(groups[1].upcast_ref(), &|widget| {
+        widget.is::<adw::PreferencesRow>()
+    })
+    .into_iter()
+    .filter_map(|row| row.downcast::<adw::PreferencesRow>().ok())
+    .map(|row| row.title().to_string())
+    .collect();
+    if dictation_rows
+        != [
+            "When to transcribe",
+            "Indicator style",
+            "Stop after silence (seconds)",
+        ]
+    {
+        eprintln!("the Dictation rows read {dictation_rows:?}");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("general-order: ok");
+
     // General lists the installed models last, each a radio row that
     // describes its family, with the connected one chosen.
     let model_rows = || {

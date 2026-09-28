@@ -74,6 +74,20 @@ pub fn widget_plan(metadata: &ClientSettingMetadata) -> WidgetPlan {
     }
 }
 
+/// The Dictation group's order; any other key follows, in the adapter's order.
+const DICTATION_ORDER: [&str; 3] = [
+    KEY_STREAMING_MODE,
+    myna_core::settings::KEY_HUD_STYLE,
+    myna_core::settings::KEY_SILENCE_TIMEOUT,
+];
+
+fn display_rank(key: &str) -> usize {
+    DICTATION_ORDER
+        .iter()
+        .position(|ranked| *ranked == key)
+        .unwrap_or(DICTATION_ORDER.len())
+}
+
 /// Schema order is storage order; the dropdown leads with the default.
 fn default_first(choices: &[String], default: &ClientSettingValue) -> Vec<String> {
     let mut ordered = choices.to_vec();
@@ -368,7 +382,8 @@ impl MynaSettingsController {
 
         let state = match controller.settings.list() {
             Ok(rows) if rows.is_empty() => PageState::Empty,
-            Ok(rows) => PageState::Ready(
+            Ok(mut rows) => PageState::Ready({
+                rows.sort_by_key(|metadata| display_rank(metadata.key().as_str()));
                 rows.into_iter()
                     .map(|metadata| SettingRow {
                         value: metadata.current_value().clone(),
@@ -376,8 +391,8 @@ impl MynaSettingsController {
                         metadata,
                         pending: false,
                     })
-                    .collect(),
-            ),
+                    .collect()
+            }),
             Err(error) => PageState::Error(error.to_string()),
         };
         *controller.state.borrow_mut() = state;
