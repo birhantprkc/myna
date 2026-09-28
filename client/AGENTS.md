@@ -14,7 +14,7 @@ The client is a Rust workspace that turns activation events into bounded microph
 
 # Directory
 
-- `myna-core/` - Shared audio, event, settings, and wire types.
+- `myna-core/` - Shared audio, event, settings, and wire types, plus the language-to-model recommendation.
 - `myna-audio/` - Native PipeWire capture and device discovery.
 - `myna-orchestrator/` - Session and residency state machines plus boundary traits.
 - `myna-cli/` - `myna-testbed` development binary.
@@ -29,5 +29,6 @@ The client is a Rust workspace that turns activation events into bounded microph
 - `.kb/audio-capture.md` - Capture ownership, buffering, format, and privacy invariants.
 - `.kb/crate-architecture.md` - Cargo dependencies and runtime integration boundaries.
 - `.kb/desktop-integration.md` - Activation, focus, injection, and indication behavior.
+- `.kb/model-recommendation.md` - How the recommended model family follows the user's language.
 - `.kb/runtime-settings.md` - Persisted client settings, streaming mode, and live reload.
 - `myna-config/AGENTS.md` - Privilege paths, plan executor, and refresh budget of Myna Settings.
