@@ -34,7 +34,7 @@ use crate::diagnostics::{
 };
 use crate::domain::{ActiveBackendState, BackendIdentity, ConfigValue, ServiceState};
 use crate::markup::escape_markup;
-use crate::model_family::model_family;
+use crate::model_family::{is_recommended, model_family, recommended_family, recommended_first};
 use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::performance::PerformanceFacts;
 use crate::ports::{BackendRepository, SystemConfigurator};
@@ -46,7 +46,30 @@ struct ModelRow {
     row: adw::ActionRow,
     /// None when the row is the only model and already connected.
     radio: Option<gtk::CheckButton>,
+    pill: gtk::Label,
     spinner: gtk::Spinner,
+}
+
+impl ModelRow {
+    /// What a screen reader lands on: the radio, or the row when there is none.
+    fn focus_target(&self) -> gtk::Widget {
+        self.radio
+            .clone()
+            .map(Cast::upcast)
+            .unwrap_or_else(|| self.row.clone().upcast())
+    }
+}
+
+/// A model row's accessible description: its subtitle, then the pill's text
+/// when it is recommended. libadwaita describes the row by its subtitle
+/// label, which GTK 4.14 reads out as nothing, so the rows say it instead.
+fn model_description(subtitle: Option<&str>, pill: Option<&str>) -> Option<String> {
+    let parts: Vec<&str> = [subtitle, pill]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
 /// Runtime coordinator that keeps the Backend/Diagnostics tabs in sync with a
@@ -67,6 +90,9 @@ pub struct BackendUi {
     model_radio_group: gtk::CheckButton,
     /// Set while rendering marks a radio, so the mark is not taken as a choice.
     marking_models: std::cell::Cell<bool>,
+    /// The user's languages, most preferred first, once read off the main
+    /// thread; no model is recommended until then.
+    preferred_languages: RefCell<Option<Vec<String>>>,
     this: std::rc::Weak<Self>,
     operation_coordinator: OperationCoordinator,
     active_backend: ActiveBackendController,
@@ -199,7 +225,7 @@ impl BackendUi {
             Rc::new(SnapBackendRepository::new(Arc::new(GioCommandRunner)));
         let configurator: Rc<dyn SystemConfigurator> =
             Rc::new(PkexecSystemConfigurator::new(Arc::new(GioCommandRunner)));
-        Self::install_with_ports(
+        let ui = Self::install_with_ports(
             repository,
             configurator,
             view_stack,
@@ -208,7 +234,11 @@ impl BackendUi {
             overlay,
             myna_page,
             diagnostics_page,
-        )
+        );
+        ui.read_preferred_languages(|| {
+            myna_core::locale::preferred_languages(&myna_core::locale::SystemLocale::default())
+        });
+        ui
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -231,6 +261,7 @@ impl BackendUi {
             model_rows: RefCell::new(Vec::new()),
             model_radio_group: gtk::CheckButton::new(),
             marking_models: std::cell::Cell::new(false),
+            preferred_languages: RefCell::new(None),
             controller,
             configurator,
             view_stack: view_stack.clone(),
@@ -274,6 +305,26 @@ impl BackendUi {
         ui.trigger_discovery();
 
         ui
+    }
+
+    /// Runs `read` off the main thread, since the system reader may block on
+    /// the system bus, and recommends a model once it answers.
+    pub(crate) fn read_preferred_languages(
+        self: &Rc<Self>,
+        read: impl FnOnce() -> Vec<String> + Send + 'static,
+    ) {
+        let ui = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let languages = gio::spawn_blocking(read).await;
+            if let (Some(ui), Ok(languages)) = (ui.upgrade(), languages) {
+                ui.set_preferred_languages(languages);
+            }
+        });
+    }
+
+    pub(crate) fn set_preferred_languages(&self, languages: Vec<String>) {
+        *self.preferred_languages.borrow_mut() = Some(languages);
+        self.render_model_group();
     }
 
     /// Choosing a model is the go-ahead: snapd's own authorization prompt is
@@ -378,7 +429,13 @@ impl BackendUi {
         };
         let group = page.model_group();
         let snapshot = self.active_backend.snapshot();
-        let backends = snapshot.backends();
+        let recommended = self
+            .preferred_languages
+            .borrow()
+            .as_deref()
+            .and_then(|languages| recommended_family(snapshot.backends(), languages));
+        let ordered = recommended_first(snapshot.backends(), recommended);
+        let backends = ordered.as_slice();
         let selectable = backends.len() > 1
             || !matches!(snapshot.active_state(), ActiveBackendState::Connected(_));
         let (listed, listed_selectable) = {
@@ -418,6 +475,18 @@ impl BackendUi {
         for row in self.model_rows.borrow().iter() {
             if let Some(radio) = &row.radio {
                 radio.set_active(chosen.as_ref() == Some(&row.backend));
+            }
+            let recommended = is_recommended(&row.backend, recommended);
+            row.pill.set_visible(recommended);
+            let subtitle = row.row.subtitle();
+            let pill = row.pill.label();
+            match model_description(subtitle.as_deref(), recommended.then_some(pill.as_str())) {
+                Some(description) => row
+                    .focus_target()
+                    .update_property(&[gtk::accessible::Property::Description(&description)]),
+                None => row
+                    .focus_target()
+                    .reset_property(gtk::AccessibleProperty::Description),
             }
             let switching = switching_to.as_ref() == Some(&row.backend);
             row.spinner.set_visible(switching);
@@ -473,6 +542,12 @@ impl BackendUi {
                 });
                 radio
             });
+            let pill = gtk::Label::builder()
+                .label(gettextrs::gettext("Recommended"))
+                .valign(gtk::Align::Center)
+                .css_classes(["recommended-pill"])
+                .visible(false)
+                .build();
             let spinner = gtk::Spinner::builder()
                 .valign(gtk::Align::Center)
                 .visible(false)
@@ -483,13 +558,18 @@ impl BackendUi {
             if let Some(radio) = &radio {
                 row.add_prefix(radio);
                 row.set_activatable_widget(Some(radio));
+                radio.reset_relation(gtk::AccessibleRelation::DescribedBy);
+            } else {
+                row.reset_relation(gtk::AccessibleRelation::DescribedBy);
             }
+            row.add_suffix(&pill);
             row.add_suffix(&spinner);
             group.add(&row);
             rows.push(ModelRow {
                 backend: backend.clone(),
                 row,
                 radio,
+                pill,
                 spinner,
             });
         }
@@ -2605,6 +2685,7 @@ mod tests {
             model_rows: RefCell::new(Vec::new()),
             model_radio_group: gtk::CheckButton::new(),
             marking_models: std::cell::Cell::new(false),
+            preferred_languages: RefCell::new(None),
             controller,
             configurator: Rc::new(PkexecSystemConfigurator::new(Arc::new(GioCommandRunner))),
             view_stack: view_stack.clone(),
@@ -2896,6 +2977,152 @@ mod tests {
                     .collect::<Vec<_>>(),
                 [("Parakeet".to_owned(), None)]
             );
+        });
+    }
+
+    /// The General tab's model rows in order, each with whether it shows the
+    /// Recommended pill.
+    fn recommended_rows(ui: &BackendUi) -> Vec<(String, bool)> {
+        let pill = gettextrs::gettext("Recommended");
+        listed_rows(ui)
+            .into_iter()
+            .map(|row| {
+                let shown = descendants(row.upcast_ref())
+                    .into_iter()
+                    .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+                    .any(|label| label.label() == pill && label.is_visible());
+                (row.title().to_string(), shown)
+            })
+            .collect()
+    }
+
+    fn listed_rows(ui: &BackendUi) -> Vec<adw::ActionRow> {
+        let group = ui
+            .myna_selector
+            .as_ref()
+            .expect("general page")
+            .model_group();
+        descendants(group.upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<adw::ActionRow>().ok())
+            .collect()
+    }
+
+    fn two_models_for(languages: &[&str]) -> Rc<BackendUi> {
+        let ui = general_ui_with(
+            PARAKEET_CONNECTED_WHISPER_INSTALLED,
+            PARAKEET_AND_WHISPER_SLOTS,
+        );
+        ui.set_preferred_languages(languages.iter().map(|l| l.to_string()).collect());
+        ui
+    }
+
+    #[test]
+    fn the_recommended_model_sorts_first_with_a_pill() {
+        on_gtk_thread(|| {
+            assert_eq!(
+                recommended_rows(&two_models_for(&["en_US", "en"])),
+                [("Parakeet".to_owned(), true), ("Whisper".to_owned(), false)]
+            );
+            let ui = two_models_for(&["zh_CN"]);
+            assert_eq!(
+                recommended_rows(&ui),
+                [("Whisper".to_owned(), true), ("Parakeet".to_owned(), false)]
+            );
+            let marked = ui
+                .model_rows
+                .borrow()
+                .iter()
+                .map(|row| row.radio.as_ref().expect("radio").is_active())
+                .collect::<Vec<_>>();
+            assert_eq!(marked, [false, true], "the connected Parakeet stays chosen");
+        });
+    }
+
+    const THREE_MODEL_SLOTS: &str = "name: content\nslots:\n  \
+         - myna-parakeet:provider:\n      content: inference-provider\n  \
+         - myna-whisper:provider:\n      content: inference-provider\n  \
+         - myna-fake-backend:provider:\n      content: inference-provider\n";
+    const PARAKEET_CONNECTED_TWO_MORE_INSTALLED: &str = "Interface Plug Slot Notes\n\
+         content[inference-provider] myna:backend myna-parakeet:provider manual\n\
+         content - myna-whisper:provider -\n\
+         content - myna-fake-backend:provider -\n";
+
+    #[test]
+    fn a_model_is_described_by_its_subtitle_then_its_pill() {
+        assert_eq!(model_description(None, None), None);
+        assert_eq!(model_description(Some(""), None), None);
+        assert_eq!(
+            model_description(Some("Fast"), None),
+            Some("Fast".to_owned())
+        );
+        assert_eq!(
+            model_description(None, Some("Recommended")),
+            Some("Recommended".to_owned())
+        );
+        assert_eq!(
+            model_description(Some("Fast"), Some("Recommended")),
+            Some("Fast\nRecommended".to_owned())
+        );
+    }
+
+    #[test]
+    fn no_pill_until_the_language_is_known() {
+        on_gtk_thread(|| {
+            let ui = general_ui_with(PARAKEET_CONNECTED_TWO_MORE_INSTALLED, THREE_MODEL_SLOTS);
+            let unknown = recommended_rows(&ui);
+            assert_eq!(unknown.len(), 3);
+            assert!(
+                unknown.iter().all(|(_, pill)| !pill),
+                "a pill before the language is known: {unknown:?}"
+            );
+            ui.set_preferred_languages(vec!["en_US".to_owned()]);
+            assert_eq!(recommended_rows(&ui)[0], ("Parakeet".to_owned(), true));
+            assert_eq!(
+                recommended_rows(&ui)
+                    .iter()
+                    .filter(|(_, pill)| *pill)
+                    .count(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    fn the_language_is_read_off_the_main_thread_then_recommends() {
+        on_gtk_thread(|| {
+            let ui = general_ui_with(
+                PARAKEET_CONNECTED_WHISPER_INSTALLED,
+                PARAKEET_AND_WHISPER_SLOTS,
+            );
+            let main = std::thread::current().id();
+            let (read_on_tx, read_on) = std::sync::mpsc::channel();
+            ui.read_preferred_languages(move || {
+                read_on_tx.send(std::thread::current().id()).ok();
+                vec!["zh_CN".to_owned()]
+            });
+            let context = glib::MainContext::default();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !recommended_rows(&ui)[0].1 && std::time::Instant::now() < deadline {
+                context.iteration(false);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert_eq!(
+                recommended_rows(&ui),
+                [("Whisper".to_owned(), true), ("Parakeet".to_owned(), false)]
+            );
+            assert_ne!(read_on.recv().ok(), Some(main));
+        });
+    }
+
+    #[test]
+    fn a_lone_model_shows_its_pill_only_when_it_is_the_recommendation() {
+        on_gtk_thread(|| {
+            let ui = general_ui(PARAKEET_CONNECTED);
+            ui.set_preferred_languages(vec!["de_DE".to_owned()]);
+            assert_eq!(recommended_rows(&ui), [("Parakeet".to_owned(), true)]);
+            ui.set_preferred_languages(vec!["ja_JP".to_owned()]);
+            assert_eq!(recommended_rows(&ui), [("Parakeet".to_owned(), false)]);
         });
     }
 

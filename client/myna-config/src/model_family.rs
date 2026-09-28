@@ -1,4 +1,13 @@
-//! What Settings calls each model family Myna knows, keyed by backend snap.
+//! What Settings calls each model family Myna knows, keyed by backend snap,
+//! and which installed one it recommends for the user's language.
+
+use myna_core::language::{recommend_among, ModelFamily as Family};
+
+use crate::domain::BackendIdentity;
+
+/// Families the store publishes, so the user can get them without
+/// sideloading.
+pub const PUBLISHED: [Family; 2] = [Family::Parakeet, Family::Whisper];
 
 /// A backend as the model list shows it: a name and, for a family Myna
 /// knows, a one-line description.
@@ -13,21 +22,52 @@ pub fn model_family(snap_name: &str) -> ModelFamily {
         name: name.to_owned(),
         description: Some(description),
     };
-    match snap_name {
-        "myna-parakeet" => known(
+    match Family::from_snap_name(snap_name) {
+        Some(Family::Parakeet) => known(
             "Parakeet",
             gettextrs::gettext("Fastest, good support for European languages"),
         ),
-        "myna-whisper" => known("Whisper", gettextrs::gettext("Widest language support")),
-        "myna-funasr" => known(
+        Some(Family::Whisper) => known("Whisper", gettextrs::gettext("Widest language support")),
+        Some(Family::FunAsr) => known(
             "FunASR",
             gettextrs::gettext("Good support for English, Chinese, Japanese and Korean"),
         ),
-        _ => ModelFamily {
+        None => ModelFamily {
             name: title_from_snap(snap_name),
             description: None,
         },
     }
+}
+
+/// The family to recommend for `languages` among those installed or
+/// published, whether or not it is installed yet.
+pub fn recommended_family(backends: &[BackendIdentity], languages: &[String]) -> Option<Family> {
+    let mut candidates = PUBLISHED.to_vec();
+    for backend in backends {
+        if let Some(family) = Family::from_snap_name(backend.snap_name()) {
+            if !candidates.contains(&family) {
+                candidates.push(family);
+            }
+        }
+    }
+    recommend_among(languages, &candidates)
+}
+
+/// Whether `backend` belongs to the `recommended` family; a backend of no
+/// known family never does.
+pub fn is_recommended(backend: &BackendIdentity, recommended: Option<Family>) -> bool {
+    recommended.is_some_and(|family| Family::from_snap_name(backend.snap_name()) == Some(family))
+}
+
+/// `backends` with the recommended family's first, the rest in order.
+pub fn recommended_first(
+    backends: &[BackendIdentity],
+    recommended: Option<Family>,
+) -> Vec<BackendIdentity> {
+    let (first, rest): (Vec<&BackendIdentity>, Vec<&BackendIdentity>) = backends
+        .iter()
+        .partition(|backend| is_recommended(backend, recommended));
+    first.into_iter().chain(rest).cloned().collect()
 }
 
 /// `myna-fake-backend` reads as "Fake Backend".
@@ -95,5 +135,92 @@ mod tests {
         );
         assert_eq!(described("other_asr"), ("Other Asr".to_owned(), None));
         assert_eq!(described("myna-éclair"), ("Éclair".to_owned(), None));
+    }
+
+    fn installed(snaps: &[&str]) -> Vec<BackendIdentity> {
+        snaps
+            .iter()
+            .map(|snap| BackendIdentity::new(*snap, "provider"))
+            .collect()
+    }
+
+    fn recommended(snaps: &[&str], language: &str) -> Option<Family> {
+        recommended_family(&installed(snaps), &[language.to_owned()])
+    }
+
+    #[test]
+    fn the_recommendation_follows_the_language_among_installed_models() {
+        let both = ["myna-parakeet", "myna-whisper"];
+        assert_eq!(recommended(&both, "en_US"), Some(Family::Parakeet));
+        assert_eq!(recommended(&both, "de"), Some(Family::Parakeet));
+        assert_eq!(recommended(&both, "zh_CN"), Some(Family::Whisper));
+        assert_eq!(recommended(&both, "cy_GB"), Some(Family::Whisper));
+    }
+
+    #[test]
+    fn a_sideloaded_family_competes_but_an_unpublished_one_does_not() {
+        assert_eq!(
+            recommended(&["myna-funasr", "myna-whisper"], "zh_CN"),
+            Some(Family::FunAsr)
+        );
+        assert_eq!(
+            recommended(&["myna-parakeet"], "ja_JP"),
+            Some(Family::Whisper)
+        );
+    }
+
+    #[test]
+    fn a_published_family_is_recommended_before_it_is_installed() {
+        assert_eq!(
+            recommended(&["myna-whisper"], "fr_FR"),
+            Some(Family::Parakeet)
+        );
+        assert_eq!(
+            recommended(&["myna-fake-backend"], "pt_BR"),
+            Some(Family::Parakeet)
+        );
+        assert_eq!(recommended(&[], "ko"), Some(Family::Whisper));
+    }
+
+    fn snaps(backends: &[BackendIdentity]) -> Vec<&str> {
+        backends.iter().map(BackendIdentity::snap_name).collect()
+    }
+
+    #[test]
+    fn the_recommended_model_sorts_first_and_the_rest_keep_their_order() {
+        let backends = installed(&["myna-fake-backend", "myna-parakeet", "myna-whisper"]);
+        assert_eq!(
+            snaps(&recommended_first(&backends, Some(Family::Whisper))),
+            ["myna-whisper", "myna-fake-backend", "myna-parakeet"]
+        );
+        assert_eq!(
+            snaps(&recommended_first(&backends, Some(Family::Parakeet))),
+            ["myna-parakeet", "myna-fake-backend", "myna-whisper"]
+        );
+        assert_eq!(
+            snaps(&recommended_first(&backends, Some(Family::FunAsr))),
+            ["myna-fake-backend", "myna-parakeet", "myna-whisper"]
+        );
+        assert_eq!(
+            snaps(&recommended_first(&backends, None)),
+            ["myna-fake-backend", "myna-parakeet", "myna-whisper"]
+        );
+        let unknown_later = installed(&["myna-parakeet", "myna-fake-backend", "myna-whisper"]);
+        assert_eq!(
+            snaps(&recommended_first(&unknown_later, None)),
+            ["myna-parakeet", "myna-fake-backend", "myna-whisper"],
+            "no recommendation leaves the order alone"
+        );
+    }
+
+    #[test]
+    fn a_backend_of_no_known_family_is_never_recommended() {
+        let fake = BackendIdentity::new("myna-fake-backend", "provider");
+        let parakeet = BackendIdentity::new("myna-parakeet", "provider");
+        assert!(!is_recommended(&fake, None));
+        assert!(!is_recommended(&fake, Some(Family::Parakeet)));
+        assert!(!is_recommended(&parakeet, None));
+        assert!(!is_recommended(&parakeet, Some(Family::Whisper)));
+        assert!(is_recommended(&parakeet, Some(Family::Parakeet)));
     }
 }
