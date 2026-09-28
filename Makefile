@@ -127,7 +127,7 @@ i18n: ## Regenerate the translation templates (po/*.pot for myna-desktop, myna-o
 	$(WS) i18n
 
 .PHONY: i18n-check
-i18n-check: ## Fail if a committed .pot is stale, or a .po catalog is invalid
+i18n-check: ## Fail if a committed .pot is stale, a source file is missing from POTFILES.in, or a .po catalog is invalid
 	$(WS) i18n-check
 
 ##@ Test

@@ -17,7 +17,7 @@ Myna Settings is a host application, not a snap. It talks to snapd on the user's
 - Subprocess spawning is budgeted per refresh reason (`docs/refresh-budget.md`). A new `snap` read must fit the budget or change it explicitly.
 - The diagnostics page measures CPU clock under load and pressure stalls on every refresh (`docs/performance-warnings.md`). Verdicts are enums in `performance.rs`; wording lives in the presenter. A host the reader cannot understand must render as unknown, never as a warning.
 - Domain and controller modules are GTK-free and tested headlessly. Keep GTK to `ui/`, `*_ui.rs`, and `app.rs`.
-- Every user-visible string goes through gettext. Adding or changing one requires `make i18n` and committing the template; `make check` fails while it drifts.
+- Every user-visible string goes through gettext. A new file with such a string must be added to `po/POTFILES.in`. Adding or changing one requires `make i18n` and committing the template; `make check` fails while either drifts.
 - Strict confinement was measured and rejected (`docs/confinement.md`). Do not reopen it without new evidence.
 - The GSettings schema this application writes is owned by `client/data/` and shared with the daemon.
 - The deb builds against each series' own GTK and libadwaita. Noble's 4.14 and 1.5 are the floor, and the main workshop's newer toolkit hides their bugs: an unscrolled page of wrapping labels overflows the window, a dialog with no focusable child never receives keys, a fixed-size dialog warns when its content grows. `make test-noble` runs this crate's suites there, and the startup and shortcut tests fail on any toolkit warning.
