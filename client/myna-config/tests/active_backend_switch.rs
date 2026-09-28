@@ -650,18 +650,21 @@ fn controller_uses_the_shared_apply_switch_gate() {
 }
 
 #[test]
-fn selector_only_marks_a_backend_selected_for_one_actual_connection() {
+fn selector_only_marks_a_backend_chosen_for_one_actual_connection() {
     let disconnected = ActiveBackendController::with_coordinator(
         connections(&["myna-parakeet", "myna-whisper"], &[]),
         OperationCoordinator::new(),
     );
-    assert_eq!(disconnected.selected_index(), None);
+    assert_eq!(disconnected.chosen(), None);
 
     let connected = ActiveBackendController::with_coordinator(
         connections(&["myna-parakeet", "myna-whisper"], &["myna-whisper"]),
         OperationCoordinator::new(),
     );
-    assert_eq!(connected.selected_index(), Some(1));
+    assert_eq!(
+        connected.chosen(),
+        Some(BackendIdentity::new("myna-whisper", "provider"))
+    );
 
     let multiple = ActiveBackendController::with_coordinator(
         connections(
@@ -670,7 +673,43 @@ fn selector_only_marks_a_backend_selected_for_one_actual_connection() {
         ),
         OperationCoordinator::new(),
     );
-    assert_eq!(multiple.selected_index(), None);
+    assert_eq!(multiple.chosen(), None);
+}
+
+#[test]
+fn a_pending_switch_marks_its_target_chosen_until_it_completes() {
+    let controller = ActiveBackendController::with_coordinator(
+        connections(&["myna-parakeet", "myna-whisper"], &["myna-parakeet"]),
+        OperationCoordinator::new(),
+    );
+    let whisper = BackendIdentity::new("myna-whisper", "provider");
+    let switch = controller.begin(whisper.clone()).unwrap();
+    assert_eq!(controller.chosen(), Some(whisper));
+
+    assert!(controller.complete(
+        switch.operation_token(),
+        SwitchOutcome::Cancelled {
+            completed: vec![],
+            final_snapshot: Some(connections(
+                &["myna-parakeet", "myna-whisper"],
+                &["myna-parakeet"],
+            )),
+            discovery_error: None,
+        }
+    ));
+    assert_eq!(
+        controller.chosen(),
+        Some(BackendIdentity::new("myna-parakeet", "provider"))
+    );
+
+    controller
+        .begin(BackendIdentity::new("myna-whisper", "provider"))
+        .unwrap();
+    controller.abandon();
+    assert_eq!(
+        controller.chosen(),
+        Some(BackendIdentity::new("myna-parakeet", "provider"))
+    );
 }
 
 /// A store install auto-connects a same-publisher backend, and the daemon may

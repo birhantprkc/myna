@@ -409,6 +409,8 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in [
         "backends-discovered: 2",
+        "model-group: lists the installed models",
+        "model-group: declining keeps the model",
         "backend-snapshot: read",
         "backend-edit: staged",
         "backend-apply: read back",

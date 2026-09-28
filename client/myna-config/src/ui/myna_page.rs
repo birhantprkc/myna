@@ -13,12 +13,6 @@ mod imp {
         #[template_child]
         pub preferences_page: gtk::TemplateChild<adw::PreferencesPage>,
         #[template_child]
-        pub active_backend_group: gtk::TemplateChild<adw::PreferencesGroup>,
-        #[template_child]
-        pub active_backend_row: gtk::TemplateChild<adw::ComboRow>,
-        #[template_child]
-        pub switch_backend_button: gtk::TemplateChild<gtk::Button>,
-        #[template_child]
         pub shortcut_group: gtk::TemplateChild<adw::PreferencesGroup>,
         #[template_child]
         pub shortcut_row: gtk::TemplateChild<adw::ActionRow>,
@@ -28,6 +22,8 @@ mod imp {
         pub shortcut_button: gtk::TemplateChild<gtk::Button>,
         #[template_child]
         pub settings_group: gtk::TemplateChild<adw::PreferencesGroup>,
+        #[template_child]
+        pub model_group: gtk::TemplateChild<adw::PreferencesGroup>,
     }
 
     #[glib::object_subclass]
@@ -70,16 +66,8 @@ impl MynaPage {
         self.imp().settings_group.get()
     }
 
-    pub fn active_backend_group(&self) -> adw::PreferencesGroup {
-        self.imp().active_backend_group.get()
-    }
-
-    pub fn active_backend_row(&self) -> adw::ComboRow {
-        self.imp().active_backend_row.get()
-    }
-
-    pub fn switch_backend_button(&self) -> gtk::Button {
-        self.imp().switch_backend_button.get()
+    pub fn model_group(&self) -> adw::PreferencesGroup {
+        self.imp().model_group.get()
     }
 
     pub fn shortcut_group(&self) -> adw::PreferencesGroup {

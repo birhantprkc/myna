@@ -1021,10 +1021,8 @@ fn template_probe() -> glib::ExitCode {
     let myna = ui::MynaPage::new();
     let _ = (
         myna.preferences_page(),
-        myna.active_backend_group(),
-        myna.active_backend_row(),
-        myna.switch_backend_button(),
         myna.settings_group(),
+        myna.model_group(),
         myna.shortcut_group(),
         myna.shortcut_row(),
         myna.shortcut_keys(),
@@ -2152,6 +2150,7 @@ fn backends_probe() -> glib::ExitCode {
     };
     general_nav.replace(std::slice::from_ref(&myna_page));
     window.present();
+    let general = myna_page.clone().upcast::<gtk::Widget>();
 
     let machine = ProbeMachine::new();
     let ui = crate::backend_ui::BackendUi::install_with_ports(
@@ -2191,6 +2190,101 @@ fn backends_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("backends-discovered: 2");
+
+    // General lists the installed models last, each a radio row that
+    // describes its family, with the connected one chosen.
+    let model_rows = || {
+        let groups = descendants(&general, &|widget| widget.is::<adw::PreferencesGroup>());
+        let Some(group) = groups
+            .last()
+            .and_then(|group| group.downcast_ref::<adw::PreferencesGroup>())
+            .filter(|group| group.title() == gettextrs::gettext("Model").as_str())
+            .cloned()
+        else {
+            return Vec::new();
+        };
+        descendants(group.upcast_ref(), &|widget| widget.is::<adw::ActionRow>())
+            .into_iter()
+            .filter_map(|row| {
+                let row = row.downcast::<adw::ActionRow>().ok()?;
+                let radio =
+                    find_descendant(row.upcast_ref(), &|widget| widget.is::<gtk::CheckButton>())?
+                        .downcast::<gtk::CheckButton>()
+                        .ok()
+                        .filter(|radio| radio.accessible_role() == gtk::AccessibleRole::Radio)?;
+                Some((row, radio))
+            })
+            .collect::<Vec<_>>()
+    };
+    let chosen = || {
+        model_rows()
+            .iter()
+            .filter(|(_, radio)| radio.is_active())
+            .map(|(row, _)| row.title().to_string())
+            .collect::<Vec<_>>()
+    };
+    let described = |rows: &[(adw::ActionRow, gtk::CheckButton)]| {
+        rows.iter()
+            .map(|(row, _)| {
+                (
+                    row.title().to_string(),
+                    row.subtitle().unwrap_or_default().to_string(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![
+        (
+            "Parakeet".to_owned(),
+            gettextrs::gettext("Fastest, good support for European languages"),
+        ),
+        (
+            "Whisper".to_owned(),
+            gettextrs::gettext("Widest language support"),
+        ),
+    ];
+    if !settles(&|| described(&model_rows()) == expected && chosen() == ["Parakeet"]) {
+        eprintln!(
+            "the General tab's last group does not list the models as radio rows with Parakeet chosen: {:?}, chosen {:?}",
+            described(&model_rows()),
+            chosen()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("model-group: lists the installed models");
+
+    // Choosing another model still asks first, and declining leaves the
+    // connected one chosen.
+    let whisper = model_rows()
+        .into_iter()
+        .find(|(row, _)| row.title() == "Whisper")
+        .expect("whisper row");
+    adw::prelude::ActionRowExt::activate(&whisper.0);
+    let switch_dialog = || {
+        window
+            .visible_dialog()
+            .and_then(|dialog| dialog.downcast::<ui::ActiveBackendDialog>().ok())
+    };
+    if !settles(&|| switch_dialog().is_some()) {
+        eprintln!("choosing Whisper never asked to switch");
+        return glib::ExitCode::FAILURE;
+    }
+    let declined = switch_dialog().expect("switch dialog");
+    declined.emit_by_name::<()>("response", &[&"cancel"]);
+    declined.force_close();
+    if !settles(&|| ui.operation_coordinator().active().is_none() && chosen() == ["Parakeet"]) {
+        eprintln!("declining the switch left {:?} chosen", chosen());
+        return glib::ExitCode::FAILURE;
+    }
+    if machine
+        .applied()
+        .iter()
+        .any(|operation| operation.iter().any(|argument| argument == "connect"))
+    {
+        eprintln!("declining the switch still ran {:?}", machine.applied());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("model-group: declining keeps the model");
 
     if view_stack
         .child_by_name("model")
@@ -2572,6 +2666,20 @@ fn find_descendant(
         child = current.next_sibling();
     }
     None
+}
+
+/// Every descendant of `widget` that `matches`, in tree order.
+fn descendants(widget: &gtk::Widget, matches: &dyn Fn(&gtk::Widget) -> bool) -> Vec<gtk::Widget> {
+    let mut found = Vec::new();
+    if matches(widget) {
+        found.push(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        found.extend(descendants(&current, matches));
+        child = current.next_sibling();
+    }
+    found
 }
 
 fn first_entry_row(widget: &gtk::Widget) -> Option<adw::EntryRow> {

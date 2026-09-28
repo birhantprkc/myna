@@ -429,7 +429,12 @@ struct ControllerState {
     snapshot: ConnectionSnapshot,
     verified: bool,
     generation: u64,
-    pending: Option<(u64, CancellationToken)>,
+    pending: Option<PendingSwitch>,
+}
+
+struct PendingSwitch {
+    token: u64,
+    selected: BackendIdentity,
 }
 
 impl ActiveBackendController {
@@ -462,17 +467,17 @@ impl ActiveBackendController {
         true
     }
 
-    pub fn selected_index(&self) -> Option<u32> {
+    /// The backend the list marks: a pending switch's target, else the one
+    /// connected backend.
+    pub fn chosen(&self) -> Option<BackendIdentity> {
         let inner = self.inner.borrow();
-        let ActiveBackendState::Connected(active) = inner.snapshot.active_state() else {
-            return None;
-        };
-        inner
-            .snapshot
-            .backends()
-            .iter()
-            .position(|backend| backend == &active)
-            .map(|index| index as u32)
+        if let Some(pending) = &inner.pending {
+            return Some(pending.selected.clone());
+        }
+        match inner.snapshot.active_state() {
+            ActiveBackendState::Connected(active) => Some(active),
+            _ => None,
+        }
     }
 
     pub fn begin(&self, selected: BackendIdentity) -> Result<SwitchRequest, PrepareSwitchError> {
@@ -480,7 +485,7 @@ impl ActiveBackendController {
         if inner.pending.is_some() {
             return Err(PrepareSwitchError::Busy);
         }
-        let plan = SwitchPlan::new(&inner.snapshot, selected)?;
+        let plan = SwitchPlan::new(&inner.snapshot, selected.clone())?;
         let operation = self
             .coordinator
             .begin(OperationKind::BackendSwitch)
@@ -488,7 +493,10 @@ impl ActiveBackendController {
         let operation_token = operation.token();
         let cancellation = operation.cancellation();
         inner.generation = operation_token;
-        inner.pending = Some((operation_token, cancellation.clone()));
+        inner.pending = Some(PendingSwitch {
+            token: operation_token,
+            selected,
+        });
         Ok(SwitchRequest {
             operation_token,
             plan,
@@ -498,14 +506,18 @@ impl ActiveBackendController {
 
     pub fn abandon(&self) {
         let mut inner = self.inner.borrow_mut();
-        if let Some((token, _)) = inner.pending.take() {
-            self.coordinator.abandon(token);
+        if let Some(pending) = inner.pending.take() {
+            self.coordinator.abandon(pending.token);
         }
     }
 
     pub fn complete(&self, operation_token: u64, outcome: SwitchOutcome) -> bool {
         let mut inner = self.inner.borrow_mut();
-        if !matches!(inner.pending, Some((token, _)) if token == operation_token) {
+        if inner
+            .pending
+            .as_ref()
+            .is_none_or(|pending| pending.token != operation_token)
+        {
             return false;
         }
         inner.pending = None;

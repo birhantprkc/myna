@@ -34,6 +34,7 @@ use crate::diagnostics::{
 };
 use crate::domain::{ActiveBackendState, BackendIdentity, ConfigValue, ServiceState};
 use crate::markup::escape_markup;
+use crate::model_family::model_family;
 use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::performance::PerformanceFacts;
 use crate::ports::{BackendRepository, SystemConfigurator};
@@ -51,6 +52,11 @@ pub struct BackendUi {
     diagnostics_nav: adw::NavigationView,
     overlay: adw::ToastOverlay,
     myna_selector: Option<ui::MynaPage>,
+    /// The General tab's model rows and the backend each one chooses.
+    model_rows: RefCell<Vec<(BackendIdentity, gtk::CheckButton)>>,
+    /// Set while rendering marks a radio, so the mark is not taken as a choice.
+    marking_models: std::cell::Cell<bool>,
+    this: std::rc::Weak<Self>,
     operation_coordinator: OperationCoordinator,
     active_backend: ActiveBackendController,
     diagnostics_page: RefCell<Option<adw::NavigationPage>>,
@@ -209,7 +215,10 @@ impl BackendUi {
         let myna_selector = myna_page.downcast::<ui::MynaPage>().ok();
         let operation_coordinator = OperationCoordinator::new();
         diagnostics_nav.replace(std::slice::from_ref(&diagnostics_page));
-        let ui = Rc::new(Self {
+        let ui = Rc::new_cyclic(|this| BackendUi {
+            this: this.clone(),
+            model_rows: RefCell::new(Vec::new()),
+            marking_models: std::cell::Cell::new(false),
             controller,
             configurator,
             view_stack: view_stack.clone(),
@@ -240,7 +249,6 @@ impl BackendUi {
         });
 
         ui.connect_view_stack_selection();
-        ui.connect_active_backend_selector();
 
         ui.controller.observe({
             let ui = Rc::downgrade(&ui);
@@ -256,50 +264,28 @@ impl BackendUi {
         ui
     }
 
-    fn connect_active_backend_selector(self: &Rc<Self>) {
-        let Some(page) = self.myna_selector.as_ref() else {
-            return;
-        };
-        page.switch_backend_button().connect_clicked({
-            let ui = Rc::downgrade(self);
-            move |_| {
-                let Some(ui) = ui.upgrade() else {
-                    return;
-                };
-                if ui.active_backend.busy() {
-                    return;
-                }
-                let Some(page) = ui.myna_selector.as_ref() else {
-                    return;
-                };
-                let selected = page.active_backend_row().selected() as usize;
-                let snapshot = ui.active_backend.snapshot();
-                let Some(backend) = snapshot.backends().get(selected) else {
-                    return;
-                };
-                ui.begin_backend_switch(backend.clone());
-            }
-        });
-    }
-
     fn begin_backend_switch(self: &Rc<Self>, selected: BackendIdentity) {
         let request = match self.active_backend.begin(selected) {
             Ok(request) if request.plan().is_noop() => {
-                self.render_active_backend_selector();
+                self.render_model_group();
                 self.run_backend_switch(request, true);
                 return;
             }
             Ok(request) => request,
             Err(PrepareSwitchError::BackendUnavailable(_)) => {
+                self.render_model_group();
                 self.overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
                     "The selected backend is no longer installed. Refresh and choose again.",
                 )));
                 self.trigger_discovery();
                 return;
             }
-            Err(PrepareSwitchError::Busy) => return,
+            Err(PrepareSwitchError::Busy) => {
+                self.render_model_group();
+                return;
+            }
         };
-        self.render_active_backend_selector();
+        self.render_model_group();
         let dialog = ui::ActiveBackendDialog::new(request.plan().confirmation_text());
         let ui = Rc::downgrade(self);
         glib::spawn_future_local(async move {
@@ -321,7 +307,7 @@ impl BackendUi {
     ) {
         let Some(repository) = self.controller.repository().cloned() else {
             self.active_backend.abandon();
-            self.render_active_backend_selector();
+            self.render_model_group();
             return;
         };
         let configurator = Rc::clone(&self.configurator);
@@ -342,7 +328,7 @@ impl BackendUi {
             coordinator.complete(operation_token);
             if let Some(ui) = ui.upgrade() {
                 if ui.active_backend.complete(operation_token, outcome.clone()) {
-                    ui.render_active_backend_selector();
+                    ui.render_model_group();
                     ui.present_switch_outcome(&outcome);
                     ui.trigger_discovery();
                 }
@@ -444,62 +430,101 @@ impl BackendUi {
         {
             return;
         }
-        self.render_active_backend_selector();
+        self.render_model_group();
         self.sync_backend_tab();
     }
 
-    fn render_active_backend_selector(&self) {
+    fn render_model_group(&self) {
         let Some(page) = self.myna_selector.as_ref() else {
             return;
         };
+        let group = page.model_group();
         let snapshot = self.active_backend.snapshot();
-        let options = snapshot.backends();
-        let labels = options
+        let backends = snapshot.backends();
+        let listed = self
+            .model_rows
+            .borrow()
             .iter()
-            .map(|backend| display_title_for(backend.snap_name()))
+            .map(|(backend, _)| backend.clone())
             .collect::<Vec<_>>();
-        let references = labels.iter().map(String::as_str).collect::<Vec<_>>();
-        page.active_backend_row()
-            .set_model(Some(&gtk::StringList::new(&references)));
-        let subtitle = if !self.active_backend.verified() {
-            gettextrs::gettext(
+        if listed.as_slice() != backends {
+            self.list_models(&group, backends);
+        }
+        group.set_visible(!backends.is_empty());
+
+        let status = if !self.active_backend.verified() {
+            Some(gettextrs::gettext(
                 "Final connections could not be verified. Switching is disabled until refresh succeeds.",
-            )
+            ))
         } else {
-            match self.active_backend.snapshot().active_state() {
-                ActiveBackendState::Disconnected => gettextrs::gettext(
-                    "No backend is connected. Choose an installed backend to connect.",
-                ),
-                ActiveBackendState::MultiplyConnected(_) => gettextrs::gettext(
-                    "Multiple backends are connected. Choose one to make it the sole active backend.",
-                ),
-                ActiveBackendState::Connected(_) => gettextrs::gettext(
-                    "Choose which installed backend Myna uses for dictation.",
-                ),
+            match snapshot.active_state() {
+                ActiveBackendState::Disconnected => Some(gettextrs::gettext(
+                    "No model is connected. Choose one to use for dictation.",
+                )),
+                ActiveBackendState::MultiplyConnected(_) => Some(gettextrs::gettext(
+                    "Several models are connected. Choose one to use for dictation.",
+                )),
+                ActiveBackendState::Connected(_) => None,
             }
         };
-        page.active_backend_row()
-            .set_subtitle(&escape_markup(&subtitle));
-        page.active_backend_row().set_selected(
-            self.active_backend
-                .selected_index()
-                .unwrap_or(gtk::INVALID_LIST_POSITION),
-        );
-        page.active_backend_row().set_sensitive(!options.is_empty());
-        let button = page.switch_backend_button();
+        group.set_description(status.map(|status| escape_markup(&status)).as_deref());
+
+        let chosen = self.active_backend.chosen();
+        self.marking_models.set(true);
+        for (backend, radio) in self.model_rows.borrow().iter() {
+            radio.set_active(chosen.as_ref() == Some(backend));
+        }
+        self.marking_models.set(false);
+
         let apply_active = self.operation_coordinator.active() == Some(OperationKind::BackendApply);
-        button.set_sensitive(
-            !options.is_empty()
-                && self.active_backend.verified()
-                && !apply_active
-                && !self.active_backend.busy(),
+        group.set_sensitive(
+            self.active_backend.verified() && !apply_active && !self.active_backend.busy(),
         );
-        let label = if self.active_backend.busy() {
-            gettextrs::gettext("Switching…")
-        } else {
-            gettextrs::gettext("Switch")
-        };
-        button.set_label(&label);
+    }
+
+    /// One radio row per installed backend, named and described by family.
+    fn list_models(&self, group: &adw::PreferencesGroup, backends: &[BackendIdentity]) {
+        for (_, radio) in self.model_rows.take() {
+            if let Some(row) = radio.ancestor(adw::ActionRow::static_type()) {
+                group.remove(&row);
+            }
+        }
+        let mut leader: Option<gtk::CheckButton> = None;
+        let mut rows = Vec::new();
+        for backend in backends {
+            let family = model_family(backend.snap_name());
+            let row = adw::ActionRow::builder()
+                .title(&family.name)
+                .use_markup(false)
+                .build();
+            if let Some(description) = &family.description {
+                row.set_subtitle(description);
+            }
+            let radio = gtk::CheckButton::builder()
+                .accessible_role(gtk::AccessibleRole::Radio)
+                .valign(gtk::Align::Center)
+                .build();
+            radio.set_group(leader.as_ref());
+            radio.update_property(&[gtk::accessible::Property::Label(&family.name)]);
+            radio.connect_toggled({
+                let ui = self.this.clone();
+                let backend = backend.clone();
+                move |radio| {
+                    let Some(ui) = ui.upgrade() else {
+                        return;
+                    };
+                    if radio.is_active() && !ui.marking_models.get() {
+                        ui.begin_backend_switch(backend.clone());
+                    }
+                }
+            });
+            row.add_prefix(&radio);
+            row.set_activatable_widget(Some(&radio));
+            group.add(&row);
+            leader.get_or_insert_with(|| radio.clone());
+            rows.push((backend.clone(), radio));
+        }
+        *self.model_rows.borrow_mut() = rows;
     }
 
     fn connect_view_stack_selection(self: &Rc<Self>) {
@@ -685,14 +710,14 @@ impl BackendUi {
             self.apply_state.borrow_mut().remove(snap_name);
             self.overlay
                 .add_toast(adw::Toast::new(&format!("{title}: {description}")));
-            self.render_active_backend_selector();
+            self.render_model_group();
             return;
         }
         self.set_apply_feedback(snap_name, title.clone(), description.clone());
         self.overlay
             .add_toast(adw::Toast::new(&format!("{title}: {description}")));
         self.rebuild_backend_page(snap_name);
-        self.render_active_backend_selector();
+        self.render_model_group();
     }
 
     fn cancel_apply(self: &Rc<Self>, snap_name: &str) {
@@ -737,7 +762,7 @@ impl BackendUi {
                         Some(gettextrs::gettext("Waiting for change confirmation…"));
                 }
                 self.rebuild_backend_page(snap_name);
-                self.render_active_backend_selector();
+                self.render_model_group();
                 let ui = Rc::downgrade(self);
                 glib::spawn_future_local(async move {
                     let Some(ui) = ui.upgrade() else {
@@ -817,7 +842,7 @@ impl BackendUi {
                 &self.operation_coordinator,
                 &snap_name,
             );
-            self.render_active_backend_selector();
+            self.render_model_group();
             return;
         };
         let configurator = Rc::clone(&self.configurator);
@@ -850,7 +875,7 @@ impl BackendUi {
                     ui.complete_apply(result, &snap_name);
                 } else {
                     ui.apply_state.borrow_mut().remove(&snap_name);
-                    ui.render_active_backend_selector();
+                    ui.render_model_group();
                 }
             }
         });
@@ -988,7 +1013,7 @@ impl BackendUi {
             }
             ControllerEvent::BackendChanged(identity) => {
                 if self.controller.page(identity.snap_name()).is_some() {
-                    self.render_active_backend_selector();
+                    self.render_model_group();
                 }
                 self.rebuild_backend_page(identity.snap_name());
                 self.rebuild_diagnostics_page();
@@ -1702,23 +1727,7 @@ impl Drop for BackendUi {
 }
 
 fn display_title_for(snap_name: &str) -> String {
-    let stripped = snap_name.strip_prefix("myna-").unwrap_or(snap_name);
-    let mut title = String::with_capacity(stripped.len());
-    let mut capitalize = true;
-    for ch in stripped.chars() {
-        if ch == '-' || ch == '_' {
-            title.push(' ');
-            capitalize = true;
-        } else if capitalize {
-            for upper in ch.to_uppercase() {
-                title.push(upper);
-            }
-            capitalize = false;
-        } else {
-            title.push(ch);
-        }
-    }
-    title
+    model_family(snap_name).name
 }
 
 fn setting_widget_name(key: &str) -> String {
@@ -2566,13 +2575,6 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn display_title_strips_prefix_and_capitalizes() {
-        assert_eq!(display_title_for("myna-parakeet"), "Parakeet");
-        assert_eq!(display_title_for("myna-whisper-small"), "Whisper Small");
-        assert_eq!(display_title_for("custom"), "Custom");
-    }
-
-    #[test]
     fn parse_editable_value_prefers_integer_then_number_then_text() {
         assert_eq!(
             parse_editable_value(ControlType::Number, "42"),
@@ -2635,7 +2637,10 @@ mod tests {
                 .build()
         };
         let operation_coordinator = OperationCoordinator::new();
-        let ui = Rc::new(BackendUi {
+        let ui = Rc::new_cyclic(|this| BackendUi {
+            this: this.clone(),
+            model_rows: RefCell::new(Vec::new()),
+            marking_models: std::cell::Cell::new(false),
             controller,
             configurator: Rc::new(PkexecSystemConfigurator::new(Arc::new(GioCommandRunner))),
             view_stack: view_stack.clone(),

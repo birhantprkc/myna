@@ -12,6 +12,7 @@ pub mod diagnostics;
 pub mod domain;
 pub mod machine;
 pub mod markup;
+pub mod model_family;
 pub mod myna_settings;
 pub mod onboarding;
 pub mod onboarding_ui;

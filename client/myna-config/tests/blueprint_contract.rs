@@ -19,14 +19,13 @@ const BLUEPRINTS: &[(&str, &str)] = &[
 ];
 
 #[test]
-fn active_backend_selector_and_confirmation_are_static_blueprint_shells() {
+fn model_list_and_switch_confirmation_are_static_blueprint_shells() {
     let root = crate_root();
     let page = fs::read_to_string(root.join("data/myna-page.blp")).unwrap();
     let dialog = fs::read_to_string(root.join("data/active-backend-dialog.blp")).unwrap();
     let apply_controls = fs::read_to_string(root.join("data/backend-apply-controls.blp")).unwrap();
-    assert!(page.contains("active_backend_group"));
-    assert!(page.contains("active_backend_row"));
-    assert!(page.contains("switch_backend_button"));
+    assert!(page.contains("model_group"));
+    assert!(!page.contains("active_backend_row"));
     assert!(page.contains("sensitive: false;"));
     assert!(apply_controls
         .contains("apply_button {\n      label: _(\"Apply\");\n      sensitive: false;"));
