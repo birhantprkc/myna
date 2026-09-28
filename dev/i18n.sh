@@ -89,10 +89,64 @@ for po in "$REPO_ROOT"/client/*/po/*.po; do
     fi
 done
 
+# The staleness diff cannot see a file missing from POTFILES.in. A call counts
+# outside the trailing `mod tests` block and outside `fn` signature lines, so a
+# crate's own wrapper (myna-orchestrator's `pub fn tr`) is not a call.
+rs_calls() {
+    local file=$1 pattern=$2 body last_test_line
+    if grep -qE '^mod tests\b' "$file"; then
+        last_test_line=$(grep -nE '^mod tests\b' "$file" | head -1 | cut -d: -f1)
+        body=$(sed -n "1,$((last_test_line - 1))p" "$file")
+    else
+        body=$(cat "$file")
+    fi
+    printf '%s\n' "$body" \
+        | grep -vE '^[[:space:]]*(//|(pub(\([^)]*\))?[[:space:]]*)?(async[[:space:]]+)?(unsafe[[:space:]]+)?fn[[:space:]])' \
+        | grep -qE "$pattern"
+}
+
+blp_calls() {
+    grep -qE '_\(' "$1"
+}
+
+missing=0
+for potfiles in "$REPO_ROOT"/client/*/po/POTFILES.in; do
+    crate_dir=$(dirname "$(dirname "$potfiles")")
+    crate=${crate_dir#"$REPO_ROOT"/}
+    extra=""
+    for entry in "${CRATES[@]}"; do
+        [ "${entry%%:*}" = "$crate" ] || continue
+        extra=$(echo "${entry#*:}" | { grep -oE -- '--keyword=[^[:space:]]+' || true; } | sed -E 's/--keyword=//' | paste -sd '|' -)
+    done
+    pattern='\b(gettext|ngettext|pgettext'
+    [ -n "$extra" ] && pattern="$pattern|$extra"
+    pattern="$pattern)\("
+
+    while IFS= read -r -d '' file; do
+        rel=${file#"$crate_dir"/}
+        if rs_calls "$file" "$pattern" && ! grep -Fxq "$rel" "$potfiles"; then
+            echo "i18n-check: $crate/$rel calls a translation function but is not listed in $crate/po/POTFILES.in" >&2
+            missing=1
+        fi
+    done < <(find "$crate_dir/src" -name '*.rs' -not -path '*/tests/*' -print0 2>/dev/null)
+
+    [ -d "$crate_dir/data" ] || continue
+    while IFS= read -r -d '' file; do
+        rel=${file#"$crate_dir"/}
+        if blp_calls "$file" && ! grep -Fxq "$rel" "$potfiles"; then
+            echo "i18n-check: $crate/$rel uses _() but is not listed in $crate/po/POTFILES.in" >&2
+            missing=1
+        fi
+    done < <(find "$crate_dir/data" -name '*.blp' -print0 2>/dev/null)
+done
+
 if [ "$stale" -ne 0 ]; then
     echo "i18n-check: template(s) stale; run \`make i18n\` and commit the result" >&2
 fi
-if [ "$stale" -ne 0 ] || [ "$broken" -ne 0 ]; then
+if [ "$missing" -ne 0 ]; then
+    echo "i18n-check: add the file(s) named above to their POTFILES.in, then run \`make i18n\`" >&2
+fi
+if [ "$stale" -ne 0 ] || [ "$broken" -ne 0 ] || [ "$missing" -ne 0 ]; then
     exit 1
 fi
 [ "$check" -eq 0 ] || echo "i18n-check: templates fresh, catalogs valid"
