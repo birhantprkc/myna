@@ -23,6 +23,21 @@
   font-size: 1em;
 }
 
+/* A secondary button drawn as an outline on the window, as the design;
+   libadwaita 1.5 has no such class. */
+button.outlined {
+  background-color: transparent;
+  border: 1px solid alpha(currentColor, 0.2);
+}
+
+button.outlined:hover {
+  background-color: alpha(currentColor, 0.07);
+}
+
+button.outlined:active {
+  background-color: alpha(currentColor, 0.16);
+}
+
 /* Onboarding step titles: larger than body text, but regular weight. */
 .onboarding-title {
   font-size: 24px;

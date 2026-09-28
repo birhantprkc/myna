@@ -853,6 +853,11 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-shortcut: waits for the daemon");
+    if !shortcut_button.has_css_class("outlined") {
+        eprintln!("the shortcut step's button is not outlined as the design");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-shortcut: button outlined");
     if forward.label().as_deref() != Some(gettextrs::gettext("Done").as_str())
         || !forward.has_css_class("suggested-action")
     {
