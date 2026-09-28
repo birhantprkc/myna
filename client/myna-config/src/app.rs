@@ -657,6 +657,7 @@ fn onboarding_probe() -> glib::ExitCode {
         }
         false
     };
+    machine.hold_restart(true);
     forward.emit_clicked();
     if window
         .navigation()
@@ -666,6 +667,13 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("the component step could be left while it set dictation up");
         return glib::ExitCode::FAILURE;
     }
+    settle_gtk();
+    if !setup_spinner(&window) || installed_status(&window).is_some() {
+        eprintln!("setting up showed no spinner in the footer's status");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-setup: spinner while setting up");
+    machine.hold_restart(false);
     if !reaches("shortcut") {
         eprintln!("the component step did not reach the shortcut step");
         return glib::ExitCode::FAILURE;
@@ -695,7 +703,7 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-walk: reached the last step");
-    if installed_status(&window).is_some() {
+    if installed_status(&window).is_some() || setup_spinner(&window) {
         eprintln!("the footer status stayed on the last step");
         return glib::ExitCode::FAILURE;
     }
@@ -1434,6 +1442,8 @@ struct ProbeMachine {
     reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Nothing is installed yet: every `snap` read fails, as on a bare machine.
     bare: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// A daemon restart waits while this is set, as a slow one does.
+    held: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ProbeMachine {
@@ -1448,7 +1458,12 @@ impl ProbeMachine {
             applied: std::sync::Arc::default(),
             reads: std::sync::Arc::default(),
             bare: std::sync::Arc::default(),
+            held: std::sync::Arc::default(),
         }
+    }
+
+    fn hold_restart(&self, held: bool) {
+        self.held.store(held, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// The machine before the user pastes the install commands.
@@ -1545,6 +1560,9 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
         &self,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<(), crate::ports::SystemConfiguratorError> {
+        while self.held.load(std::sync::atomic::Ordering::SeqCst) {
+            glib::timeout_future(Duration::from_millis(10)).await;
+        }
         self.applied
             .lock()
             .expect("probe machine lock")
@@ -1909,6 +1927,19 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
 /// Whether the onboarding footer says everything is installed: a success
 /// checkmark and the label, left of the forward button. `None` when it is not
 /// shown at all.
+/// Whether the footer spins while dictation is being set up.
+fn setup_spinner(window: &ui::OnboardingWindow) -> bool {
+    let Some(footer) = window.forward_button().parent() else {
+        return false;
+    };
+    find_descendant(&footer, &|widget| {
+        widget
+            .downcast_ref::<gtk::Spinner>()
+            .is_some_and(|spinner| spinner.is_mapped() && spinner.is_spinning())
+    })
+    .is_some()
+}
+
 fn installed_status(window: &ui::OnboardingWindow) -> Option<bool> {
     let label = find_descendant(window.upcast_ref(), &|widget| {
         widget.downcast_ref::<gtk::Label>().is_some_and(|label| {

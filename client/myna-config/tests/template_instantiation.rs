@@ -185,6 +185,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-poll: stopped once found",
         "onboarding-setup-failure: reported",
         "onboarding-installed: shown in the footer",
+        "onboarding-setup: spinner while setting up",
         "onboarding-setup: restarted the daemon",
         "onboarding-walk: reached the last step",
         "onboarding-shortcut: waits for the daemon",

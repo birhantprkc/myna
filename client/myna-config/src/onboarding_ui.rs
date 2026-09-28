@@ -294,9 +294,13 @@ impl OnboardingUi {
             forward.add_css_class("suggested-action");
         }
         forward.set_sensitive(!self.busy.get() && can_advance(step, &components));
+        let setting_up = step == Step::Components && self.busy.get();
+        let spinner = self.window.setup_spinner();
+        spinner.set_visible(setting_up);
+        spinner.set_spinning(setting_up);
         self.window
             .installed_status()
-            .set_visible(step == Step::Components && !needs_onboarding(&components));
+            .set_visible(step == Step::Components && !setting_up && !needs_onboarding(&components));
         self.watch(!self.busy.get() && polls(step, &components));
     }
 

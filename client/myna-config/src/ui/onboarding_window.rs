@@ -15,6 +15,8 @@ mod imp {
         #[template_child]
         pub navigation: gtk::TemplateChild<adw::NavigationView>,
         #[template_child]
+        pub setup_spinner: gtk::TemplateChild<gtk::Spinner>,
+        #[template_child]
         pub installed_status: gtk::TemplateChild<gtk::Box>,
         #[template_child]
         pub forward_button: gtk::TemplateChild<gtk::Button>,
@@ -63,6 +65,10 @@ impl OnboardingWindow {
 
     pub fn navigation(&self) -> adw::NavigationView {
         self.imp().navigation.get()
+    }
+
+    pub fn setup_spinner(&self) -> gtk::Spinner {
+        self.imp().setup_spinner.get()
     }
 
     pub fn installed_status(&self) -> gtk::Box {

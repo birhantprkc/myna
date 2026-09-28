@@ -19,6 +19,14 @@ template $OnboardingWindow: Adw.ApplicationWindow {
         margin-top: 12;
         margin-bottom: 24;
 
+        Gtk.Spinner setup_spinner {
+          visible: false;
+
+          accessibility {
+            label: _("Setting up dictation");
+          }
+        }
+
         Gtk.Box installed_status {
           visible: false;
           spacing: 6;
