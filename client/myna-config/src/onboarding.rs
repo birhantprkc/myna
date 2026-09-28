@@ -121,6 +121,13 @@ pub fn polls(step: Step, components: &[Component]) -> bool {
     step == Step::Components && needs_onboarding(components)
 }
 
+/// Whether a re-assessment found the last missing component, the moment the
+/// component step sets dictation up by itself. Arriving with everything
+/// installed is not one, so a re-run of the wizard does not rush past it.
+pub fn completes(before: &[Component], after: &[Component]) -> bool {
+    needs_onboarding(before) && !needs_onboarding(after)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +173,18 @@ mod tests {
         assert!(!polls(Step::Components, &ready));
         assert!(!polls(Step::Welcome, &bare));
         assert!(!polls(Step::Shortcut, &bare));
+    }
+
+    #[test]
+    fn only_the_last_component_appearing_completes_the_machine() {
+        let bare = assess(Machine::default());
+        let model_missing = assess(Machine::new(&[snap("myna")], 0));
+        let ready = assess(Machine::new(&[snap("myna")], 1));
+        assert!(completes(&bare, &ready));
+        assert!(completes(&model_missing, &ready));
+        assert!(!completes(&bare, &model_missing));
+        assert!(!completes(&ready, &ready));
+        assert!(!completes(&ready, &bare));
     }
 
     #[test]

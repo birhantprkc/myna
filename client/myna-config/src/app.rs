@@ -518,8 +518,129 @@ fn onboarding_probe() -> glib::ExitCode {
     settle_gtk();
 
     // Components installed while the step shows are found without the
-    // window ever losing focus, and the looking stops once they are.
+    // window ever losing focus. Finding the last one sets dictation up once,
+    // says so, and moves on by itself.
     let machine = ProbeMachine::bare();
+    let window = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine::default()),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.set_beat(Duration::from_millis(300));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    machine.hold_restart(true);
+    machine.install();
+    for _ in 0..100 {
+        if setup_spinner(&window) {
+            break;
+        }
+        settle_gtk();
+    }
+    if !setup_spinner(&window) || step(&window) != "components" {
+        eprintln!("components installed while the step showed set nothing up");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-poll: found without focus");
+    // Next is the manual path; it must not start a second setup.
+    window.forward_button().emit_clicked();
+    machine.hold_restart(false);
+    let shown = || installed_status(&window) == Some(true) && !setup_spinner(&window);
+    for _ in 0..100 {
+        if shown() || step(&window) != "components" {
+            break;
+        }
+        settle_gtk();
+    }
+    if !shown() || step(&window) != "components" {
+        eprintln!("the footer did not say everything is installed before moving on");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-auto: status before advancing");
+    let reached = |window: &ui::OnboardingWindow, name: &str| {
+        for _ in 0..100 {
+            if step(window) == name {
+                return true;
+            }
+            settle_gtk();
+        }
+        false
+    };
+    if !reached(&window, "shortcut") {
+        eprintln!("the wizard did not move on after setting dictation up");
+        return glib::ExitCode::FAILURE;
+    }
+    if machine.applied() != [vec!["restart-myna".to_owned()]] {
+        eprintln!("automatic setup did not run once: {:?}", machine.applied());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-auto: set up once and advanced");
+    let reads = machine.reads();
+    for _ in 0..5 {
+        settle_gtk();
+    }
+    if machine.reads() != reads {
+        eprintln!("the wizard kept polling after leaving the component step");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-poll: stopped once found");
+    window.close();
+    settle_gtk();
+
+    // Next while the status shows moves on at once, without setting up again.
+    let machine = ProbeMachine::bare();
+    let window = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine::default()),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.set_beat(Duration::from_secs(60));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    machine.install();
+    for _ in 0..100 {
+        if installed_status(&window) == Some(true) {
+            break;
+        }
+        settle_gtk();
+    }
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    if step(&window) != "shortcut" || machine.applied().len() != 1 {
+        eprintln!(
+            "Next after automatic setup reached {} having applied {:?}",
+            step(&window),
+            machine.applied()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-auto: Next skips the pause");
+    window.close();
+    settle_gtk();
+
+    // A failed automatic setup reports itself, stays, and Next retries.
+    let machine = ProbeMachine::bare();
+    machine.refuse_restarts(1);
     let window = {
         let ui = OnboardingUi::present_with_ports(
             &application,
@@ -538,27 +659,35 @@ fn onboarding_probe() -> glib::ExitCode {
     window.forward_button().emit_clicked();
     settle_gtk();
     machine.install();
-    let found = || installed_status(&window) == Some(true);
+    let failed = || {
+        window
+            .visible_dialog()
+            .is_some_and(|dialog| dialog.is::<ui::OperationErrorDialog>())
+    };
     for _ in 0..100 {
-        if found() {
+        if failed() {
             break;
         }
         settle_gtk();
     }
-    if !found() || step(&window) != "components" {
-        eprintln!("components installed while the step showed were never found");
+    if !failed()
+        || step(&window) != "components"
+        || setup_spinner(&window)
+        || !window.forward_button().is_sensitive()
+    {
+        eprintln!("a failed automatic setup did not report itself and offer Next");
         return glib::ExitCode::FAILURE;
     }
-    println!("onboarding-poll: found without focus");
-    let reads = machine.reads();
-    for _ in 0..5 {
-        settle_gtk();
+    println!("onboarding-auto-failure: reported");
+    if let Some(dialog) = window.visible_dialog() {
+        dialog.force_close();
     }
-    if machine.reads() != reads {
-        eprintln!("the component step kept polling once everything was found");
+    window.forward_button().emit_clicked();
+    if !reached(&window, "shortcut") || machine.applied() != [vec!["restart-myna".to_owned()]] {
+        eprintln!("Next did not retry setup: {:?}", machine.applied());
         return glib::ExitCode::FAILURE;
     }
-    println!("onboarding-poll: stopped once found");
+    println!("onboarding-auto-failure: Next retries");
     window.close();
     settle_gtk();
 
@@ -1444,6 +1573,8 @@ struct ProbeMachine {
     bare: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// A daemon restart waits while this is set, as a slow one does.
     held: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// How many daemon restarts to refuse before letting one through.
+    refusals: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ProbeMachine {
@@ -1459,7 +1590,13 @@ impl ProbeMachine {
             reads: std::sync::Arc::default(),
             bare: std::sync::Arc::default(),
             held: std::sync::Arc::default(),
+            refusals: std::sync::Arc::default(),
         }
+    }
+
+    fn refuse_restarts(&self, count: usize) {
+        self.refusals
+            .store(count, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn hold_restart(&self, held: bool) {
@@ -1562,6 +1699,14 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
     ) -> Result<(), crate::ports::SystemConfiguratorError> {
         while self.held.load(std::sync::atomic::Ordering::SeqCst) {
             glib::timeout_future(Duration::from_millis(10)).await;
+        }
+        let refused = self.refusals.fetch_update(
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+            |left| left.checked_sub(1),
+        );
+        if refused.is_ok() {
+            return Err(crate::ports::SystemConfiguratorError::Cancelled);
         }
         self.applied
             .lock()

@@ -20,7 +20,7 @@ use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::onboarding::{
-    assess, can_advance, needs_onboarding, polls, Component, Machine, Step,
+    assess, can_advance, completes, needs_onboarding, polls, Component, Machine, Step,
     RECOMMENDED_BACKEND_SNAP,
 };
 use crate::ports::{BackendRepository, SystemConfigurator};
@@ -29,6 +29,9 @@ use crate::ui;
 /// How often the component step re-reads the machine while something is
 /// missing: one `snap list` and one discovery each time.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// How long "All components installed" shows before the wizard moves on by
+/// itself.
+const BEAT: Duration = Duration::from_secs(1);
 
 pub struct OnboardingUi {
     window: ui::OnboardingWindow,
@@ -41,6 +44,8 @@ pub struct OnboardingUi {
     assessing: Cell<bool>,
     poll_interval: Cell<Duration>,
     poll: RefCell<Option<glib::SourceId>>,
+    beat_length: Cell<Duration>,
+    beat: RefCell<Option<glib::SourceId>>,
     finished: RefCell<Option<Box<dyn Fn()>>>,
 }
 
@@ -117,6 +122,8 @@ impl OnboardingUi {
             assessing: Cell::new(false),
             poll_interval: Cell::new(POLL_INTERVAL),
             poll: RefCell::new(None),
+            beat_length: Cell::new(BEAT),
+            beat: RefCell::new(None),
             finished: RefCell::new(Some(finished)),
         });
 
@@ -200,8 +207,17 @@ impl OnboardingUi {
                 return;
             };
             ui.assessing.set(false);
-            ui.components.replace(components);
-            ui.render();
+            let before = ui.components.replace(components);
+            // The user installed the last piece while watching: finish for
+            // them, as Next would.
+            let finish = ui.step.get() == Step::Components
+                && !ui.busy.get()
+                && completes(&before, &ui.components.borrow());
+            if finish {
+                ui.finish_setup(Step::Shortcut, true);
+            } else {
+                ui.render();
+            }
         });
     }
 
@@ -212,8 +228,16 @@ impl OnboardingUi {
         if self.busy.get() || !can_advance(self.step.get(), &self.components.borrow()) {
             return;
         }
+        // Set up already; only the pause before moving on is left.
+        if let Some(beat) = self.beat.take() {
+            beat.remove();
+            self.window
+                .navigation()
+                .push_by_tag(step_name(Step::Shortcut));
+            return;
+        }
         match self.step.get().next() {
-            Some(step) if self.step.get() == Step::Components => self.finish_setup(step),
+            Some(step) if self.step.get() == Step::Components => self.finish_setup(step, false),
             Some(step) => self.window.navigation().push_by_tag(step_name(step)),
             None => {
                 self.notify_finished();
@@ -224,8 +248,9 @@ impl OnboardingUi {
 
     /// Connect the backend and restart the daemon against it, so the next
     /// step finds dictation running. A store install usually auto-connects
-    /// the backend; when it did not, snapd asks polkit once.
-    fn finish_setup(self: &Rc<Self>, next: Step) {
+    /// the backend; when it did not, snapd asks polkit once. With `pause`, the
+    /// step first shows that everything is installed for a beat.
+    fn finish_setup(self: &Rc<Self>, next: Step, pause: bool) {
         if self.busy.replace(true) {
             return;
         }
@@ -246,6 +271,7 @@ impl OnboardingUi {
             ui.busy.set(false);
             ui.render();
             match outcome {
+                Ok(()) if pause => ui.pause_before(next),
                 Ok(()) => ui.window.navigation().push_by_tag(step_name(next)),
                 Err(message) => {
                     ui.report_failure(&gettextrs::gettext("Could not set up dictation"), &message)
@@ -254,9 +280,26 @@ impl OnboardingUi {
         });
     }
 
-    /// The probe polls faster than a person needs.
+    /// Move on to `next` once the status has been readable for a beat.
+    fn pause_before(self: &Rc<Self>, next: Step) {
+        let ui = Rc::downgrade(self);
+        let beat = glib::timeout_add_local_once(self.beat_length.get(), move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.beat.take();
+            ui.window.navigation().push_by_tag(step_name(next));
+        });
+        self.beat.replace(Some(beat));
+    }
+
+    /// The probe polls and pauses shorter than a person needs.
     pub fn set_poll_interval(&self, interval: Duration) {
         self.poll_interval.set(interval);
+    }
+
+    pub fn set_beat(&self, beat: Duration) {
+        self.beat_length.set(beat);
     }
 
     /// The widgets the headless probe drives the wizard through. It holds
@@ -302,6 +345,12 @@ impl OnboardingUi {
             .installed_status()
             .set_visible(step == Step::Components && !setting_up && !needs_onboarding(&components));
         self.watch(!self.busy.get() && polls(step, &components));
+        // Going back during the pause stays back.
+        if step != Step::Components {
+            if let Some(beat) = self.beat.take() {
+                beat.remove();
+            }
+        }
     }
 
     /// Start or stop the component step's poll.
@@ -335,7 +384,7 @@ impl OnboardingUi {
 
 impl Drop for OnboardingUi {
     fn drop(&mut self) {
-        if let Some(source) = self.poll.take() {
+        for source in [self.poll.take(), self.beat.take()].into_iter().flatten() {
             source.remove();
         }
     }
