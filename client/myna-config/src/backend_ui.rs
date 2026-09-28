@@ -43,7 +43,9 @@ use crate::ui;
 
 struct ModelRow {
     backend: BackendIdentity,
-    radio: gtk::CheckButton,
+    row: adw::ActionRow,
+    /// None when the row is the only model and already connected.
+    radio: Option<gtk::CheckButton>,
     spinner: gtk::Spinner,
 }
 
@@ -60,6 +62,9 @@ pub struct BackendUi {
     myna_selector: Option<ui::MynaPage>,
     /// The General tab's model rows and the backend each one chooses.
     model_rows: RefCell<Vec<ModelRow>>,
+    /// Never shown. GTK draws a check button as a radio only while it is in a
+    /// group, so a lone model's radio needs this partner to look like one.
+    model_radio_group: gtk::CheckButton,
     /// Set while rendering marks a radio, so the mark is not taken as a choice.
     marking_models: std::cell::Cell<bool>,
     this: std::rc::Weak<Self>,
@@ -224,6 +229,7 @@ impl BackendUi {
         let ui = Rc::new_cyclic(|this| BackendUi {
             this: this.clone(),
             model_rows: RefCell::new(Vec::new()),
+            model_radio_group: gtk::CheckButton::new(),
             marking_models: std::cell::Cell::new(false),
             controller,
             configurator,
@@ -373,14 +379,19 @@ impl BackendUi {
         let group = page.model_group();
         let snapshot = self.active_backend.snapshot();
         let backends = snapshot.backends();
-        let listed = self
-            .model_rows
-            .borrow()
-            .iter()
-            .map(|row| row.backend.clone())
-            .collect::<Vec<_>>();
-        if listed.as_slice() != backends {
-            self.list_models(&group, backends);
+        let selectable = backends.len() > 1
+            || !matches!(snapshot.active_state(), ActiveBackendState::Connected(_));
+        let (listed, listed_selectable) = {
+            let rows = self.model_rows.borrow();
+            (
+                rows.iter()
+                    .map(|row| row.backend.clone())
+                    .collect::<Vec<_>>(),
+                rows.iter().all(|row| row.radio.is_some()),
+            )
+        };
+        if listed.as_slice() != backends || listed_selectable != selectable {
+            self.list_models(&group, backends, selectable);
         }
         group.set_visible(!backends.is_empty());
 
@@ -405,7 +416,9 @@ impl BackendUi {
         let switching_to = self.active_backend.switching_to();
         self.marking_models.set(true);
         for row in self.model_rows.borrow().iter() {
-            row.radio.set_active(chosen.as_ref() == Some(&row.backend));
+            if let Some(radio) = &row.radio {
+                radio.set_active(chosen.as_ref() == Some(&row.backend));
+            }
             let switching = switching_to.as_ref() == Some(&row.backend);
             row.spinner.set_visible(switching);
             row.spinner.set_spinning(switching);
@@ -418,14 +431,17 @@ impl BackendUi {
         );
     }
 
-    /// One radio row per installed backend, named and described by family.
-    fn list_models(&self, group: &adw::PreferencesGroup, backends: &[BackendIdentity]) {
+    /// One row per installed backend, named and described by family, with a
+    /// radio to choose it when there is a choice to make.
+    fn list_models(
+        &self,
+        group: &adw::PreferencesGroup,
+        backends: &[BackendIdentity],
+        selectable: bool,
+    ) {
         for row in self.model_rows.take() {
-            if let Some(row) = row.radio.ancestor(adw::ActionRow::static_type()) {
-                group.remove(&row);
-            }
+            group.remove(&row.row);
         }
-        let mut leader: Option<gtk::CheckButton> = None;
         let mut rows = Vec::new();
         for backend in backends {
             let family = model_family(backend.snap_name());
@@ -436,23 +452,26 @@ impl BackendUi {
             if let Some(description) = &family.description {
                 row.set_subtitle(description);
             }
-            let radio = gtk::CheckButton::builder()
-                .accessible_role(gtk::AccessibleRole::Radio)
-                .valign(gtk::Align::Center)
-                .build();
-            radio.set_group(leader.as_ref());
-            radio.update_property(&[gtk::accessible::Property::Label(&family.name)]);
-            radio.connect_toggled({
-                let ui = self.this.clone();
-                let backend = backend.clone();
-                move |radio| {
-                    let Some(ui) = ui.upgrade() else {
-                        return;
-                    };
-                    if radio.is_active() && !ui.marking_models.get() {
-                        ui.begin_backend_switch(backend.clone());
+            let radio = selectable.then(|| {
+                let radio = gtk::CheckButton::builder()
+                    .accessible_role(gtk::AccessibleRole::Radio)
+                    .valign(gtk::Align::Center)
+                    .build();
+                radio.set_group(Some(&self.model_radio_group));
+                radio.update_property(&[gtk::accessible::Property::Label(&family.name)]);
+                radio.connect_toggled({
+                    let ui = self.this.clone();
+                    let backend = backend.clone();
+                    move |radio| {
+                        let Some(ui) = ui.upgrade() else {
+                            return;
+                        };
+                        if radio.is_active() && !ui.marking_models.get() {
+                            ui.begin_backend_switch(backend.clone());
+                        }
                     }
-                }
+                });
+                radio
             });
             let spinner = gtk::Spinner::builder()
                 .valign(gtk::Align::Center)
@@ -461,13 +480,15 @@ impl BackendUi {
             spinner.update_property(&[gtk::accessible::Property::Label(&gettextrs::gettext(
                 "Changing model",
             ))]);
-            row.add_prefix(&radio);
+            if let Some(radio) = &radio {
+                row.add_prefix(radio);
+                row.set_activatable_widget(Some(radio));
+            }
             row.add_suffix(&spinner);
-            row.set_activatable_widget(Some(&radio));
             group.add(&row);
-            leader.get_or_insert_with(|| radio.clone());
             rows.push(ModelRow {
                 backend: backend.clone(),
+                row,
                 radio,
                 spinner,
             });
@@ -2559,6 +2580,13 @@ mod tests {
     }
 
     fn test_ui(controller: Rc<BackendController>) -> TestUi {
+        test_ui_with(controller, None)
+    }
+
+    fn test_ui_with(
+        controller: Rc<BackendController>,
+        myna_selector: Option<ui::MynaPage>,
+    ) -> TestUi {
         let view_stack = adw::ViewStack::new();
         let backend_nav = adw::NavigationView::new();
         let diagnostics_nav = adw::NavigationView::new();
@@ -2575,6 +2603,7 @@ mod tests {
         let ui = Rc::new_cyclic(|this| BackendUi {
             this: this.clone(),
             model_rows: RefCell::new(Vec::new()),
+            model_radio_group: gtk::CheckButton::new(),
             marking_models: std::cell::Cell::new(false),
             controller,
             configurator: Rc::new(PkexecSystemConfigurator::new(Arc::new(GioCommandRunner))),
@@ -2582,7 +2611,7 @@ mod tests {
             backend_nav,
             diagnostics_nav,
             overlay: adw::ToastOverlay::new(),
-            myna_selector: None,
+            myna_selector,
             active_backend: ActiveBackendController::with_coordinator(
                 crate::domain::ConnectionSnapshot::new(
                     Vec::new(),
@@ -2626,6 +2655,12 @@ mod tests {
          content[inference-provider] myna:backend myna-parakeet:provider manual\n";
     const PARAKEET_DISCONNECTED: &str =
         "Interface Plug Slot Notes\ncontent - myna-parakeet:provider -\n";
+    const PARAKEET_AND_WHISPER_SLOTS: &str = "name: content\nslots:\n  \
+         - myna-parakeet:provider:\n      content: inference-provider\n  \
+         - myna-whisper:provider:\n      content: inference-provider\n";
+    const PARAKEET_CONNECTED_WHISPER_INSTALLED: &str = "Interface Plug Slot Notes\n\
+         content[inference-provider] myna:backend myna-parakeet:provider manual\n\
+         content - myna-whisper:provider -\n";
 
     /// Never answers, so a read the UI starts stays in flight.
     struct UnansweredRepository;
@@ -2656,10 +2691,14 @@ mod tests {
     }
 
     fn discovered(connections: &str) -> Rc<BackendController> {
+        discovered_with(connections, PARAKEET_SLOT)
+    }
+
+    fn discovered_with(connections: &str, slots: &str) -> Rc<BackendController> {
         let controller = BackendController::new(Rc::new(UnansweredRepository));
         let request = controller.begin_discovery();
-        let snapshot = crate::domain::parse_connections(connections, PARAKEET_SLOT)
-            .expect("connections parse");
+        let snapshot =
+            crate::domain::parse_connections(connections, slots).expect("connections parse");
         controller.complete_discovery(request, Ok(snapshot));
         controller
     }
@@ -2722,6 +2761,141 @@ mod tests {
                 .downcast::<ui::StatusPage>()
                 .expect("a status page");
             assert_eq!(page.status().title(), "No Active Backend");
+        });
+    }
+
+    fn descendants(root: &gtk::Widget) -> Vec<gtk::Widget> {
+        let mut found = Vec::new();
+        let mut child = root.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            found.extend(descendants(&widget));
+            found.push(widget);
+        }
+        found
+    }
+
+    /// The General tab's model rows as (title, subtitle, the CSS node its
+    /// check button draws: "radio" or "check").
+    fn listed_models(ui: &BackendUi) -> Vec<(String, String, Option<String>)> {
+        let group = ui
+            .myna_selector
+            .as_ref()
+            .expect("general page")
+            .model_group();
+        descendants(group.upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<adw::ActionRow>().ok())
+            .map(|row| {
+                let indicator = descendants(row.upcast_ref())
+                    .into_iter()
+                    .find(|widget| widget.is::<gtk::CheckButton>())
+                    .and_then(|button| button.first_child())
+                    .map(|node| node.css_name().to_string());
+                (
+                    row.title().to_string(),
+                    row.subtitle().unwrap_or_default().to_string(),
+                    indicator,
+                )
+            })
+            .collect()
+    }
+
+    fn general_ui(connections: &str) -> Rc<BackendUi> {
+        general_ui_with(connections, PARAKEET_SLOT)
+    }
+
+    fn general_ui_with(connections: &str, slots: &str) -> Rc<BackendUi> {
+        ui::register_resources();
+        let TestUi { ui, .. } = test_ui_with(
+            discovered_with(connections, slots),
+            Some(ui::MynaPage::new()),
+        );
+        ui.sync_active_backend();
+        ui
+    }
+
+    #[test]
+    fn a_single_connected_model_is_a_plain_row() {
+        on_gtk_thread(|| {
+            let ui = general_ui(PARAKEET_CONNECTED);
+            assert_eq!(
+                listed_models(&ui),
+                [(
+                    "Parakeet".to_owned(),
+                    gettextrs::gettext("Fastest, good support for European languages"),
+                    None,
+                )]
+            );
+        });
+    }
+
+    #[test]
+    fn a_single_unconnected_model_keeps_its_radio_to_connect_it() {
+        on_gtk_thread(|| {
+            let ui = general_ui(PARAKEET_DISCONNECTED);
+            assert_eq!(
+                listed_models(&ui)
+                    .into_iter()
+                    .map(|(title, _, radio)| (title, radio))
+                    .collect::<Vec<_>>(),
+                [("Parakeet".to_owned(), Some("radio".to_owned()))]
+            );
+        });
+    }
+
+    #[test]
+    fn two_models_are_exclusive_radios() {
+        on_gtk_thread(|| {
+            let ui = general_ui_with(
+                PARAKEET_CONNECTED_WHISPER_INSTALLED,
+                PARAKEET_AND_WHISPER_SLOTS,
+            );
+            assert_eq!(
+                listed_models(&ui)
+                    .into_iter()
+                    .map(|(title, _, radio)| (title, radio))
+                    .collect::<Vec<_>>(),
+                [
+                    ("Parakeet".to_owned(), Some("radio".to_owned())),
+                    ("Whisper".to_owned(), Some("radio".to_owned())),
+                ]
+            );
+            let marked = || {
+                ui.model_rows
+                    .borrow()
+                    .iter()
+                    .map(|row| row.radio.as_ref().expect("radio").is_active())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(marked(), [true, false]);
+            ui.marking_models.set(true);
+            ui.model_rows.borrow()[1]
+                .radio
+                .as_ref()
+                .expect("radio")
+                .set_active(true);
+            ui.marking_models.set(false);
+            assert_eq!(marked(), [false, true]);
+        });
+    }
+
+    #[test]
+    fn connecting_the_only_model_drops_its_radio() {
+        on_gtk_thread(|| {
+            let ui = general_ui(PARAKEET_DISCONNECTED);
+            let request = ui.controller.begin_discovery();
+            let snapshot = crate::domain::parse_connections(PARAKEET_CONNECTED, PARAKEET_SLOT)
+                .expect("connections parse");
+            ui.controller.complete_discovery(request, Ok(snapshot));
+            ui.sync_active_backend();
+            assert_eq!(
+                listed_models(&ui)
+                    .into_iter()
+                    .map(|(title, _, radio)| (title, radio))
+                    .collect::<Vec<_>>(),
+                [("Parakeet".to_owned(), None)]
+            );
         });
     }
 
