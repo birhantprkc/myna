@@ -7,6 +7,7 @@ mod active_backend_dialog;
 mod apply_dialog;
 mod backend_apply_controls;
 mod backend_page;
+mod balanced_label;
 mod diagnostics_page;
 mod main_window;
 mod myna_page;
@@ -22,6 +23,7 @@ pub use active_backend_dialog::ActiveBackendDialog;
 pub use apply_dialog::ApplyDialog;
 pub use backend_apply_controls::BackendApplyControls;
 pub use backend_page::BackendPage;
+pub use balanced_label::BalancedLabel;
 pub use diagnostics_page::DiagnosticsPage;
 pub use main_window::MainWindow;
 pub use myna_page::MynaPage;
@@ -40,4 +42,16 @@ pub fn register_resources() {
         gio::resources_register_include!("myna-config.gresource")
             .expect("failed to register myna-config UI resources");
     });
+}
+
+/// GTK binds to the first thread that initializes it and libtest gives every
+/// test its own, so GTK tests share gtk's one test thread. Gated like the
+/// probes: `ui-check` and `cov` run them under Xvfb.
+#[cfg(test)]
+pub(crate) fn on_gtk_thread(test: impl FnOnce() + Send + std::panic::UnwindSafe + 'static) {
+    if std::env::var_os("MYNA_CONFIG_GTK_TESTS").is_none() {
+        eprintln!("skipped: set MYNA_CONFIG_GTK_TESTS=1 under Xvfb");
+        return;
+    }
+    gtk::test_synced(test);
 }

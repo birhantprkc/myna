@@ -2668,16 +2668,7 @@ mod tests {
         TestUi { ui, view_stack }
     }
 
-    /// GTK binds to the first thread that initializes it and libtest gives
-    /// every test its own, so GTK tests share gtk's one test thread. Gated like
-    /// the probes: `ui-check` and `cov` run them under Xvfb.
-    fn on_gtk_thread(test: impl FnOnce() + Send + std::panic::UnwindSafe + 'static) {
-        if std::env::var_os("MYNA_CONFIG_GTK_TESTS").is_none() {
-            eprintln!("skipped: set MYNA_CONFIG_GTK_TESTS=1 under Xvfb");
-            return;
-        }
-        gtk::test_synced(test);
-    }
+    use crate::ui::on_gtk_thread;
 
     #[test]
     fn switching_to_the_diagnostics_tab_triggers_a_refresh() {
