@@ -377,10 +377,16 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-icon: themed");
+    // Not by name: a stale icon cache listing a deleted hicolor copy hid it.
     let icon = find_descendant(window.upcast_ref(), &|widget| {
         widget.downcast_ref::<gtk::Image>().is_some_and(|image| {
             image.is_mapped()
-                && image.icon_name().as_deref() == Some(APP_ID)
+                && image.storage_type() == gtk::ImageType::Paintable
+                && image.resource().as_deref()
+                    == Some("/com/canonical/Myna/Config/icons/scalable/apps/com.canonical.Myna.Config.svg")
+                && image
+                    .paintable()
+                    .is_some_and(|icon| icon.intrinsic_width() > 0)
                 && image.pixel_size() == 96
         })
     });

@@ -8,9 +8,9 @@ Every step leaves through one footer button: Next, and Done on the last step.
 Done closes the wizard onto the settings window. The design quits the
 application instead; the window stays because it is where the key and the
 backend are changed later.
-The welcome step shows the application icon from the application's own
-resources, so it does not depend on the installed hicolor copy, which the
-headless probes lack.
+The welcome step loads the application icon straight from the application's
+own resources, not by name through the icon theme: a stale icon cache that
+still lists a deleted hicolor copy made the theme fail without falling back.
 
 ## What opens it
 
