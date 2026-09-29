@@ -1,34 +1,13 @@
-//! The snapd changes still running, as `snap changes --abs-time` lists them.
+//! The snapd changes still running, as `GET /v2/changes?select=in-progress`
+//! lists them, read as the user.
 //!
 //! snapd makes a connection visible before the change that made it has
 //! finished: an install auto-connects `myna:backend` early, then fetches the
 //! model and only at the end applies the mount to Myna's namespace. Setting up
-//! waits for such a change before acting on what it sees.
-//!
-//! An apply reads the same changes from snapd's REST API instead, to show
-//! what the privileged plan is waiting on, a model download above all.
+//! waits for such a change before acting on what it sees, and an apply shows
+//! what its privileged plan is waiting on; a model download above all.
 
 use serde::Deserialize;
-
-/// One change whose Ready column is `-`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SnapChange {
-    summary: String,
-}
-
-impl SnapChange {
-    pub fn summary(&self) -> &str {
-        &self.summary
-    }
-
-    /// Whether the summary names one of `snaps`. snapd writes names quoted
-    /// (`Install "myna-parakeet" snap`), as plugs and slots
-    /// (`Connect myna:backend to myna-parakeet:provider`) or as components
-    /// (`myna-parakeet+model`), so any run of snap-name characters counts.
-    pub fn touches<S: AsRef<str>>(&self, snaps: &[S]) -> bool {
-        names(&self.summary, snaps)
-    }
-}
 
 fn names<S: AsRef<str>>(summary: &str, snaps: &[S]) -> bool {
     summary
@@ -71,14 +50,51 @@ struct TaskData {
 }
 
 impl ChangeInProgress {
-    /// Its tasks name the snaps they affect; snapd's `for=` filter does not
-    /// match a `snapctl-install` change, so this is decided here.
-    fn concerns(&self, snap: &str) -> bool {
-        names(&self.summary, &[snap])
-            || self
-                .tasks
-                .iter()
-                .any(|task| task.data.affected_snaps.iter().any(|name| name == snap))
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    /// Whether it changes one of `snaps`. snapd writes names in summaries
+    /// quoted (`Install "myna-parakeet" snap`), as plugs and slots
+    /// (`Connect myna:backend to myna-parakeet:provider`) or as components
+    /// (`myna-parakeet+model`), so any run of snap-name characters counts.
+    /// Its tasks name the snaps they affect too; snapd's `for=` filter does
+    /// not match a `snapctl-install` change, so this is decided here.
+    pub fn concerns<S: AsRef<str>>(&self, snaps: &[S]) -> bool {
+        names(&self.summary, snaps)
+            || self.tasks.iter().any(|task| {
+                task.data
+                    .affected_snaps
+                    .iter()
+                    .any(|name| snaps.iter().any(|snap| snap.as_ref() == name))
+            })
+    }
+
+    /// Its download while one runs, else its summary.
+    pub fn progress(&self) -> ApplyProgress {
+        let download = self.tasks.iter().find(|task| {
+            task.status == "Doing"
+                && task.kind.starts_with("download-")
+                && task.progress.total > 0
+                && !task.progress.label.is_empty()
+        });
+        match download {
+            Some(task) => {
+                // A component's label is `snap+component`, a snap's its name.
+                let label = task.progress.label.as_str();
+                let name = label
+                    .split_once('+')
+                    .map_or(label, |(_, component)| component);
+                ApplyProgress::Download {
+                    name: name.to_owned(),
+                    done: task.progress.done.min(task.progress.total),
+                    total: task.progress.total,
+                }
+            }
+            None => ApplyProgress::Change {
+                summary: self.summary.clone(),
+            },
+        }
     }
 }
 
@@ -99,43 +115,8 @@ pub enum ApplyProgress {
 /// The first change on `snap` still running: its download while one runs,
 /// else its summary.
 pub fn apply_progress(changes: &[ChangeInProgress], snap: &str) -> Option<ApplyProgress> {
-    let change = changes.iter().find(|change| change.concerns(snap))?;
-    let download = change.tasks.iter().find(|task| {
-        task.status == "Doing" && task.kind.starts_with("download-") && task.progress.total > 0
-    });
-    Some(match download {
-        Some(task) => {
-            let label = task.progress.label.as_str();
-            let name = label
-                .strip_prefix(snap)
-                .and_then(|rest| rest.strip_prefix('+'))
-                .unwrap_or(label);
-            ApplyProgress::Download {
-                name: if name.is_empty() { snap } else { name }.to_owned(),
-                done: task.progress.done.min(task.progress.total),
-                total: task.progress.total,
-            }
-        }
-        None => ApplyProgress::Change {
-            summary: change.summary.clone(),
-        },
-    })
-}
-
-/// The changes not yet ready. Anything that is not a change row, including
-/// the header and snapd's "no changes found", is skipped.
-pub fn parse_in_progress(output: &str) -> Vec<SnapChange> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let id = fields.next()?;
-            let _status = fields.next()?;
-            let _spawn = fields.next()?;
-            let ready = fields.next()?;
-            let summary = fields.collect::<Vec<_>>().join(" ");
-            (id.bytes().all(|byte| byte.is_ascii_digit()) && ready == "-")
-                .then_some(SnapChange { summary })
-        })
-        .collect()
+    changes
+        .iter()
+        .find(|change| change.concerns(&[snap]))
+        .map(ChangeInProgress::progress)
 }

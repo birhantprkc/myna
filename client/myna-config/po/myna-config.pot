@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-29 10:18+0100\n"
+"POT-Creation-Date: 2026-09-29 22:26+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -93,7 +93,7 @@ msgid "General"
 msgstr ""
 
 #: data/main-window.blp:39 data/myna-page.blp:38 src/app.rs:1142
-#: src/app.rs:2337 src/app.rs:2701 src/backend_apply.rs:430
+#: src/app.rs:2345 src/app.rs:2709 src/backend_apply.rs:430
 #: src/diagnostics.rs:535 src/presentation.rs:169
 msgid "Model"
 msgstr ""
@@ -127,11 +127,11 @@ msgstr ""
 msgid "Dictation"
 msgstr ""
 
-#: data/onboarding-components.blp:18 src/app.rs:2901 src/onboarding_ui.rs:457
+#: data/onboarding-components.blp:18 src/app.rs:2909 src/onboarding_ui.rs:457
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:27 src/app.rs:453 src/app.rs:2905
+#: data/onboarding-components.blp:27 src/app.rs:453 src/app.rs:2913
 msgid ""
 "Copy the command below and enter them in the Terminal to install all "
 "necessary components."
@@ -141,7 +141,7 @@ msgstr ""
 msgid "Copy install commands"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:18 src/app.rs:2954 src/onboarding_ui.rs:458
+#: data/onboarding-shortcut.blp:18 src/app.rs:2962 src/onboarding_ui.rs:458
 msgid "How to dictate"
 msgstr ""
 
@@ -161,7 +161,7 @@ msgstr ""
 msgid "Setting up dictation"
 msgstr ""
 
-#: data/onboarding-window.blp:43 src/app.rs:3014
+#: data/onboarding-window.blp:43 src/app.rs:3022
 msgid "All components installed"
 msgstr ""
 
@@ -205,11 +205,11 @@ msgstr ""
 msgid "Press Escape to cancel."
 msgstr ""
 
-#: data/status-page.blp:8 src/app.rs:1137 src/app.rs:3089
+#: data/status-page.blp:8 src/app.rs:1137 src/app.rs:3097
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:9 src/app.rs:1138 src/app.rs:3090
+#: data/status-page.blp:9 src/app.rs:1138 src/app.rs:3098
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -229,56 +229,56 @@ msgstr ""
 msgid "Diagnostics appear once Myna finds your models."
 msgstr ""
 
-#: src/app.rs:2375 src/backend_ui.rs:3334 src/model_family.rs:27
+#: src/app.rs:2383 src/backend_ui.rs:3334 src/model_family.rs:27
 msgid "Fastest, good support for European languages"
 msgstr ""
 
-#: src/app.rs:2379 src/backend_ui.rs:3858 src/model_family.rs:29
+#: src/app.rs:2387 src/backend_ui.rs:3858 src/model_family.rs:29
 msgid "Widest language support"
 msgstr ""
 
-#: src/app.rs:2514 src/myna_settings.rs:104
+#: src/app.rs:2522 src/myna_settings.rs:104
 msgid "As you speak"
 msgstr ""
 
-#: src/app.rs:2515 src/myna_settings.rs:105
+#: src/app.rs:2523 src/myna_settings.rs:105
 msgid "When you stop"
 msgstr ""
 
-#: src/app.rs:2643 src/backend_ui.rs:601
+#: src/app.rs:2651 src/backend_ui.rs:601
 msgid "Changing to {model} failed"
 msgstr ""
 
-#: src/app.rs:2644 src/backend_ui.rs:610 src/backend_ui.rs:1326
+#: src/app.rs:2652 src/backend_ui.rs:610 src/backend_ui.rs:1326
 msgid "Details"
 msgstr ""
 
 #. TRANSLATORS: {setting} is a setting's name on the Model tab, such as "Unload when idle".
-#: src/app.rs:2750 src/backend_ui.rs:1318
+#: src/app.rs:2758 src/backend_ui.rs:1318
 msgid "Changing “{setting}” failed"
 msgstr ""
 
-#: src/app.rs:2751 src/presentation.rs:190
+#: src/app.rs:2759 src/presentation.rs:190
 msgid "Unload when idle"
 msgstr ""
 
-#: src/app.rs:2969 src/shortcut_ui.rs:391
+#: src/app.rs:2977 src/shortcut_ui.rs:391
 msgid "You can trigger Dictation anytime by using the keyboard shortcut:"
 msgstr ""
 
-#: src/app.rs:3094
+#: src/app.rs:3102
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:3095
+#: src/app.rs:3103
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:3111
+#: src/app.rs:3119
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:3529
+#: src/app.rs:3537
 msgid "Could not save the setting"
 msgstr ""
 
@@ -298,7 +298,7 @@ msgstr ""
 msgid "The model changed while it was being switched on. Try again."
 msgstr ""
 
-#: src/active_backend.rs:332
+#: src/active_backend.rs:331
 msgid "snapd is still busy with “{change}”. Try again once it has finished."
 msgstr ""
 

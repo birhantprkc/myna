@@ -20,7 +20,7 @@ use myna_config::operation_gate::{OperationCoordinator, OperationKind};
 use myna_config::ports::{
     BackendRepository, SystemConfigurator, SystemConfiguratorError, SystemConfiguratorFailure,
 };
-use myna_config::snap_changes::{parse_in_progress, SnapChange};
+use myna_config::snap_changes::{parse_changes, ChangeInProgress};
 
 fn connections(snaps: &[&str], connected: &[&str]) -> ConnectionSnapshot {
     let mut rows = String::from("Interface Plug Slot Notes\n");
@@ -173,13 +173,12 @@ fn missing_selected_backend_is_rejected() {
     );
 }
 
-type ChangesRead = Result<Vec<SnapChange>, BackendSurfaceError>;
+type ChangesRead = Result<Vec<ChangeInProgress>, String>;
 
 #[derive(Clone)]
 struct FakeRepository {
     discoveries: Rc<RefCell<VecDeque<Result<ConnectionSnapshot, BackendSurfaceError>>>>,
     calls: Rc<RefCell<usize>>,
-    changes: Rc<RefCell<VecDeque<ChangesRead>>>,
 }
 
 impl FakeRepository {
@@ -189,15 +188,7 @@ impl FakeRepository {
         Self {
             discoveries: Rc::new(RefCell::new(discoveries.into_iter().collect())),
             calls: Rc::new(RefCell::new(0)),
-            changes: Rc::default(),
         }
-    }
-
-    /// What successive `snap changes` reads report; once exhausted, nothing
-    /// is in progress.
-    fn with_changes(self, changes: impl IntoIterator<Item = ChangesRead>) -> Self {
-        self.changes.borrow_mut().extend(changes);
-        self
     }
 
     fn calls(&self) -> usize {
@@ -207,16 +198,6 @@ impl FakeRepository {
 
 #[async_trait(?Send)]
 impl BackendRepository for FakeRepository {
-    async fn changes_in_progress(
-        &self,
-        _cancellation: CancellationToken,
-    ) -> Result<Vec<SnapChange>, BackendSurfaceError> {
-        self.changes
-            .borrow_mut()
-            .pop_front()
-            .unwrap_or(Ok(Vec::new()))
-    }
-
     async fn discover(
         &self,
         _cancellation: CancellationToken,
@@ -246,6 +227,7 @@ struct FakeConfigurator {
     result: Rc<RefCell<Option<ConfiguratorResult>>>,
     calls: Rc<RefCell<Vec<Vec<CommandRequest>>>>,
     restarts: Rc<RefCell<usize>>,
+    changes: Rc<RefCell<VecDeque<ChangesRead>>>,
 }
 
 type ConfiguratorResult = Result<Vec<CommandResult>, SystemConfiguratorFailure>;
@@ -256,7 +238,15 @@ impl FakeConfigurator {
             result: Rc::new(RefCell::new(Some(result))),
             calls: Rc::new(RefCell::new(Vec::new())),
             restarts: Rc::new(RefCell::new(0)),
+            changes: Rc::default(),
         }
+    }
+
+    /// What successive reads of snapd's changes report; once exhausted,
+    /// nothing is in progress.
+    fn with_changes(self, changes: impl IntoIterator<Item = ChangesRead>) -> Self {
+        self.changes.borrow_mut().extend(changes);
+        self
     }
 
     fn calls(&self) -> Vec<Vec<CommandRequest>> {
@@ -292,6 +282,16 @@ impl SystemConfigurator for FakeConfigurator {
         _cancellation: CancellationToken,
     ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure> {
         unreachable!("a switch never applies backend settings")
+    }
+
+    async fn changes_in_progress(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> Result<Vec<ChangeInProgress>, String> {
+        self.changes
+            .borrow_mut()
+            .pop_front()
+            .unwrap_or(Ok(Vec::new()))
     }
 }
 
@@ -859,7 +859,7 @@ fn no_backend_and_failed_discovery_are_errors_without_privilege() {
             &repository,
             &configurator,
             "myna-parakeet",
-            &no_wait()
+            &no_wait(),
         ))
         .is_err());
         assert!(configurator.calls().is_empty());
@@ -885,7 +885,7 @@ fn a_failed_or_contradicted_switch_is_reported() {
         &repository,
         &denied,
         "myna-parakeet",
-        &no_wait()
+        &no_wait(),
     ))
     .is_err());
 
@@ -935,9 +935,18 @@ fn a_switch_lost_to_discovery_or_cancellation_is_reported() {
     assert!(cancelled.contains("cancelled"), "{cancelled}");
 }
 
-/// `snap changes --abs-time` on the machine the race was seen on, seconds
-/// after the model's install change auto-connected `myna:backend`.
-const INSTALLING: &str = include_str!("fixtures/snap-changes-installing.txt");
+/// The model's install change as snapd lists it while it downloads the snap,
+/// after it has auto-connected `myna:backend`.
+fn installing() -> ChangesRead {
+    Ok(parse_changes(
+        serde_json::from_str(include_str!("fixtures/snapd-changes-installing.json")).unwrap(),
+    )
+    .unwrap())
+}
+
+fn change(summary: &str) -> ChangesRead {
+    Ok(parse_changes(serde_json::json!([{ "summary": summary }])).unwrap())
+}
 
 /// The wizard saw `myna:backend` connected while snapd was still installing
 /// the model, restarted the daemon at once, and the daemon never found the
@@ -947,12 +956,9 @@ fn an_auto_connection_is_restarted_only_once_its_change_is_done() {
     let repository = FakeRepository::new([
         Ok(connections(&["myna-parakeet"], &["myna-parakeet"])),
         Ok(connections(&["myna-parakeet"], &["myna-parakeet"])),
-    ])
-    .with_changes([
-        Ok(parse_in_progress(INSTALLING)),
-        Ok(parse_in_progress(INSTALLING)),
     ]);
-    let configurator = FakeConfigurator::returning(Ok(vec![]));
+    let configurator =
+        FakeConfigurator::returning(Ok(vec![])).with_changes([installing(), installing()]);
     let sleeps = RefCell::new(Vec::new());
     let sleep = |interval: Duration| -> Pin<Box<dyn Future<Output = ()>>> {
         sleeps
@@ -961,9 +967,8 @@ fn an_auto_connection_is_restarted_only_once_its_change_is_done() {
         Box::pin(std::future::ready(()))
     };
     let wait = SnapdWait {
-        interval: Duration::from_secs(2),
-        timeout: Duration::from_secs(10),
         sleep: &sleep,
+        ..no_wait()
     };
 
     block_on(ensure_backend_active(
@@ -979,7 +984,7 @@ fn an_auto_connection_is_restarted_only_once_its_change_is_done() {
         [(Duration::from_secs(2), 0), (Duration::from_secs(2), 0)]
     );
     assert_eq!(*configurator.restarts.borrow(), 1);
-    assert!(repository.changes.borrow().is_empty());
+    assert!(configurator.changes.borrow().is_empty());
 }
 
 /// Before its install change auto-connects the backend, the wizard would
@@ -989,9 +994,8 @@ fn a_connection_its_change_makes_meanwhile_is_not_made_again() {
     let repository = FakeRepository::new([
         Ok(connections(&["myna-parakeet"], &[])),
         Ok(connections(&["myna-parakeet"], &["myna-parakeet"])),
-    ])
-    .with_changes([Ok(parse_in_progress(INSTALLING))]);
-    let configurator = FakeConfigurator::returning(Ok(vec![]));
+    ]);
+    let configurator = FakeConfigurator::returning(Ok(vec![])).with_changes([installing()]);
 
     block_on(ensure_backend_active(
         &repository,
@@ -1007,11 +1011,9 @@ fn a_connection_its_change_makes_meanwhile_is_not_made_again() {
 
 #[test]
 fn changes_to_other_snaps_are_not_waited_for() {
-    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))])
-        .with_changes([Ok(parse_in_progress(
-            "7 Doing 2026-09-28T09:37:28+01:00 - Auto-refresh snap \"firefox\"",
-        ))]);
-    let configurator = FakeConfigurator::returning(Ok(vec![]));
+    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))]);
+    let configurator = FakeConfigurator::returning(Ok(vec![]))
+        .with_changes([change("Auto-refresh snap \"firefox\"")]);
     let sleep = |_: Duration| -> Pin<Box<dyn Future<Output = ()>>> {
         panic!("waited for a change to another snap")
     };
@@ -1033,9 +1035,9 @@ fn changes_to_other_snaps_are_not_waited_for() {
 
 #[test]
 fn a_change_that_outlasts_the_wait_is_reported_without_a_restart() {
-    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))])
-        .with_changes((0..10).map(|_| Ok(parse_in_progress(INSTALLING))));
-    let configurator = FakeConfigurator::returning(Ok(vec![]));
+    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))]);
+    let configurator =
+        FakeConfigurator::returning(Ok(vec![])).with_changes((0..10).map(|_| installing()));
 
     let error = block_on(ensure_backend_active(
         &repository,
@@ -1048,14 +1050,14 @@ fn a_change_that_outlasts_the_wait_is_reported_without_a_restart() {
     assert!(error.contains("Install \"myna-parakeet\" snap"), "{error}");
     assert_eq!(*configurator.restarts.borrow(), 0);
     // 10 s at 2 s: the first read, then one after each of five sleeps.
-    assert_eq!(repository.changes.borrow().len(), 4);
+    assert_eq!(configurator.changes.borrow().len(), 4);
 }
 
 #[test]
 fn unreadable_changes_are_reported_without_a_restart() {
-    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))])
-        .with_changes([Err(error("snapd is down"))]);
-    let configurator = FakeConfigurator::returning(Ok(vec![]));
+    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))]);
+    let configurator =
+        FakeConfigurator::returning(Ok(vec![])).with_changes([Err("snapd is down".to_owned())]);
 
     let failed = block_on(ensure_backend_active(
         &repository,

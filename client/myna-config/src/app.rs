@@ -2034,18 +2034,6 @@ impl ProbeMachine {
             ["interface", "content", "--attrs"] => {
                 fixture(include_str!("../tests/fixtures/snap-interface-content.txt"))
             }
-            ["changes", "--abs-time"] => {
-                self.change_reads
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let installing = self.installing.load(std::sync::atomic::Ordering::SeqCst);
-                fixture(if installing {
-                    "ID  Status  Spawn  Ready  Summary\n\
-                     9  Doing  2026-09-28T09:37:28+01:00  -  Install \"myna-parakeet\" snap\n"
-                } else {
-                    "ID  Status  Spawn  Ready  Summary\n\
-                     9  Done  2026-09-28T09:37:28+01:00  2026-09-28T09:37:36+01:00  Install \"myna-parakeet\" snap\n"
-                })
-            }
             ["info", snap] => Some(
                 include_str!("../tests/fixtures/snap-info-parakeet.txt")
                     .replace("myna-parakeet", snap),
@@ -2097,6 +2085,26 @@ impl crate::command::CommandRunner for ProbeMachine {
 
 #[async_trait::async_trait(?Send)]
 impl crate::ports::SystemConfigurator for ProbeMachine {
+    async fn changes_in_progress(
+        &self,
+        _cancellation: crate::command::CancellationToken,
+    ) -> Result<Vec<crate::snap_changes::ChangeInProgress>, String> {
+        if self.bare.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("the probe machine has no snapd".to_owned());
+        }
+        self.change_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let installing = self.installing.load(std::sync::atomic::Ordering::SeqCst);
+        crate::snap_changes::parse_changes(if installing {
+            serde_json::from_str(include_str!(
+                "../tests/fixtures/snapd-changes-installing.json"
+            ))
+            .map_err(|error| error.to_string())?
+        } else {
+            serde_json::json!([])
+        })
+    }
+
     async fn restart_myna(
         &self,
         _cancellation: crate::command::CancellationToken,

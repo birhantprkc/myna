@@ -80,8 +80,8 @@ snapd shows that connection while the install change is still fetching the
 model, and mounts the backend into Myna's namespace only as the change's
 last task. A daemon restarted before then never finds the backend, although
 it looks for it at every utterance. So setup first waits, spinner spinning,
-until `snap changes` lists no unfinished change naming Myna or a discovered
-backend, then decides on a fresh discovery. After 15 min it gives up with the
+until snapd's `/v2/changes?select=in-progress`, read as the user, lists no
+change on Myna or a discovered backend, then decides on a fresh discovery. After 15 min it gives up with the
 error dialog, naming the change, and Next retries. Otherwise it runs the active-backend switch,
 which costs one polkit prompt: snapd's `manage-interfaces` action is
 `auth_admin_keep`, and the restart goes through `systemctl --user`, which needs
@@ -138,7 +138,8 @@ refresh, run before any window exists, and it is handed to the wizard rather
 than repeated there. The shortcut proxy spawns nothing: it is one D-Bus match
 per surface. Regaining focus on the component step costs another `snap list`
 plus a discovery, and so does each poll while a component is missing.
-Setting up reads `snap changes` once, and again every 2 s while snapd is
-still changing Myna or a backend, plus one discovery after such a wait.
+Setting up reads snapd's changes over its socket once, and again every 2 s
+while snapd is still changing Myna or a backend, plus one discovery after
+such a wait.
 Reopening the wizard from the menu costs one assessment, and closing it one
 startup-sized refresh of the settings window.

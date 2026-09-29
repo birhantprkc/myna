@@ -10,7 +10,7 @@ use crate::domain::{
     BackendIdentity, BackendSnapshot, BackendSurfaceError, ClientSetting, ClientSettingMetadata,
     ClientSettingValue, CommandResult, ConnectionSnapshot,
 };
-use crate::snap_changes::{ApplyProgress, SnapChange};
+use crate::snap_changes::{apply_progress, ApplyProgress, ChangeInProgress};
 
 pub type ClientSettingsCallback = Box<dyn Fn(ClientSetting) + 'static>;
 
@@ -35,14 +35,6 @@ pub trait BackendRepository {
         &self,
         _cancellation: CancellationToken,
     ) -> Result<Vec<InstalledSnap>, BackendSurfaceError> {
-        Ok(Vec::new())
-    }
-
-    /// The snapd changes that have not finished yet.
-    async fn changes_in_progress(
-        &self,
-        _cancellation: CancellationToken,
-    ) -> Result<Vec<SnapChange>, BackendSurfaceError> {
         Ok(Vec::new())
     }
 
@@ -83,14 +75,23 @@ pub trait SystemConfigurator {
         cancellation: CancellationToken,
     ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure>;
 
+    /// The snapd changes that have not finished yet, read as the user.
+    async fn changes_in_progress(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> Result<Vec<ChangeInProgress>, String> {
+        Ok(Vec::new())
+    }
+
     /// What snapd is doing on `backend_snap` now, while an apply runs; none
     /// when it is doing nothing there or cannot be read.
     async fn apply_progress(
         &self,
-        _backend_snap: &str,
-        _cancellation: CancellationToken,
+        backend_snap: &str,
+        cancellation: CancellationToken,
     ) -> Option<ApplyProgress> {
-        None
+        let changes = self.changes_in_progress(cancellation).await.ok()?;
+        apply_progress(&changes, backend_snap)
     }
 }
 

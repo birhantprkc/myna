@@ -275,7 +275,7 @@ pub async fn ensure_backend_active(
                 .map(|backend| backend.snap_name().to_owned()),
         )
         .collect::<Vec<_>>();
-    if wait_for_snapd(repository, &snaps, wait).await? {
+    if wait_for_snapd(configurator, &snaps, wait).await? {
         snapshot = repository
             .refresh(CancellationToken::new())
             .await
@@ -311,20 +311,19 @@ pub async fn ensure_backend_active(
     }
 }
 
-/// Wait until snapd has no change in progress naming one of `snaps`, and say
+/// Wait until snapd has no change in progress on one of `snaps`, and say
 /// whether there was one.
 async fn wait_for_snapd(
-    repository: &dyn BackendRepository,
+    configurator: &dyn SystemConfigurator,
     snaps: &[String],
     wait: &SnapdWait<'_>,
 ) -> Result<bool, String> {
     let mut waited = Duration::ZERO;
     loop {
-        let changes = repository
+        let changes = configurator
             .changes_in_progress(CancellationToken::new())
-            .await
-            .map_err(|error| error.message().to_owned())?;
-        let Some(change) = changes.iter().find(|change| change.touches(snaps)) else {
+            .await?;
+        let Some(change) = changes.iter().find(|change| change.concerns(snaps)) else {
             return Ok(waited > Duration::ZERO);
         };
         if waited >= wait.timeout {

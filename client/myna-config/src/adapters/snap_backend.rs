@@ -13,7 +13,6 @@ use crate::domain::{
     ConnectionSnapshot, ParseError,
 };
 use crate::ports::BackendRepository;
-use crate::snap_changes::{parse_in_progress, SnapChange};
 
 const MAX_MODELCTL_CANDIDATES: usize = 4;
 
@@ -265,20 +264,6 @@ impl BackendRepository for SnapBackendRepository {
         parse_snap_list(output.stdout()).map_err(|error| {
             BackendSurfaceError::new(BackendSurface::SnapInventory, error.to_string(), "")
         })
-    }
-
-    async fn changes_in_progress(
-        &self,
-        cancellation: CancellationToken,
-    ) -> Result<Vec<SnapChange>, BackendSurfaceError> {
-        let request = CommandRequest::new("snap".to_owned(), strings(&["changes", "--abs-time"]))
-            .with_environment(BTreeMap::from([("LC_ALL".to_owned(), "C".to_owned())]));
-        let output = self
-            .runner
-            .run(request, cancellation)
-            .await
-            .map_err(|error| command_error(BackendSurface::SnapInventory, "snap", error))?;
-        Ok(parse_in_progress(output.stdout()))
     }
 
     async fn discover(
