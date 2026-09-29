@@ -378,7 +378,10 @@ impl BackendApplyState {
     fn view(&self) -> BackendApplyView {
         BackendApplyView {
             in_progress: self.confirmation_pending || self.cancellation.is_some(),
-            cancellable: self.cancellation.is_some(),
+            cancellable: self
+                .cancellation
+                .as_ref()
+                .is_some_and(|token| !token.was_refused()),
             progress_message: self.progress_message.clone(),
             feedback: self.feedback.clone(),
         }
@@ -1196,13 +1199,46 @@ impl BackendUi {
     }
 
     fn cancel_apply(self: &Rc<Self>, snap_name: &str) {
-        if let Some(entry) = self.apply_state.borrow_mut().get_mut(snap_name) {
-            if let Some(token) = entry.cancellation.clone() {
+        let token = self
+            .apply_state
+            .borrow_mut()
+            .get_mut(snap_name)
+            .and_then(|entry| {
+                let token = entry.cancellation.clone()?;
                 token.cancel();
                 entry.progress_message = Some(gettextrs::gettext("Cancelling backend apply…"));
-            }
-        }
+                Some(token)
+            });
         self.rebuild_backend_page(snap_name);
+        let Some(token) = token else {
+            return;
+        };
+        // The runner answers within a main-loop turn: the apply ends as
+        // cancelled, or its process already runs as root and refuses.
+        let ui = Rc::downgrade(self);
+        let snap_name = snap_name.to_owned();
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            let Some(ui) = ui.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            {
+                let mut states = ui.apply_state.borrow_mut();
+                let Some(entry) = states
+                    .get_mut(&snap_name)
+                    .filter(|entry| entry.cancellation.is_some())
+                else {
+                    return glib::ControlFlow::Break;
+                };
+                if !token.was_refused() {
+                    return glib::ControlFlow::Continue;
+                }
+                entry.progress_message = Some(gettextrs::gettext(
+                    "This change already runs as administrator and cannot be stopped. Waiting for it to finish…",
+                ));
+            }
+            ui.rebuild_backend_page(&snap_name);
+            glib::ControlFlow::Break
+        });
     }
 
     fn begin_apply(self: &Rc<Self>, snap_name: &str) {
@@ -4325,6 +4361,24 @@ mod tests {
         assert!(coordinator.begin(OperationKind::BackendSwitch).is_err());
         assert!(coordinator.complete(operation.token()));
         assert!(coordinator.begin(OperationKind::BackendSwitch).is_ok());
+    }
+
+    #[test]
+    fn a_refused_cancellation_keeps_the_apply_running_without_cancel() {
+        let token = CancellationToken::new();
+        let state = BackendApplyState {
+            progress_message: Some("Applying…".to_owned()),
+            cancellation: Some(token.clone()),
+            ..BackendApplyState::default()
+        };
+        assert!(state.view().cancellable);
+
+        token.cancel();
+        token.refuse();
+
+        let view = state.view();
+        assert!(view.in_progress);
+        assert!(!view.cancellable);
     }
 
     #[test]

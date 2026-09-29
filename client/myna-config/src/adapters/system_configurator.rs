@@ -15,8 +15,6 @@ use crate::command::{CancellationToken, CommandError, CommandRequest, CommandRun
 use crate::domain::CommandResult;
 use crate::ports::{SystemConfigurator, SystemConfiguratorError, SystemConfiguratorFailure};
 
-const APPLY_TIMEOUT: Duration = Duration::from_secs(120);
-
 /// Fixed plug reference the direct snapd adapter is willing to send. Any
 /// switch step whose typed target does not match these exact allowlists is
 /// rejected without reaching the socket.
@@ -433,8 +431,10 @@ async fn execute_apply_plan(
         APPLY_PLAN_FLAG.to_owned(),
         plan,
     ];
-    let request =
-        CommandRequest::new("pkexec".to_owned(), arguments.clone()).with_timeout(APPLY_TIMEOUT);
+    // No deadline: the prompt waits on the user and a model download on the
+    // network, and once authorized the executor is root, which this process
+    // cannot stop, so giving up on it would only misreport the outcome.
+    let request = CommandRequest::new("pkexec".to_owned(), arguments.clone()).without_timeout();
     match runner.run(request, cancellation).await {
         Ok(output) => match apply_plan::decode_results(output.stdout()) {
             Ok(results) => Ok(results),
@@ -722,6 +722,21 @@ mod tests {
             assert_eq!(result.arguments(), operation.arguments());
             assert_eq!(result.exit_status(), Some(0));
         }
+    }
+
+    #[test]
+    fn the_privileged_plan_has_no_deadline() {
+        let preview = preview();
+        let runner = FakeCommandRunner::scripted([Ok(CommandOutput::new(
+            Some(0),
+            plan_output(preview.operations(), None),
+            "",
+        ))]);
+        let adapter = PkexecSystemConfigurator::new(Arc::new(runner.clone()));
+
+        block_on(adapter.apply_backend_config(&preview, CancellationToken::new())).unwrap();
+
+        assert_eq!(runner.calls()[0].timeout(), None);
     }
 
     #[test]

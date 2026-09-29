@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::future::{poll_fn, Future};
+use std::future::poll_fn;
 use std::io;
-use std::pin::Pin;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -19,7 +18,7 @@ pub struct CommandRequest {
     executable: String,
     arguments: Vec<String>,
     environment: BTreeMap<String, String>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 }
 
 impl CommandRequest {
@@ -28,7 +27,7 @@ impl CommandRequest {
             executable,
             arguments,
             environment: BTreeMap::new(),
-            timeout: Duration::from_secs(30),
+            timeout: Some(Duration::from_secs(30)),
         }
     }
 
@@ -38,8 +37,18 @@ impl CommandRequest {
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = Some(timeout);
         self
+    }
+
+    /// Run until the process exits or is cancelled, however long that takes.
+    pub fn without_timeout(mut self) -> Self {
+        self.timeout = None;
+        self
+    }
+
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
     }
 
     pub fn executable(&self) -> &str {
@@ -131,6 +140,7 @@ pub struct CancellationToken {
 #[derive(Debug, Default)]
 struct CancellationState {
     cancelled: AtomicBool,
+    refused: AtomicBool,
     wakers: Mutex<Vec<Waker>>,
 }
 
@@ -156,6 +166,19 @@ impl CancellationToken {
 
     pub fn is_cancelled(&self) -> bool {
         self.inner.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// Withdraw a cancellation the operation cannot honour, such as a process
+    /// that now runs as root. The operation carries on to its real outcome,
+    /// so the token reads as not cancelled again.
+    pub fn refuse(&self) {
+        self.inner.refused.store(true, Ordering::SeqCst);
+        self.inner.cancelled.store(false, Ordering::SeqCst);
+    }
+
+    /// Whether a cancellation was withdrawn by [`Self::refuse`].
+    pub fn was_refused(&self) -> bool {
+        self.inner.refused.load(Ordering::SeqCst)
     }
 
     fn poll_cancelled(&self, waker: &Waker) -> bool {
@@ -197,76 +220,123 @@ impl CommandRunner for GioCommandRunner {
         request: CommandRequest,
         cancellation: CancellationToken,
     ) -> Result<CommandOutput, CommandError> {
-        if cancellation.is_cancelled() {
-            return Err(CommandError::Cancelled);
-        }
+        run_process(request, cancellation, kill_process).await
+    }
+}
 
-        let launcher =
-            SubprocessLauncher::new(SubprocessFlags::STDOUT_PIPE | SubprocessFlags::STDERR_PIPE);
-        for (name, value) in &request.environment {
-            launcher.setenv(name, value, true);
-        }
-        let argv = std::iter::once(request.executable.as_str())
-            .chain(request.arguments.iter().map(String::as_str))
-            .map(std::ffi::OsStr::new)
-            .collect::<Vec<_>>();
-        let subprocess = launcher
-            .spawn(&argv)
-            .map_err(|error| spawn_error(&request.executable, error))?;
+/// What sending a process SIGKILL achieved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stop {
+    Stopped,
+    /// The process runs as another user, as `pkexec` does once authorized.
+    Refused,
+}
 
-        let mut communication = subprocess.communicate_future(None);
-        let mut timeout = glib::timeout_future(request.timeout);
-        let result = poll_fn(|context| {
-            if cancellation.poll_cancelled(context.waker()) {
+fn kill_process(subprocess: &gio::Subprocess) -> Stop {
+    // No identifier once the process has exited and been reaped.
+    let Some(pid) = subprocess
+        .identifier()
+        .and_then(|pid| pid.parse::<libc::pid_t>().ok())
+    else {
+        return Stop::Stopped;
+    };
+    // SAFETY: kill(2) on our own unreaped child has no memory effects.
+    if unsafe { libc::kill(pid, libc::SIGKILL) } == 0 {
+        return Stop::Stopped;
+    }
+    if io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) {
+        Stop::Refused
+    } else {
+        Stop::Stopped
+    }
+}
+
+/// A cancellation the process refuses is withdrawn from the token and the
+/// process is awaited to its real outcome, since abandoning it would report a
+/// failure while it goes on changing the system.
+async fn run_process(
+    request: CommandRequest,
+    cancellation: CancellationToken,
+    stop: fn(&gio::Subprocess) -> Stop,
+) -> Result<CommandOutput, CommandError> {
+    if cancellation.is_cancelled() {
+        return Err(CommandError::Cancelled);
+    }
+
+    let launcher =
+        SubprocessLauncher::new(SubprocessFlags::STDOUT_PIPE | SubprocessFlags::STDERR_PIPE);
+    for (name, value) in &request.environment {
+        launcher.setenv(name, value, true);
+    }
+    let argv = std::iter::once(request.executable.as_str())
+        .chain(request.arguments.iter().map(String::as_str))
+        .map(std::ffi::OsStr::new)
+        .collect::<Vec<_>>();
+    let subprocess = launcher
+        .spawn(&argv)
+        .map_err(|error| spawn_error(&request.executable, error))?;
+
+    let mut communication = subprocess.communicate_future(None);
+    let mut timeout = request.timeout.map(glib::timeout_future);
+    let mut stoppable = true;
+    let completed = loop {
+        let next = poll_fn(|context| {
+            if stoppable && cancellation.poll_cancelled(context.waker()) {
                 return Poll::Ready(ProcessResult::Cancelled);
             }
             if let Poll::Ready(result) = communication.as_mut().poll(context) {
                 return Poll::Ready(ProcessResult::Completed(result));
             }
-            if Pin::new(&mut timeout).poll(context).is_ready() {
-                return Poll::Ready(ProcessResult::TimedOut);
+            if let Some(timeout) = timeout.as_mut() {
+                if timeout.as_mut().poll(context).is_ready() {
+                    return Poll::Ready(ProcessResult::TimedOut);
+                }
             }
             Poll::Pending
         })
         .await;
-
-        let (stdout, stderr) = match result {
-            ProcessResult::Completed(result) => {
-                result.map_err(|error| spawn_error(&request.executable, error))?
-            }
-            ProcessResult::Cancelled => {
-                subprocess.force_exit();
-                return Err(CommandError::Cancelled);
-            }
+        match next {
+            ProcessResult::Cancelled => match stop(&subprocess) {
+                Stop::Stopped => return Err(CommandError::Cancelled),
+                Stop::Refused => {
+                    cancellation.refuse();
+                    stoppable = false;
+                }
+            },
             ProcessResult::TimedOut => {
-                subprocess.force_exit();
+                stop(&subprocess);
                 return Err(CommandError::Timeout {
-                    timeout: request.timeout,
+                    timeout: request.timeout.unwrap_or_default(),
                 });
             }
-        };
-        let stdout = String::from_utf8(stdout.map_or_else(Vec::new, |bytes| bytes.to_vec()))
-            .map_err(|error| CommandError::InvalidUtf8 {
-                stream: OutputStream::Stdout,
-                message: error.to_string(),
-            })?;
-        let stderr = String::from_utf8(stderr.map_or_else(Vec::new, |bytes| bytes.to_vec()))
-            .map_err(|error| CommandError::InvalidUtf8 {
-                stream: OutputStream::Stderr,
-                message: error.to_string(),
-            })?;
-        let exit_status = subprocess.has_exited().then(|| subprocess.exit_status());
-
-        if !subprocess.is_successful() {
-            return Err(CommandError::NonZero {
-                exit_status,
-                stdout,
-                stderr,
-            });
+            ProcessResult::Completed(result) => break result,
         }
+    };
 
-        Ok(CommandOutput::new(exit_status, stdout, stderr))
+    let (stdout, stderr) = completed.map_err(|error| spawn_error(&request.executable, error))?;
+    let stdout = String::from_utf8(stdout.map_or_else(Vec::new, |bytes| bytes.to_vec())).map_err(
+        |error| CommandError::InvalidUtf8 {
+            stream: OutputStream::Stdout,
+            message: error.to_string(),
+        },
+    )?;
+    let stderr = String::from_utf8(stderr.map_or_else(Vec::new, |bytes| bytes.to_vec())).map_err(
+        |error| CommandError::InvalidUtf8 {
+            stream: OutputStream::Stderr,
+            message: error.to_string(),
+        },
+    )?;
+    let exit_status = subprocess.has_exited().then(|| subprocess.exit_status());
+
+    if !subprocess.is_successful() {
+        return Err(CommandError::NonZero {
+            exit_status,
+            stdout,
+            stderr,
+        });
     }
+
+    Ok(CommandOutput::new(exit_status, stdout, stderr))
 }
 
 enum ProcessResult {
@@ -357,5 +427,63 @@ impl CommandRunner for FakeCommandRunner {
             .outcomes
             .pop_front()
             .unwrap_or(Err(CommandError::FakeScriptExhausted))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sleep(seconds: &str) -> CommandRequest {
+        CommandRequest::new("sleep".to_owned(), vec![seconds.to_owned()])
+    }
+
+    fn cancel_soon(token: &CancellationToken) {
+        let token = token.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            token.cancel();
+        });
+    }
+
+    #[test]
+    fn a_request_without_timeout_runs_to_completion() {
+        let request = sleep("0.2")
+            .with_timeout(Duration::from_millis(10))
+            .without_timeout();
+        assert_eq!(request.timeout(), None);
+
+        let output = glib::MainContext::new()
+            .block_on(GioCommandRunner.run(request, CancellationToken::new()))
+            .unwrap();
+
+        assert_eq!(output.exit_status(), Some(0));
+    }
+
+    #[test]
+    fn a_refused_cancellation_is_withdrawn_and_the_process_awaited() {
+        let token = CancellationToken::new();
+        cancel_soon(&token);
+
+        let output = glib::MainContext::new()
+            .block_on(run_process(sleep("0.3"), token.clone(), |_| Stop::Refused))
+            .unwrap();
+
+        assert_eq!(output.exit_status(), Some(0));
+        assert!(token.was_refused());
+        assert!(!token.is_cancelled());
+    }
+
+    #[test]
+    fn a_stopped_process_is_cancelled() {
+        let token = CancellationToken::new();
+        cancel_soon(&token);
+
+        let error = glib::MainContext::new()
+            .block_on(run_process(sleep("5"), token.clone(), kill_process))
+            .unwrap_err();
+
+        assert_eq!(error, CommandError::Cancelled);
+        assert!(!token.was_refused());
     }
 }
