@@ -730,7 +730,6 @@ impl BackendSnapshot {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StagedChange {
     key: String,
-    original: ConfigValue,
     proposed: ConfigValue,
 }
 
@@ -747,19 +746,11 @@ impl StagedChange {
         if original == proposed {
             return Err(ValidationError::new(&key, "staged value is unchanged"));
         }
-        Ok(Self {
-            key,
-            original,
-            proposed,
-        })
+        Ok(Self { key, proposed })
     }
 
     pub fn key(&self) -> &str {
         &self.key
-    }
-
-    pub fn original(&self) -> &ConfigValue {
-        &self.original
     }
 
     pub fn proposed(&self) -> &ConfigValue {

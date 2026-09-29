@@ -2760,12 +2760,12 @@ fn mismatch_summary(mismatches: &[crate::backend_apply::ReadBackMismatch]) -> St
                 .actual()
                 .map(config_value_display)
                 .unwrap_or_else(|| gettextrs::gettext("missing"));
-            format!(
-                "{} requested {}, read back {}",
-                mismatch.key(),
-                config_value_display(mismatch.requested()),
-                actual
-            )
+            // TRANSLATORS: {key} is a setting's key, such as "streaming"; {requested} and {actual} are its values.
+            let frame = gettextrs::gettext("{key}: asked for {requested}, read back {actual}");
+            frame
+                .replace("{key}", mismatch.key())
+                .replace("{requested}", &config_value_display(mismatch.requested()))
+                .replace("{actual}", &actual)
         })
         .collect::<Vec<_>>()
         .join(" · ")
@@ -4479,6 +4479,8 @@ mod tests {
         model: RefCell<String>,
         refusal: RefCell<Option<crate::ports::SystemConfiguratorError>>,
         held: std::cell::Cell<bool>,
+        /// Unset, a `set` runs but the value does not stick.
+        keeping: std::cell::Cell<bool>,
         plans: RefCell<Vec<Vec<Vec<String>>>>,
     }
 
@@ -4495,6 +4497,7 @@ mod tests {
                 model: RefCell::new("small".to_owned()),
                 refusal: RefCell::new(None),
                 held: std::cell::Cell::new(false),
+                keeping: std::cell::Cell::new(true),
                 plans: RefCell::new(Vec::new()),
             }
         }
@@ -4599,7 +4602,7 @@ mod tests {
             for operation in preview.operations() {
                 let arguments = operation.arguments();
                 match arguments.get(2).map(String::as_str) {
-                    Some("set") => {
+                    Some("set") if self.keeping.get() => {
                         for assignment in &arguments[3..] {
                             if let Some((key, value)) = assignment.split_once('=') {
                                 self.configuration
@@ -5071,6 +5074,44 @@ mod tests {
             let focus = gtk::prelude::GtkWindowExt::focus(&window).expect("a focus widget");
             assert!(focus.is_ancestor(&entry), "the focus left the row");
             assert_eq!(entry.selection_bounds(), None, "the value is selected");
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn a_value_the_model_does_not_keep_is_reported() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            machine.keeping.set(false);
+            setting::<adw::SwitchRow>(&ui, "streaming")
+                .expect("streaming row")
+                .set_active(false);
+            settle(|| !machine.plans().is_empty() && applied(&ui) && !toasts(&ui).is_empty());
+
+            assert!(setting::<adw::SwitchRow>(&ui, "streaming")
+                .expect("streaming row")
+                .is_active());
+            assert_eq!(
+                toasts(&ui),
+                ["Changing “Streaming output” failed", "Details"]
+            );
+            descendants(ui.overlay.upcast_ref())
+                .into_iter()
+                .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+                .find(|button| button.label().as_deref() == Some("Details"))
+                .expect("details button")
+                .emit_clicked();
+            let report = || {
+                window
+                    .visible_dialog()
+                    .and_then(|dialog| dialog.downcast::<ui::OperationErrorDialog>().ok())
+            };
+            settle(|| report().is_some());
+            let details = report().expect("the report opened").details_text();
+            assert!(
+                details.contains("streaming: asked for false, read back true"),
+                "{details}"
+            );
             window.destroy();
         });
     }
