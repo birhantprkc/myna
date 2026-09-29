@@ -99,6 +99,14 @@ download in bytes or snapd's summary of the change it waits on, connecting
 the model, with a reminder to authorize it since polkit's dialog can open
 behind the wizard, and starting dictation. Closing the wizard stops a setup
 still waiting on snapd, so nothing is connected or restarted behind it.
+While the step polls, the same line shows snap's own error when it cannot
+read the machine, rather than only reporting a component missing that it
+could not check.
+
+Each assessment that differs from the last, and each setup stage and
+outcome, is logged once as a GLib message in the `myna-config` domain: to
+the journal when launched from the desktop (`journalctl --user -b | grep
+myna-config`), and to stderr from a terminal.
 
 ## The keyboard shortcut
 

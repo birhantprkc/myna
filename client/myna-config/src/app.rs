@@ -570,6 +570,29 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-refresh: re-read on focus");
+    // Every read fails on this machine, so the step says why rather than
+    // only that both components are missing.
+    let unreadable = || {
+        let status = window.setup_status();
+        status.is_mapped()
+            && status
+                .label()
+                .starts_with("Cannot read what snapd has installed: ")
+    };
+    for _ in 0..100 {
+        if unreadable() {
+            break;
+        }
+        settle_gtk();
+    }
+    if !unreadable() {
+        eprintln!(
+            "the component step hid that it cannot read the machine: {:?}",
+            window.setup_status().label()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-unreadable: said why");
     window.close();
     settle_gtk();
 

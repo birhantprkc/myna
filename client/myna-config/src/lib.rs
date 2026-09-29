@@ -1,5 +1,8 @@
 //! Native configuration application for Myna.
 
+/// The GLib log domain: `G_MESSAGES_DEBUG=myna-config` shows its debug lines.
+pub const LOG_DOMAIN: &str = "myna-config";
+
 pub mod active_backend;
 pub mod adapters;
 pub mod app;

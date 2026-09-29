@@ -435,7 +435,7 @@ fn command_error(
     // Diagnostics UI; this record is only for developers running with
     // `G_MESSAGES_DEBUG=myna-config`.
     gtk4::glib::g_debug!(
-        "myna-config",
+        crate::LOG_DOMAIN,
         "command_failure surface={} executable={} kind={}",
         surface_key(surface),
         executable,

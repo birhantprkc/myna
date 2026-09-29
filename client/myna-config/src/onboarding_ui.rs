@@ -19,6 +19,7 @@ use crate::active_backend::{ensure_backend_active, SetupStage, SnapdWait};
 use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
+use crate::domain::BackendSurfaceError;
 use crate::onboarding::{
     assess, can_advance, completes, needs_onboarding, polls, Component, Machine, Step,
     RECOMMENDED_BACKEND_SNAP,
@@ -45,9 +46,13 @@ pub struct OnboardingUi {
     configurator: Rc<dyn SystemConfigurator>,
     step: Cell<Step>,
     components: RefCell<Vec<Component>>,
+    /// Why the last assessment could not read the machine.
+    problem: RefCell<Option<String>>,
     busy: Cell<bool>,
     stage: RefCell<Option<SetupStage>>,
     setup_cancellation: RefCell<Option<CancellationToken>>,
+    /// The last line logged, so a poll repeats none.
+    logged: RefCell<String>,
     assessing: Cell<bool>,
     poll_interval: Cell<Duration>,
     poll: RefCell<Option<glib::SourceId>>,
@@ -138,9 +143,11 @@ impl OnboardingUi {
             configurator,
             step: Cell::new(Step::first()),
             components: RefCell::new(initial),
+            problem: RefCell::default(),
             busy: Cell::new(false),
             stage: RefCell::default(),
             setup_cancellation: RefCell::default(),
+            logged: RefCell::default(),
             assessing: Cell::new(false),
             poll_interval: Cell::new(POLL_INTERVAL),
             poll: RefCell::new(None),
@@ -195,6 +202,7 @@ impl OnboardingUi {
             move |_| {
                 if let Some(ui) = held.borrow_mut().take() {
                     if let Some(cancellation) = ui.setup_cancellation.take() {
+                        ui.log("setup: cancelled, the wizard closed");
                         cancellation.cancel();
                     }
                 }
@@ -218,11 +226,16 @@ impl OnboardingUi {
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
         glib::spawn_future_local(async move {
-            let components = assess_machine(repository.as_ref()).await;
+            let (components, problem) = read_machine(repository.as_ref()).await;
             let Some(ui) = ui.upgrade() else {
                 return;
             };
             ui.assessing.set(false);
+            match &problem {
+                Some(problem) => ui.log(&format!("assessment: {problem}")),
+                None => ui.log(&format!("assessment: {}", describe(&components))),
+            }
+            ui.problem.replace(problem);
             let before = ui.components.replace(components);
             // The user installed the last piece while watching: finish for
             // them, as Next would.
@@ -291,6 +304,7 @@ impl OnboardingUi {
                 let ui = ui.clone();
                 move |stage: SetupStage| {
                     if let Some(ui) = ui.upgrade() {
+                        ui.log(&format!("setup: {}", stage_log(&stage)));
                         ui.stage.replace(Some(stage));
                         ui.render();
                     }
@@ -307,6 +321,10 @@ impl OnboardingUi {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
+            match &outcome {
+                Ok(()) => ui.log("setup: done"),
+                Err(message) => ui.log(&format!("setup: failed: {message}")),
+            }
             ui.setup_cancellation.take();
             ui.stage.take();
             ui.busy.set(false);
@@ -387,6 +405,9 @@ impl OnboardingUi {
         spinner.set_spinning(setting_up);
         let status = match &*self.stage.borrow() {
             Some(stage) if setting_up => Some(stage_text(stage)),
+            _ if step == Step::Components && needs_onboarding(&components) => {
+                self.problem.borrow().clone()
+            }
             _ => None,
         };
         let label = self.window.setup_status();
@@ -427,6 +448,15 @@ impl OnboardingUi {
         }
     }
 
+    /// Say what the wizard found or did, once per change, to the journal
+    /// when launched from the desktop and to stderr from a terminal.
+    fn log(&self, line: &str) {
+        if *self.logged.borrow() != line {
+            glib::g_message!(crate::LOG_DOMAIN, "onboarding {}", line);
+            self.logged.replace(line.to_owned());
+        }
+    }
+
     fn report_failure(self: &Rc<Self>, title: &str, details: &str) {
         let dialog = ui::OperationErrorDialog::new(title, title, details);
         dialog.present(Some(&self.window));
@@ -457,17 +487,58 @@ fn copy_command(window: &ui::OnboardingWindow, command: &str) {
 /// found, which opens the wizard: the flow then shows what it could not verify
 /// rather than a settings window with no backends and no explanation.
 pub async fn assess_machine(repository: &dyn BackendRepository) -> Vec<Component> {
+    read_machine(repository).await.0
+}
+
+/// [`assess_machine`], and what it could not read.
+async fn read_machine(repository: &dyn BackendRepository) -> (Vec<Component>, Option<String>) {
     let cancellation = CancellationToken::new();
+    let mut problems = Vec::new();
     let installed = repository
         .installed_snaps(cancellation.clone())
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|error| {
+            problems.push(reason(&error));
+            Vec::new()
+        });
     let backends = repository
         .discover(cancellation)
         .await
         .map(|snapshot| snapshot.backends().len())
-        .unwrap_or_default();
-    assess(Machine::new(&installed, backends))
+        .unwrap_or_else(|error| {
+            problems.push(reason(&error));
+            0
+        });
+    problems.dedup();
+    let problem = (!problems.is_empty()).then(|| {
+        // TRANSLATORS: {error} is snap's own message, in English.
+        let frame = gettextrs::gettext("Cannot read what snapd has installed: {error}");
+        frame.replace("{error}", &problems.join("; "))
+    });
+    (assess(Machine::new(&installed, backends)), problem)
+}
+
+/// What snap said, which names the cause, over how it exited.
+fn reason(error: &BackendSurfaceError) -> String {
+    match error.stderr().trim() {
+        "" => error.message().to_owned(),
+        stderr => stderr.to_owned(),
+    }
+}
+
+fn describe(components: &[Component]) -> String {
+    components
+        .iter()
+        .map(|component| {
+            let state = if component.satisfied {
+                "found"
+            } else {
+                "missing"
+            };
+            format!("{:?} {state}", component.id)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A stage as the footer says it, beside the spinner.
@@ -488,6 +559,24 @@ fn stage_text(stage: &SetupStage) -> String {
             frame.replace("{model}", &crate::model_family::model_family(snap).name)
         }
         SetupStage::Restarting => gettextrs::gettext("Starting dictation…"),
+    }
+}
+
+/// A stage as the log says it: a download once, not at every byte count.
+fn stage_log(stage: &SetupStage) -> String {
+    match stage {
+        SetupStage::Checking => "checking the connections and snapd".to_owned(),
+        SetupStage::Waiting(ApplyProgress::Download { name, total, .. }) => {
+            format!(
+                "waiting for snapd to download {name} ({})",
+                glib::format_size(*total)
+            )
+        }
+        SetupStage::Waiting(ApplyProgress::Change { summary }) => {
+            format!("waiting for snapd: {summary}")
+        }
+        SetupStage::Connecting(snap) => format!("connecting myna:backend to {snap}"),
+        SetupStage::Restarting => "restarting snap.myna.myna.service".to_owned(),
     }
 }
 

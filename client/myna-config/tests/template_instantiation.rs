@@ -182,6 +182,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-commands: one line each when narrow",
         "onboarding-rows: none",
         "onboarding-refresh: re-read on focus",
+        "onboarding-unreadable: said why",
         "onboarding-poll: found without focus",
         "onboarding-status: the download shown",
         "onboarding-snapd: waits for the install to finish",
