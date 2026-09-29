@@ -34,6 +34,15 @@ class TimedEvent:
 
 
 @dataclass(frozen=True)
+class FedChunk:
+    """One chunk of the audio feed: when the harness issued it, in seconds
+    since session open, and the audio position its last sample reaches."""
+
+    t: float
+    audio_end: float
+
+
+@dataclass(frozen=True)
 class Metrics:
     """Latencies in seconds since session open, None when not applicable.
 
@@ -108,6 +117,7 @@ class ResultRecord:
     audio_end_t: float | None
     metrics: Metrics
     transcript: str
+    feed: tuple[FedChunk, ...] = ()
 
 
 def compute_metrics(
@@ -189,6 +199,7 @@ class Harness:
         t0 = time.perf_counter()
         audio_seconds = 0.0
         audio_end_t: float | None = None
+        fed: list[FedChunk] = []
 
         session = await client.open_session(config)
         try:
@@ -198,6 +209,7 @@ class Harness:
                 nonlocal audio_seconds, audio_end_t
                 async for chunk in source.chunks():
                     audio_seconds += chunk.duration_seconds
+                    fed.append(FedChunk(t=time.perf_counter() - t0, audio_end=audio_seconds))
                     await session.send_audio(chunk)
                 await session.finish_audio()
                 audio_end_t = time.perf_counter() - t0
@@ -229,4 +241,5 @@ class Harness:
             audio_end_t=audio_end_t,
             metrics=compute_metrics(timed, audio_end_t, audio_seconds),
             transcript=transcript,
+            feed=tuple(fed),
         )

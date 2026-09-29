@@ -105,6 +105,21 @@ async def test_harness_runs_clip_through_fake_adapter(tmp_path):
     assert record.transcript  # terminal done arrived
 
 
+async def test_harness_records_when_each_chunk_was_sent(tmp_path):
+    """The feed schedule is what lets a later reader audit pacing."""
+    clip = load_manifest(make_manifest(tmp_path))[0]
+    adapter = FakeAdapter()
+    record = await Harness().run(
+        client=LoopbackClient(adapter),
+        candidate=adapter.candidate,
+        source=clip.open_source(chunk_seconds=0.1),
+    )
+    assert [round(c.audio_end, 3) for c in record.feed] == [0.1, 0.2, 0.3, 0.4, 0.5]
+    sent = [c.t for c in record.feed]
+    assert sent == sorted(sent)
+    assert 0 <= sent[0] and sent[-1] <= record.audio_end_t
+
+
 # --- checks against the generated corpus, skipped if not generated ---
 
 generated = pytest.mark.skipif(

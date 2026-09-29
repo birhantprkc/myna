@@ -1399,6 +1399,35 @@ def test_a_rerun_resets_the_results_file_by_default(
     assert "resetting" in capsys.readouterr().out
 
 
+def test_a_rerun_resets_the_event_sidecar_too(
+    tmp_path, corpus, stub_sweep, stub_target, monkeypatch
+):
+    """Streams from an earlier run would be joined to this run's rows."""
+    monkeypatch.setattr(_run.os, "geteuid", lambda: 0)
+    out = tmp_path / "results.jsonl"
+    stale = tmp_path / "results-events.jsonl.gz"
+    stale.write_bytes(b"stale")
+    config = write_config(tmp_path / "bench.yaml", manifest=str(corpus), out=str(out))
+
+    cmd_run(RunArgs(config, out=out))
+
+    assert stale.read_bytes() == b""
+
+
+def test_every_cell_streams_its_events_to_the_sidecar(tmp_path, corpus, stub_target, monkeypatch):
+    monkeypatch.setattr(_run.os, "geteuid", lambda: 0)
+    calls = stub_run_clips(monkeypatch, (False, 1), (False, 1))
+    out = tmp_path / "results.jsonl"
+    config = write_config(
+        tmp_path / "bench.yaml", manifest=str(corpus), out=str(out), cold_clip="clip-a"
+    )
+
+    cmd_run(RunArgs(config, out=out))
+
+    sinks = {id(call["events_fp"]) for call in calls}
+    assert len(calls) == 2 and len(sinks) == 1 and calls[0]["events_fp"] is not None
+
+
 def test_keep_results_appends_to_the_existing_file(
     tmp_path, corpus, stub_sweep, stub_target, monkeypatch
 ):
@@ -1760,4 +1789,4 @@ def test_results_are_handed_back_to_the_invoking_user(
 
     cmd_run(RunArgs(config, out=out))
 
-    assert chowned == ["results.jsonl", "results-resources.jsonl"]
+    assert chowned == ["results.jsonl", "results-resources.jsonl", "results-events.jsonl.gz"]

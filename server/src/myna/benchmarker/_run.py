@@ -111,6 +111,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Mapping
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, TypedDict
@@ -122,6 +123,7 @@ from myna.benchmarker._summarize import SCHEMA_VERSION
 if TYPE_CHECKING:
     import psutil
 
+    from myna.benchmarker._bench import RecordSink
     from myna.benchmarker.machine import Machine
     from myna.testbed.corpus import Clip
 
@@ -1145,6 +1147,7 @@ def _sweep_one(
     broken: list[tuple[str, str]],
     unusable: list[tuple[str, str]],
     machine: str = "unknown",
+    events: RecordSink | None = None,
 ) -> None:
     """Configure one matrix cell, then cold-sample and warm-sweep it.
 
@@ -1182,6 +1185,7 @@ def _sweep_one(
                     corpus=corpus,
                     budget_seconds=None,
                     out_fp=out,
+                    events_fp=events,
                 )
             )
             if overran:
@@ -1201,6 +1205,7 @@ def _sweep_one(
                 corpus=corpus,
                 budget_seconds=budget,
                 out_fp=out,
+                events_fp=events,
             )
         )
         if overran:
@@ -1519,12 +1524,14 @@ def cmd_run(args: argparse.Namespace) -> None:
     else:
         clips_warm = [c for c in all_clips if c.id != cfg.cold_clip]
 
+    from myna.benchmarker._events import EventsFile, events_path_for
     from myna.benchmarker._summarize import resources_path_for
 
     cfg.out.parent.mkdir(parents=True, exist_ok=True)
     resources_path = resources_path_for(cfg.out)
+    events_path = events_path_for(cfg.out)
     if not args.keep_results:
-        for path in (cfg.out, resources_path):
+        for path in (cfg.out, resources_path, events_path):
             if path.exists():
                 print(f"resetting {path}")
                 path.unlink()
@@ -1539,14 +1546,15 @@ def cmd_run(args: argparse.Namespace) -> None:
     print(f"harness: myna-bench {machine['harness']['version'] or '(unversioned source tree)'}")
     print(f"manifest: {cfg.manifest.name}  cold={len(clips_cold)} warm={len(clips_warm)} clips")
     print(f"warm-sweep budget: {cfg.budget:.0f}s per target")
-    print(f"output: {cfg.out}\n")
+    print(f"output: {cfg.out}  events: {events_path.name}\n")
 
     broken: list[tuple[str, str]] = []
     unusable: list[tuple[str, str]] = []
     skipped: list[str] = []
     detected: dict[str, Any] = {}
 
-    with _JsonlWriter(cfg.out, machine["hostname"]) as out:
+    events = EventsFile(events_path)
+    with _JsonlWriter(cfg.out, machine["hostname"]) as out, closing(events):
         out.write(machine)
 
         for spec in cfg.targets:
@@ -1630,6 +1638,7 @@ def cmd_run(args: argparse.Namespace) -> None:
                                 broken=broken,
                                 unusable=unusable,
                                 machine=machine["hostname"],
+                                events=events,
                             )
             except SystemExit as exc:
                 broken.append((target.label, str(exc)))
@@ -1644,6 +1653,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     _chown_to_invoker(cfg.out)
     _chown_to_invoker(resources_path)
+    _chown_to_invoker(events_path)
 
     if cfg.out.exists() and cfg.out.stat().st_size:
         print("\n===================== MATRIX =====================")

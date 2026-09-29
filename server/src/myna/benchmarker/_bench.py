@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from myna.benchmarker._events import EventsFile, event_line, events_path_for
 from myna.benchmarker._summarize import SCHEMA_VERSION, Record
 from myna.core import SessionConfig, WsUnixClient
 from myna.testbed import (
@@ -174,8 +175,13 @@ async def run_clips(
     out_fp: RecordSink,
     corpus: dict[str, str] | None = None,
     realtime: bool = False,
+    events_fp: RecordSink | None = None,
+    repeat: int = 0,
 ) -> tuple[bool, int]:
     """Sweep ``clips`` and append JSONL records to ``out_fp``.
+
+    ``events_fp``, when given, receives each clip's timed event stream as it
+    lands, keyed by (label, clip, repeat) like its row.
 
     Returns ``(overran, scored)`` - overran is True when the budget was
     exceeded before all clips completed. Raises ``AllClipsFailed`` when no clip
@@ -194,6 +200,8 @@ async def run_clips(
         print(f"(capabilities query failed: {type(exc).__name__}: {exc})")
 
     run_started = datetime.now(UTC).isoformat()
+    machine = provenance.get("machine") if provenance else None
+    machine = machine if isinstance(machine, str) else None
     lines: list[Record] = []
     failed: list[Record] = []
     tot_edits = tot_words = 0
@@ -248,6 +256,17 @@ async def run_clips(
             served_runtime=served_runtime,
         )
         lines.append(line)
+        if events_fp is not None:
+            events_fp.write(
+                event_line(
+                    record,
+                    label=label,
+                    clip=clip.id,
+                    repeat=repeat,
+                    cold=cold,
+                    machine=machine,
+                )
+            )
 
         if line["error"]:
             # Not a 100%-WER data point: the backend never ran. Keep it out of
@@ -376,6 +395,7 @@ def cmd_bench(args: argparse.Namespace) -> None:
 
     out = Path(args.out)
     fp = _JsonlFile(out)
+    events = EventsFile(events_path_for(out))
     try:
         overran, scored = asyncio.run(
             run_clips(
@@ -389,13 +409,15 @@ def cmd_bench(args: argparse.Namespace) -> None:
                 out_fp=fp,
                 corpus=corpus,
                 realtime=args.realtime,
+                events_fp=events,
             )
         )
     except AllClipsFailed as exc:
         raise SystemExit(str(exc)) from exc
     finally:
         fp.close()
-    print(f"wrote records to {out}")
+        events.close()
+    print(f"wrote records to {out} and event streams to {events_path_for(out)}")
     if overran:
         # Exit 2, distinct from 1: the backend worked, it was just too slow.
         raise SystemExit(2)

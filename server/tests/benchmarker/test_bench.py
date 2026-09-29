@@ -10,9 +10,9 @@ the round trip and then feed the output straight into `_summarize`.
 from __future__ import annotations
 
 import json
-import wave
 
 import pytest
+from _clips import Collector, make_clip
 
 from myna.benchmarker._bench import (
     AllClipsFailed,
@@ -24,41 +24,6 @@ from myna.benchmarker._bench import (
 from myna.benchmarker._summarize import SCHEMA_VERSION, _summarize
 from myna.core import TranscriptionError, TranscriptionFinal, serve_unix
 from myna.testbed import NORMALIZER_VERSION, FakeAdapter, ScriptStep
-from myna.testbed.corpus import Clip, sha256_file
-
-RATE = 16_000
-
-
-class Collector:
-    """The `out_fp` protocol run_clips writes through."""
-
-    def __init__(self):
-        self.records: list[dict] = []
-
-    def write(self, record: dict) -> None:
-        self.records.append(record)
-
-
-def make_clip(tmp_path, clip_id="clip-a", text="hello world", seconds=0.4, category="quiet"):
-    path = tmp_path / f"{clip_id}.wav"
-    with wave.open(str(path), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(RATE)
-        wf.writeframes(b"\x00\x00" * int(RATE * seconds))
-    return Clip(
-        id=clip_id,
-        path=path,
-        text=text,
-        language="en",
-        category=category,
-        duration_seconds=seconds,
-        sample_rate_hz=RATE,
-        channels=1,
-        source="test",
-        license="CC0-1.0",
-        sha256=sha256_file(path),
-    )
 
 
 def transcribing(text):

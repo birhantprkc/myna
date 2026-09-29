@@ -22,6 +22,7 @@ from myna.testbed.corpus import (
 from myna.testbed.fake import FakeAdapter, ScriptStep
 from myna.testbed.harness import (
     DecodeSample,
+    FedChunk,
     Harness,
     Metrics,
     ResultRecord,
@@ -44,6 +45,7 @@ __all__ = [
     "DecodeSample",
     "ErrorRate",
     "FakeAdapter",
+    "FedChunk",
     "Harness",
     "Metrics",
     "NORMALIZER_VERSION",
