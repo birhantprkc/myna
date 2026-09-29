@@ -40,7 +40,7 @@ from myna.core import (
     TranscriptionFinal,
     TranscriptionProgress,
 )
-from myna.testbed.adapter import Candidate
+from myna.testbed.adapter import Candidate, runtime_versions
 from myna.testbed.streaming.strategies import UNSPACED_CHARS
 
 FUNASR_RATE = 16_000
@@ -158,6 +158,10 @@ class FunasrAdapter:
             punctuation=self._textnorm == "withitn",
             translation=False,
             streaming=self.streaming,
+            runtime={
+                **runtime_versions(("funasr_onnx", "funasr-onnx"), ("onnxruntime", "onnxruntime")),
+                "execution_provider": "CPUExecutionProvider",
+            },
         )
 
     # ------------------------------------------------------------------

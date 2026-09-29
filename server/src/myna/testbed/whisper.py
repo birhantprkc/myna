@@ -46,7 +46,7 @@ from myna.core import (
     TranscriptionFinal,
     TranscriptionProgress,
 )
-from myna.testbed.adapter import Candidate
+from myna.testbed.adapter import Candidate, runtime_versions
 from myna.testbed.streaming.strategies import Hypothesis, Word
 
 if TYPE_CHECKING:
@@ -271,6 +271,14 @@ class FasterWhisperAdapter:
             # output_language to the translate task yet — advertise honestly.
             translation=False,
             streaming=self._streaming,
+            # CTranslate2 raises rather than falling back when the device is
+            # unavailable, so the requested device is the one that serves.
+            runtime={
+                **runtime_versions(
+                    ("ctranslate2", "ctranslate2"), ("faster_whisper", "faster-whisper")
+                ),
+                "device": self._device,
+            },
         )
 
     def _check_compute_type(self) -> None:

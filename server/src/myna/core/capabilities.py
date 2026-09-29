@@ -27,7 +27,7 @@ PROVISIONAL — input to the IE114 capabilities-discovery API (T24).
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 from myna.core.audio import AudioFormat
@@ -48,6 +48,9 @@ class Capabilities:
     - ``streaming``: the service commits text while audio is still arriving,
       rather than once the client finishes. ``None`` means unknown: a server
       that predates the field.
+    - ``runtime``: the inference stack the adapter runs on, as name -> value:
+      library versions and the device or execution provider, for benchmark
+      provenance. Informational; ``None`` from a server that predates it.
     """
 
     models: tuple[str, ...] = ()
@@ -56,6 +59,7 @@ class Capabilities:
     punctuation: bool = False
     translation: bool = False
     streaming: bool | None = None
+    runtime: dict[str, str] | None = None
 
 
 def capabilities_to_wire(caps: Capabilities) -> dict[str, Any]:
@@ -63,7 +67,10 @@ def capabilities_to_wire(caps: Capabilities) -> dict[str, Any]:
 
 
 def capabilities_from_wire(wire: dict[str, Any]) -> Capabilities:
-    data = dict(wire)
+    # A key from a newer server is dropped, not fatal: discovery must not break
+    # a client for a field it has no use for.
+    known = {f.name for f in fields(Capabilities)}
+    data = {k: v for k, v in wire.items() if k in known}
     fmts = data.get("input_formats")
     if fmts is not None:
         data["input_formats"] = tuple(AudioFormat(**f) for f in fmts)

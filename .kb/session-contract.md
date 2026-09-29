@@ -8,7 +8,7 @@ Read the top-level `.kb/agents.md` file before continuing below.
 
 The client owns microphone capture and pushes PCM to the inference backend over WebSocket on a Unix socket. Backends do not access audio devices and reject unsupported formats rather than resampling. The one place that resamples is the IE115 dialect edge in the transport: a stock OpenAI client sends 24 kHz, the adapter receives its own rate and never learns the wire's.
 
-Before a session, a client may send `capabilities.query`; the reply describes the served model, accepted formats and flags. Its `streaming` flag says whether the adapter commits text while audio still arrives, and each adapter sets it from its own mode. A reply without it comes from an older server and means unknown, not batch: both languages decode it as `None`.
+Before a session, a client may send `capabilities.query`; the reply describes the served model, accepted formats and flags. Its `streaming` flag says whether the adapter commits text while audio still arrives, and each adapter sets it from its own mode. A reply without it comes from an older server and means unknown, not batch: both languages decode it as `None`. Its `runtime` map names the inference libraries and device or execution provider for benchmark provenance; library versions appear only once a model load has imported them, because the reply is built on the event loop and must never pay an import. It is informational, absent from older servers, and no client behaviour depends on it. Both languages ignore reply keys they do not know.
 
 A connection may carry multiple committed utterances. For each utterance:
 

@@ -91,7 +91,7 @@ from myna.core import (
     TranscriptionProgress,
 )
 from myna.server.lifecycle import MemoryPressureMonitor, sample_majflt
-from myna.testbed.adapter import Candidate
+from myna.testbed.adapter import Candidate, runtime_versions
 from myna.testbed.streaming.coverage import (
     RETRY_PADS,
     UNTRANSCRIBED_GAP_S,
@@ -789,6 +789,14 @@ class ParakeetAdapter:
             punctuation=True,  # Parakeet v3 emits punctuation + capitalisation
             translation=False,
             streaming=self._streaming,
+            # The provider is the one the load enforces: a cuda session whose
+            # CUDA provider did not activate raises rather than serving on CPU.
+            runtime={
+                **runtime_versions(("onnxruntime", "onnxruntime")),
+                "execution_provider": (
+                    "CUDAExecutionProvider" if self._device == "cuda" else "CPUExecutionProvider"
+                ),
+            },
         )
 
     async def _load_model(self) -> _ParakeetOnnx:

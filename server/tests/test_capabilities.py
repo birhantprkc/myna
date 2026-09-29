@@ -50,3 +50,22 @@ def test_a_server_predating_streaming_decodes_as_unknown():
 def test_wire_carries_streaming_as_a_plain_boolean():
     wire = json.loads(json.dumps(capabilities_to_wire(Capabilities(streaming=False))))
     assert wire["streaming"] is False
+
+
+def test_runtime_round_trips_through_json():
+    caps = Capabilities(runtime={"onnxruntime": "1.23.0", "execution_provider": "CPU"})
+    wire = json.loads(json.dumps(capabilities_to_wire(caps)))
+    assert wire["runtime"] == {"onnxruntime": "1.23.0", "execution_provider": "CPU"}
+    assert capabilities_from_wire(wire) == caps
+
+
+def test_a_server_predating_runtime_decodes_as_unknown():
+    wire = capabilities_to_wire(Capabilities(models=("whisper-small",)))
+    del wire["runtime"]
+    assert capabilities_from_wire(wire).runtime is None
+
+
+def test_a_field_from_a_newer_server_is_ignored_rather_than_fatal():
+    wire = capabilities_to_wire(Capabilities(models=("whisper-small",)))
+    wire["from_the_future"] = True
+    assert capabilities_from_wire(wire).models == ("whisper-small",)

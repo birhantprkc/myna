@@ -5,6 +5,8 @@
 //! rather than everything installable (model *selection* is out of band, via
 //! the IE108/modelctl CLI).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::audio::AudioFormat;
@@ -31,6 +33,11 @@ pub struct Capabilities {
     /// unknown: a server that predates the field.
     #[serde(default)]
     pub streaming: Option<bool>,
+    /// The inference stack the backend runs on (library versions, device or
+    /// execution provider), for benchmark provenance. `None` from a server
+    /// that predates the field.
+    #[serde(default)]
+    pub runtime: Option<BTreeMap<String, String>>,
 }
 
 fn default_languages() -> Vec<String> {
@@ -50,6 +57,7 @@ impl Default for Capabilities {
             punctuation: false,
             translation: false,
             streaming: None,
+            runtime: None,
         }
     }
 }
@@ -103,15 +111,31 @@ mod tests {
             punctuation: true,
             translation: false,
             streaming: Some(true),
+            runtime: None,
         };
         assert_eq!(
             wire(&caps),
             golden(
                 r#"{"models": ["whisper-small"], "languages": ["*"],
                     "input_formats": [{"sample_rate_hz": 16000, "channels": 1, "sample_width_bytes": 2}],
-                    "punctuation": true, "translation": false, "streaming": true}"#
+                    "punctuation": true, "translation": false, "streaming": true,
+                    "runtime": null}"#
             )
         );
+    }
+
+    #[test]
+    fn runtime_decodes_and_a_server_predating_it_is_unknown() {
+        let caps: Capabilities = serde_json::from_value(golden(
+            r#"{"models": ["parakeet-tdt"], "runtime": {"onnxruntime": "1.23.0"}}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            caps.runtime,
+            Some([("onnxruntime".to_string(), "1.23.0".to_string())].into())
+        );
+        let old: Capabilities = serde_json::from_value(golden(r#"{"models": []}"#)).unwrap();
+        assert_eq!(old.runtime, None);
     }
 
     #[test]
