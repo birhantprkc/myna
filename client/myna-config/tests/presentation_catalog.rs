@@ -228,7 +228,7 @@ fn unknown_scalars_and_nested_keys_remain_visible_with_honest_fallbacks() {
         assert!(row
             .metadata()
             .explanation()
-            .contains("does not provide presentation metadata"));
+            .contains("provides no description for this setting"));
     }
 }
 

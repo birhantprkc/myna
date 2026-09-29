@@ -607,7 +607,7 @@ impl BackendUi {
             Err(PrepareSwitchError::BackendUnavailable(_)) => {
                 self.render_model_group();
                 self.overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
-                    "The selected backend is no longer installed. Refresh and choose again.",
+                    "This model is no longer installed.",
                 )));
                 self.trigger_discovery();
                 return;
@@ -1240,7 +1240,7 @@ impl BackendUi {
             .and_then(|entry| {
                 let token = entry.cancellation.clone()?;
                 token.cancel();
-                entry.progress_message = Some(gettextrs::gettext("Cancelling backend apply…"));
+                entry.progress_message = Some(gettextrs::gettext("Cancelling…"));
                 Some(token)
             });
         self.rebuild_backend_page(snap_name);
@@ -1291,7 +1291,7 @@ impl BackendUi {
                     Ok(operation) => operation,
                     Err(_) => {
                         self.overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
-                            "Finish the active backend operation before applying changes.",
+                            "Wait for the current change to finish.",
                         )));
                         return;
                     }
@@ -1329,7 +1329,7 @@ impl BackendUi {
                 self.finish_apply(
                     snap_name,
                     gettextrs::gettext("Nothing to apply"),
-                    gettextrs::gettext("There are no staged backend changes."),
+                    gettextrs::gettext("There are no changes to apply."),
                 );
             }
             Err(PrepareApplyError::Invalid(issues)) => {
@@ -1514,18 +1514,17 @@ impl BackendUi {
             }) => {
                 self.controller.apply_readback(snap_name, *snapshot);
                 let heading = gettextrs::gettext("Read-back mismatch");
-                let summary = gettextrs::gettext(
-                    "The backend returned different values than those requested.",
-                );
+                let summary =
+                    gettextrs::gettext("The model saved different values than the ones you chose.");
                 let details = diagnostics::redact_text(&mismatch_summary(&mismatches));
                 self.finish_apply(snap_name, heading.clone(), summary.clone());
                 self.present_operation_error_dialog(&heading, &summary, &details);
             }
             Err(ApplyFailure::RestartReadiness { snapshot, message }) => {
                 self.controller.apply_readback(snap_name, *snapshot);
-                let heading = gettextrs::gettext("Backend restart failed");
+                let heading = gettextrs::gettext("The model did not restart");
                 let summary = gettextrs::gettext(
-                    "The settings were written, but the backend did not become ready.",
+                    "The settings were saved, but the model did not start again.",
                 );
                 let details = diagnostics::redact_text(&message);
                 self.finish_apply(snap_name, heading.clone(), summary.clone());
@@ -1566,7 +1565,7 @@ impl BackendUi {
                     snap_name,
                     gettextrs::gettext("Apply interrupted"),
                     gettextrs::gettext(
-                        "The write outcome is uncertain. Refresh the backend before retrying.",
+                        "It is not known whether the change was saved. Refresh before trying again.",
                     ),
                 );
             }
@@ -1593,7 +1592,7 @@ impl BackendUi {
                 self.present_operation_error_dialog(&heading, &summary, &full);
             }
             Err(ApplyFailure::ValuesRejected { details }) => {
-                let heading = gettextrs::gettext("Backend rejected changes");
+                let heading = gettextrs::gettext("The model rejected the changes");
                 let summary = diagnostics::redact_text(details.message());
                 let full = format!("{}\n\n{}", heading, privileged_failure_details(&details),);
                 self.finish_apply(snap_name, heading.clone(), summary.clone());
@@ -1642,7 +1641,7 @@ impl BackendUi {
                 self.rebuild_diagnostics_page();
                 self.overlay.add_toast(adw::Toast::new(&format!(
                     "{}: {}",
-                    gettextrs::gettext("Could not read installed backends"),
+                    gettextrs::gettext("Could not read the installed models"),
                     diagnostics::redact_text(error.message())
                 )));
             }
@@ -1698,12 +1697,12 @@ impl BackendUi {
                 return;
             }
             ActiveBackendState::Disconnected => (
-                gettextrs::gettext("No Active Backend"),
-                gettextrs::gettext("Choose an installed backend on the General tab to connect it."),
+                gettextrs::gettext("No active model"),
+                gettextrs::gettext("Choose a model on the General tab."),
             ),
             ActiveBackendState::MultiplyConnected(_) => (
-                gettextrs::gettext("Multiple Backends Connected"),
-                gettextrs::gettext("Choose a single backend on the General tab to make it active."),
+                gettextrs::gettext("Several models are connected"),
+                gettextrs::gettext("Choose one model on the General tab."),
             ),
         };
         self.detach_spoken_language();
@@ -1966,13 +1965,13 @@ impl BackendUi {
                 OnboardingState::NoMyna => (
                     gettextrs::gettext("Install Myna to get started"),
                     gettextrs::gettext(
-                        "The Myna snap is not installed. Copy this command and run it in a terminal — installation is never automatic.",
+                        "The Myna snap is not installed. Copy this command and run it in a terminal.",
                     ),
                 ),
                 OnboardingState::NoBackend => (
-                    gettextrs::gettext("Install a backend to enable dictation"),
+                    gettextrs::gettext("Install a speech model to use dictation"),
                     gettextrs::gettext(
-                        "No inference backend was discovered. Copy this command and run it in a terminal — installation is never automatic.",
+                        "No speech model is installed. Copy this command and run it in a terminal.",
                     ),
                 ),
                 OnboardingState::Ready => (String::new(), String::new()),
@@ -2146,7 +2145,7 @@ fn partial_failure_presentation(error: &crate::ports::SystemConfiguratorError) -
             message.clone(),
         ),
         crate::ports::SystemConfiguratorError::ValuesRejected { message, .. } => (
-            gettextrs::gettext("Backend rejected changes"),
+            gettextrs::gettext("The model rejected the changes"),
             message.clone(),
         ),
         crate::ports::SystemConfiguratorError::Execution { message, .. } => {
@@ -2166,7 +2165,7 @@ fn privileged_failure_details(details: &crate::backend_apply::PrivilegedFailure)
     out.push('\n');
     out.push_str(&gettextrs::gettext("Arguments:"));
     if details.arguments().is_empty() {
-        out.push_str(" —");
+        out.push_str(" -");
     } else {
         for argument in details.arguments() {
             out.push(' ');
@@ -2178,7 +2177,7 @@ fn privileged_failure_details(details: &crate::backend_apply::PrivilegedFailure)
     out.push(' ');
     match details.exit_status() {
         Some(code) => out.push_str(&code.to_string()),
-        None => out.push('—'),
+        None => out.push('-'),
     }
     out.push('\n');
     if !details.stderr().trim().is_empty() {
@@ -2237,14 +2236,14 @@ fn system_error_details(error: &crate::ports::SystemConfiguratorError) -> String
     out.push_str(&gettextrs::gettext("Executable:"));
     out.push(' ');
     if executable.is_empty() {
-        out.push('—');
+        out.push('-');
     } else {
         out.push_str(&diagnostics::redact_text(executable));
     }
     out.push('\n');
     out.push_str(&gettextrs::gettext("Arguments:"));
     if arguments.is_empty() {
-        out.push_str(" —");
+        out.push_str(" -");
     } else {
         for argument in arguments {
             out.push(' ');
@@ -2256,7 +2255,7 @@ fn system_error_details(error: &crate::ports::SystemConfiguratorError) -> String
     out.push(' ');
     match exit_status {
         Some(code) => out.push_str(&code.to_string()),
-        None => out.push('—'),
+        None => out.push('-'),
     }
     out.push('\n');
     if !stderr.trim().is_empty() {
@@ -2302,7 +2301,7 @@ fn partial_execution_details(
                 result
                     .exit_status()
                     .map(|code| code.to_string())
-                    .unwrap_or_else(|| "—".to_owned()),
+                    .unwrap_or_else(|| "-".to_owned()),
             ));
             if !result.stderr().trim().is_empty() {
                 out.push_str(&format!(
@@ -2330,13 +2329,13 @@ fn backend_snapshot_reconciliation_summary(snapshot: &crate::domain::BackendSnap
     let mut out = String::new();
     out.push_str(&format!(
         "  {} {}\n",
-        gettextrs::gettext("Backend:"),
+        gettextrs::gettext("Model:"),
         diagnostics::redact_text(snapshot.identity().snap_name()),
     ));
     if let Some(status) = snapshot.status() {
         let services = status.services();
         if services.is_empty() {
-            out.push_str(&format!("  {}\n", gettextrs::gettext("Services: —"),));
+            out.push_str(&format!("  {}\n", gettextrs::gettext("Services: none"),));
         } else {
             out.push_str(&format!("  {}\n", gettextrs::gettext("Services:")));
             for service in services {
@@ -2445,10 +2444,12 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
     let health = adw::ActionRow::builder()
         .title(gettextrs::gettext("Connection"))
         .subtitle(escape_markup(&match short.connection {
-            ConnectionKind::Active => gettextrs::gettext("Active — this backend serves Myna."),
-            ConnectionKind::Contested => gettextrs::gettext(
-                "Multiple backends are connected. Only one should be active at a time.",
-            ),
+            ConnectionKind::Active => {
+                gettextrs::gettext("Active. Myna uses this model for dictation.")
+            }
+            ConnectionKind::Contested => {
+                gettextrs::gettext("Several models are connected. Only one should be active.")
+            }
             ConnectionKind::Disconnected => gettextrs::gettext("Not connected to the Myna daemon."),
         }))
         .build();
@@ -2464,7 +2465,7 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
         .title(gettextrs::gettext("Active engine"))
         .subtitle(escape_markup(&match &short.active_engine {
             Some(engine) => engine.clone(),
-            None => gettextrs::gettext("None selected — choose one below."),
+            None => gettextrs::gettext("None selected. Choose one below."),
         }))
         .build();
     overview.add(&engine_row);
@@ -2498,9 +2499,7 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
     if page.loading() && page.snapshot().is_none() {
         let loading = adw::PreferencesGroup::builder()
             .title(gettextrs::gettext("Loading"))
-            .description(gettextrs::gettext(
-                "Reading configuration from this backend…",
-            ))
+            .description(gettextrs::gettext("Reading this model's settings…"))
             .build();
         preferences.add(&loading);
     } else if let Some(snapshot) = page.snapshot() {
@@ -2511,7 +2510,7 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
             let empty = adw::PreferencesGroup::builder()
                 .title(gettextrs::gettext("No configuration reported"))
                 .description(gettextrs::gettext(
-                    "The backend accepted requests but reported no configurable settings.",
+                    "The model answered but reported no settings to change.",
                 ))
                 .build();
             preferences.add(&empty);
@@ -2621,7 +2620,7 @@ fn add_apply_group(page_widget: &adw::PreferencesPage, page: &BackendPage, ui: &
     } else if let Some(feedback) = &view.feedback {
         feedback.description.clone()
     } else if validation.is_some() {
-        gettextrs::gettext("Fix invalid values before applying these backend changes.")
+        gettextrs::gettext("Fix the highlighted values before applying.")
     } else {
         gettextrs::gettext(
             "Review staged changes, authorize one privileged operation, then verify read-back.",
@@ -2670,7 +2669,7 @@ fn add_apply_group(page_widget: &adw::PreferencesPage, page: &BackendPage, ui: &
     controls.set_widget_name(APPLY_CONTROLS);
     let controls_subtitle = if view.in_progress {
         view.controls_progress()
-            .unwrap_or_else(|| gettextrs::gettext("Applying backend changes…"))
+            .unwrap_or_else(|| gettextrs::gettext("Applying changes…"))
     } else {
         gettextrs::gettext("A single authorization applies all staged changes together.")
     };
@@ -2745,14 +2744,14 @@ fn group_title(group: crate::presentation::PresentationGroup) -> String {
 fn group_description(group: crate::presentation::PresentationGroup) -> String {
     match group {
         crate::presentation::PresentationGroup::General => {
-            gettextrs::gettext("Common backend preferences.")
+            gettextrs::gettext("Common settings for this model.")
         }
         crate::presentation::PresentationGroup::Runtime => {
             gettextrs::gettext("Runtime and performance related settings.")
         }
-        crate::presentation::PresentationGroup::Advanced => gettextrs::gettext(
-            "Advanced values. The backend supplies no richer metadata for these keys.",
-        ),
+        crate::presentation::PresentationGroup::Advanced => {
+            gettextrs::gettext("Advanced settings.")
+        }
         crate::presentation::PresentationGroup::Sensitive => {
             gettextrs::gettext("Internal and sensitive values are shown for diagnostics only.")
         }
@@ -3007,10 +3006,10 @@ fn diagnostic_surface_label(surface: crate::domain::BackendSurface) -> String {
     use crate::domain::BackendSurface;
     match surface {
         BackendSurface::SnapInventory => gettextrs::gettext("Installed snaps"),
-        BackendSurface::Connections => gettextrs::gettext("Backend connections"),
+        BackendSurface::Connections => gettextrs::gettext("Model connections"),
         BackendSurface::ModelctlApp => gettextrs::gettext("Model control command"),
-        BackendSurface::ModelctlConfig => gettextrs::gettext("Backend configuration"),
-        BackendSurface::Status => gettextrs::gettext("Backend status"),
+        BackendSurface::ModelctlConfig => gettextrs::gettext("Model settings"),
+        BackendSurface::Status => gettextrs::gettext("Model status"),
         BackendSurface::Models => gettextrs::gettext("Available models"),
         BackendSurface::Engines => gettextrs::gettext("Available engines"),
     }
@@ -3029,22 +3028,19 @@ fn read_back_failure_details(errors: &[crate::domain::BackendSurfaceError]) -> S
 
 fn refresh_control_state(loading: bool, applying: bool) -> (bool, String) {
     if applying {
-        (
-            false,
-            gettextrs::gettext("Applying backend changes and verifying restart…"),
-        )
+        (false, gettextrs::gettext("Applying changes…"))
     } else if loading {
-        (false, gettextrs::gettext("Refreshing backend data…"))
+        (false, gettextrs::gettext("Refreshing…"))
     } else {
-        (true, gettextrs::gettext("Refresh backend data"))
+        (true, gettextrs::gettext("Refresh"))
     }
 }
 
 fn apply_progress_message(restart_impact: crate::backend_apply::RestartImpact) -> String {
     if restart_impact.requires_readiness() {
-        gettextrs::gettext("Applying backend changes and waiting for restart/readiness…")
+        gettextrs::gettext("Applying changes and waiting for the model to restart…")
     } else {
-        gettextrs::gettext("Applying backend changes and verifying read-back…")
+        gettextrs::gettext("Applying changes…")
     }
 }
 
@@ -3180,12 +3176,10 @@ fn push_completed_operations(out: &mut String, completed: &[crate::domain::Comma
 
 fn connection_state_summary(snapshot: &crate::domain::ConnectionSnapshot) -> String {
     match snapshot.active_state() {
-        crate::domain::ActiveBackendState::Disconnected => {
-            gettextrs::gettext("no backend connected")
-        }
+        crate::domain::ActiveBackendState::Disconnected => gettextrs::gettext("no model connected"),
         crate::domain::ActiveBackendState::Connected(backend) => {
             format!(
-                "{} — {}",
+                "{}: {}",
                 gettextrs::gettext("connected"),
                 diagnostics::redact_text(backend.snap_name())
             )
@@ -3196,7 +3190,7 @@ fn connection_state_summary(snapshot: &crate::domain::ConnectionSnapshot) -> Str
                 .map(|b| diagnostics::redact_text(b.snap_name()))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{}: {}", gettextrs::gettext("multiple backends"), names)
+            format!("{}: {}", gettextrs::gettext("several models"), names)
         }
     }
 }
@@ -3291,18 +3285,15 @@ mod tests {
     fn refresh_control_is_pending_and_disabled_while_loading() {
         assert_eq!(
             refresh_control_state(true, false),
-            (false, gettextrs::gettext("Refreshing backend data…"))
+            (false, gettextrs::gettext("Refreshing…"))
         );
         assert_eq!(
             refresh_control_state(false, false),
-            (true, gettextrs::gettext("Refresh backend data"))
+            (true, gettextrs::gettext("Refresh"))
         );
         assert_eq!(
             refresh_control_state(false, true),
-            (
-                false,
-                gettextrs::gettext("Applying backend changes and verifying restart…")
-            )
+            (false, gettextrs::gettext("Applying changes…"))
         );
     }
 
@@ -3590,7 +3581,7 @@ mod tests {
                 .expect("the model tab shows a page")
                 .downcast::<ui::StatusPage>()
                 .expect("a status page");
-            assert_eq!(page.status().title(), "No Active Backend");
+            assert_eq!(page.status().title(), "No active model");
         });
     }
 
@@ -4362,7 +4353,7 @@ mod tests {
         );
 
         let problem = problem_from_surface_error(&error);
-        assert_eq!(problem, "Backend connections: snap connections failed");
+        assert_eq!(problem, "Model connections: snap connections failed");
     }
 
     #[test]

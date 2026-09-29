@@ -361,7 +361,7 @@ fn classify_onboarding(input: &DiagnosticInput) -> OnboardingState {
 pub fn onboarding_state_label(state: OnboardingState) -> String {
     match state {
         OnboardingState::NoMyna => gettextrs::gettext("Myna is not installed"),
-        OnboardingState::NoBackend => gettextrs::gettext("No backend discovered"),
+        OnboardingState::NoBackend => gettextrs::gettext("No model installed"),
         OnboardingState::Ready => gettextrs::gettext("Ready"),
         OnboardingState::Unavailable => gettextrs::gettext("Installation status unavailable"),
     }
@@ -418,7 +418,7 @@ fn render_body(
         None => field(
             &mut out,
             &gettextrs::gettext("CPU"),
-            &gettextrs::gettext("(no backend answered show-machine)"),
+            &gettextrs::gettext("(no model answered show-machine)"),
         ),
     }
 
@@ -506,7 +506,7 @@ fn render_body(
     }
 
     out.push('\n');
-    out.push_str(&gettextrs::gettext("Backends"));
+    out.push_str(&gettextrs::gettext("Models"));
     out.push_str(":\n");
     if input.backends.is_empty() {
         out.push_str("  ");
@@ -785,7 +785,7 @@ mod tests {
         assert!(text.contains("Myna Settings "));
         assert!(text.contains("Onboarding: Myna is not installed"));
         assert!(text.contains(&format!("Suggested command: {NO_MYNA_COMMAND}")));
-        assert!(text.contains("Backends:\n  (none discovered)"));
+        assert!(text.contains("Models:\n  (none discovered)"));
         assert!(text.contains("Problems:\n  (none)"));
     }
 

@@ -165,7 +165,7 @@ fn accessibility_probe() -> glib::ExitCode {
         r#"<property name="label" translatable="yes">Refresh diagnostics</property>"#,
         r#"<property name="label" translatable="yes">Copy diagnostics</property>"#,
         r#"<property name="label" translatable="yes">Diagnostic report</property>"#,
-        r#"<property name="description" translatable="yes">Re-read the machine, the daemon, and every backend.</property>"#,
+        r#"<property name="description" translatable="yes">Check this computer, Myna and every model again.</property>"#,
     ]
     .iter()
     .any(|metadata| !template.contains(metadata))
@@ -1152,12 +1152,12 @@ fn build_settings_window(application: &adw::Application) {
     )]);
     backend_nav.replace(&[status_page(
         &gettextrs::gettext("Model"),
-        &gettextrs::gettext("Model details will appear after discovery."),
+        &gettextrs::gettext("Model details appear once Myna finds your models."),
         "content-loading-symbolic",
     )]);
     let diagnostics_page = status_page(
         &gettextrs::gettext("About and Diagnostics"),
-        &gettextrs::gettext("Backend diagnostics will appear after discovery."),
+        &gettextrs::gettext("Diagnostics appear once Myna finds your models."),
         "dialog-information-symbolic",
     );
     diagnostics_nav.replace(std::slice::from_ref(&diagnostics_page));

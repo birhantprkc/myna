@@ -900,7 +900,7 @@ fn a_failed_or_contradicted_switch_is_reported() {
     ))
     .unwrap_err();
     assert!(
-        error.contains("changed while it was being enabled"),
+        error.contains("changed while it was being switched on"),
         "{error}"
     );
 }

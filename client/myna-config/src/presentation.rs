@@ -2,8 +2,7 @@
 
 use crate::domain::{BackendConfiguration, ConfigValue, EngineOptions, ModelOptions};
 
-const METADATA_UNAVAILABLE: &str =
-    "This backend does not provide presentation metadata for this setting.";
+const METADATA_UNAVAILABLE: &str = "This model provides no description for this setting.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlType {
@@ -164,14 +163,14 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
     match key {
         "model" => known(
             "Model",
-            "The model served by this backend.",
+            "Which version of this model to run.",
             ControlType::Choice,
             Validation::Any,
             (PresentationGroup::General, Sensitivity::UserFacing, 0),
         ),
         "engine" => known(
             "Engine",
-            "The inference engine used by this backend.",
+            "The inference engine this model runs on.",
             ControlType::Choice,
             Validation::Any,
             (PresentationGroup::General, Sensitivity::UserFacing, 1),
@@ -193,7 +192,7 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
         ),
         "verbose" => known(
             "Verbose logging",
-            "Write additional backend diagnostics to the system log.",
+            "Write additional diagnostics to the system log.",
             ControlType::Toggle,
             Validation::Boolean,
             (PresentationGroup::Advanced, Sensitivity::Internal, 100),
@@ -237,14 +236,14 @@ pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
         ),
         "compute-type" => known(
             "Compute type",
-            "Runtime numeric format override. Leave the backend-provided value unchanged unless required.",
+            "Runtime numeric format override. Leave the model's own value unchanged unless required.",
             ControlType::Text,
             Validation::Text,
             (PresentationGroup::Advanced, Sensitivity::UserFacing, 120),
         ),
         "att-context-size" => known(
             "Attention context size",
-            "Backend-specific latency and accuracy context. Empty uses the engine default.",
+            "Model-specific latency and accuracy context. Empty uses the engine default.",
             ControlType::Text,
             Validation::Text,
             (PresentationGroup::Advanced, Sensitivity::UserFacing, 121),

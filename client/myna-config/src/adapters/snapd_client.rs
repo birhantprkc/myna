@@ -948,7 +948,7 @@ fn read_response(
                 status_code: headers.status_code,
                 kind: None,
                 message: format!(
-                    "snapd HTTP {} — body: {}",
+                    "snapd HTTP {}, body: {}",
                     headers.status_code,
                     truncate(&body_string, 512)
                 ),

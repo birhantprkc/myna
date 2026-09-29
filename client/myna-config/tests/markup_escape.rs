@@ -26,7 +26,7 @@ fn preserves_plain_text_verbatim() {
         "Connected",
         "Refreshing…",
         "engine=cpu backend=onnx",
-        "Multiple backends are connected.",
+        "Several models are connected.",
     ] {
         assert_eq!(escape_markup(value), value);
     }

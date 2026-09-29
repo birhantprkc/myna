@@ -5,8 +5,8 @@ myna-config \- settings and onboarding for Myna dictation
 .B myna-config
 .RI [ OPTION ]
 .SH DESCRIPTION
-Myna Settings configures the Myna dictation service: it installs the myna
-snap and a speech backend snap, connects the backend, binds the dictation
+Myna Settings configures the Myna dictation service: it guides you
+through installing the myna snap and a speech model, connects the model, binds the dictation
 shortcut and edits the dictation settings the daemon reads live. With no
 option it opens the settings window, or the onboarding wizard when dictation
 is not yet set up.
@@ -19,7 +19,7 @@ Print usage and exit.
 Print the version and exit.
 .TP
 .BI \-\-apply\-plan " JSON"
-Run a backend apply plan as root. Used internally through
+Apply a model settings plan as root. Used internally through
 .BR pkexec (1);
 not for interactive use.
 .SH FILES

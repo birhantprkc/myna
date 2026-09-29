@@ -2,11 +2,11 @@
 Type=Application
 Name=Myna Settings
 GenericName=Dictation Settings
-Comment=Configure Myna dictation and its speech backends
+Comment=Configure Myna dictation and its speech models
 Exec=myna-config
 Icon=com.canonical.Myna.Config
 Terminal=false
 StartupNotify=true
 Categories=Settings;
 # TRANSLATORS: Search terms for this application. Keep every semicolon, including the last.
-Keywords=dictation;speech;transcription;voice;backend;
+Keywords=dictation;speech;transcription;voice;model;

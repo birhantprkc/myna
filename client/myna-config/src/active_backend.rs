@@ -306,7 +306,7 @@ pub async fn ensure_backend_active(
         SwitchOutcome::FinalDiscoveryFailed { error, .. } => Err(error.message().to_owned()),
         SwitchOutcome::Cancelled { .. } => Err(gettextrs::gettext("The change was cancelled.")),
         SwitchOutcome::Disagreed { .. } | SwitchOutcome::StaleDiscovery { .. } => Err(
-            gettextrs::gettext("The backend changed while it was being enabled."),
+            gettextrs::gettext("The model changed while it was being switched on. Try again."),
         ),
     }
 }

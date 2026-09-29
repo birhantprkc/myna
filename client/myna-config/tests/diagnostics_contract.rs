@@ -147,7 +147,7 @@ fn diagnostics_status_values_are_translatable_user_facing_labels() {
     let pot = include_str!("../po/myna-config.pot");
     for label in [
         "Myna is not installed",
-        "No backend discovered",
+        "No model installed",
         "Ready",
         "Installation status unavailable",
         "Connected",
@@ -155,7 +155,7 @@ fn diagnostics_status_values_are_translatable_user_facing_labels() {
         "Not connected",
         "Machine",
         "Daemon",
-        "Backends",
+        "Models",
         "Problems",
         "none selected",
     ] {
@@ -172,7 +172,7 @@ fn failed_backend_discovery_does_not_claim_onboarding_is_complete() {
         )
         .unwrap(),
         inventory_complete: true,
-        problems: vec!["Backend connections: discovery failed".into()],
+        problems: vec!["Model connections: discovery failed".into()],
         ..DiagnosticInput::default()
     });
     assert_eq!(report.onboarding(), OnboardingState::Unavailable);

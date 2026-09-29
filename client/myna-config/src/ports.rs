@@ -147,7 +147,7 @@ pub enum SystemConfiguratorError {
         stderr: String,
         message: String,
     },
-    #[error("the backend rejected the requested values: {message}")]
+    #[error("the model rejected the requested values: {message}")]
     ValuesRejected {
         executable: String,
         arguments: Vec<String>,
@@ -198,7 +198,7 @@ impl SystemConfiguratorError {
             arguments,
             exit_status,
             message: if stderr.trim().is_empty() {
-                "the backend rejected the requested values".to_owned()
+                "the model rejected the requested values".to_owned()
             } else {
                 stderr.trim().to_owned()
             },

@@ -58,9 +58,9 @@ impl RestartImpact {
     pub fn summary(self) -> String {
         match self {
             Self::None => gettextrs::gettext("No restart needed."),
-            Self::Required => gettextrs::gettext("The backend restarts to apply these changes."),
-            Self::Mixed => gettextrs::gettext("Some of these changes restart the backend."),
-            Self::Unknown => gettextrs::gettext("The backend may restart."),
+            Self::Required => gettextrs::gettext("The model restarts to apply these changes."),
+            Self::Mixed => gettextrs::gettext("Some of these changes restart the model."),
+            Self::Unknown => gettextrs::gettext("The model may restart."),
         }
     }
 }
@@ -117,7 +117,7 @@ impl ApplyPreview {
             for change in &changes {
                 issues.push(ValidationIssue::new(
                     change.key(),
-                    "the backend modelctl app could not be resolved",
+                    "the model's settings command could not be found",
                 ));
             }
         }
@@ -457,8 +457,8 @@ fn validate_backend_identity(
 ) -> Vec<ValidationIssue> {
     if restart_impact.requires_readiness() && backend.snap_name().trim().is_empty() {
         vec![ValidationIssue::new(
-            "Backend",
-            "an explicit backend restart command could not be built",
+            "Model",
+            "the model's restart command could not be built",
         )]
     } else {
         Vec::new()
@@ -666,7 +666,7 @@ fn readiness_failure(snapshot: &BackendSnapshot, restart_impact: RestartImpact) 
 
     if let Some(error) = snapshot.error(BackendSurface::Status) {
         return Some(format!(
-            "Backend restart/readiness could not be confirmed: {}",
+            "The model's restart could not be confirmed: {}",
             error.message()
         ));
     }
@@ -674,7 +674,7 @@ fn readiness_failure(snapshot: &BackendSnapshot, restart_impact: RestartImpact) 
     if let Some(status) = snapshot.status() {
         if status.services().is_empty() {
             return Some(
-                "Backend restart/readiness could not be confirmed: no service health was reported."
+                "The model's restart could not be confirmed: no service health was reported."
                     .to_owned(),
             );
         }
@@ -691,13 +691,10 @@ fn readiness_failure(snapshot: &BackendSnapshot, restart_impact: RestartImpact) 
             })
             .collect();
         if !failing.is_empty() {
-            return Some(format!(
-                "Backend restart/readiness failed: {}",
-                failing.join(", ")
-            ));
+            return Some(format!("The model did not restart: {}", failing.join(", ")));
         }
     } else {
-        return Some("Backend restart/readiness could not be confirmed.".to_owned());
+        return Some("The model's restart could not be confirmed.".to_owned());
     }
 
     None
