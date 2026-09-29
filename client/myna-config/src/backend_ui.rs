@@ -1256,10 +1256,19 @@ impl BackendUi {
         let Some(widget) = self.backend_pages.borrow().get(snap_name).cloned() else {
             return;
         };
-        if let Some(row) = find_named_descendant(widget.upcast_ref(), &setting_widget_name(&key))
-            .and_then(|row| row.downcast::<adw::ActionRow>().ok())
-        {
-            row.set_subtitle(&escape_markup(&text));
+        let Some(row) = find_named_descendant(widget.upcast_ref(), &setting_widget_name(&key))
+        else {
+            return;
+        };
+        match row.downcast::<adw::ActionRow>() {
+            Ok(row) => row.set_subtitle(&escape_markup(&text)),
+            Err(row) => {
+                if let Some(label) = find_named_descendant(&row, APPLY_PROGRESS)
+                    .and_then(|label| label.downcast::<gtk::Label>().ok())
+                {
+                    label.set_label(&text);
+                }
+            }
         }
     }
 
@@ -1461,6 +1470,13 @@ impl BackendUi {
             .entry(snap_name.to_owned())
             .or_default()
             .clone();
+        if focus.is_some() {
+            // Removed with the focus, a row makes GTK 4.14 focus the next
+            // one it finds and scroll there.
+            if let Some(window) = self.backend_nav.root().and_downcast::<gtk::Window>() {
+                gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+            }
+        }
         populate_backend_page(&widget, &page, self);
         if self.shown_backend().as_deref() == Some(snap_name) {
             let widget = widget.upcast::<adw::NavigationPage>();
@@ -1502,15 +1518,43 @@ impl BackendUi {
         let Some(page) = self.backend_nav.visible_page() else {
             return;
         };
-        let Some(widget) = find_named_descendant(page.upcast_ref(), &focus.widget_name) else {
+        let Some(widget) = find_named_descendant(page.upcast_ref(), &focus.widget_name)
+            .filter(|widget| widget.can_focus() && widget.is_sensitive())
+        else {
             return;
         };
-        widget.grab_focus();
-        if let (Some(focus), Ok(entry)) = (focus.entry.as_ref(), widget.downcast::<adw::EntryRow>())
-        {
-            // Text the user has not applied yet survives a rebuild.
-            entry.set_text(&focus.text);
-            entry.set_position(focus.cursor_position);
+        // The rebuilt row is where the old one was, but not yet laid out:
+        // scrolling to it now would scroll to nowhere.
+        let viewport = widget
+            .ancestor(gtk::Viewport::static_type())
+            .and_downcast::<gtk::Viewport>();
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(false);
+        }
+        match widget.downcast::<adw::EntryRow>() {
+            Ok(entry) => {
+                // Focusing an entry selects its text, which the user did not.
+                if let Some(text) = descendants(entry.upcast_ref())
+                    .into_iter()
+                    .find_map(|widget| widget.downcast::<gtk::Text>().ok())
+                {
+                    text.grab_focus_without_selecting();
+                }
+                match focus.entry.as_ref() {
+                    // Text the user has not applied yet survives a rebuild.
+                    Some(focus) => {
+                        entry.set_text(&focus.text);
+                        entry.set_position(focus.cursor_position);
+                    }
+                    None => entry.set_position(-1),
+                }
+            }
+            Err(widget) => {
+                widget.grab_focus();
+            }
+        }
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(true);
         }
     }
 
@@ -2188,6 +2232,19 @@ pub(crate) fn client_setting_widget_name(key: &str) -> String {
 }
 
 const APPLY_PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+/// Widget name of the progress line an entry row shows while it changes.
+const APPLY_PROGRESS: &str = "myna-apply-progress";
+
+fn descendants(root: &gtk::Widget) -> Vec<gtk::Widget> {
+    let mut found = Vec::new();
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        found.extend(descendants(&widget));
+        found.push(widget);
+    }
+    found
+}
 
 fn find_named_descendant(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
     if root.widget_name() == name {
@@ -2498,23 +2555,6 @@ fn build_row_widget(
                 .update_property(&[gtk::accessible::Property::Description(description)]);
             action.upcast()
         }
-        ControlType::Number | ControlType::Text if progress.is_some() => {
-            // An entry row has no subtitle for the progress line, so the
-            // value shows in a plain row until the change is done.
-            let action = adw::ActionRow::builder()
-                .title(title)
-                .subtitle(escape_markup(progress.unwrap_or_default()))
-                .build();
-            action.set_widget_name(&setting_widget_name(row.key()));
-            action.add_suffix(
-                &gtk::Label::builder()
-                    .label(config_value_display(value))
-                    .css_classes(["dim-label"])
-                    .build(),
-            );
-            show_row_progress(&action, progress);
-            action.upcast()
-        }
         ControlType::Number | ControlType::Text => {
             let entry = adw::EntryRow::builder()
                 .title(title)
@@ -2527,6 +2567,24 @@ fn build_row_widget(
                 .upcast_ref::<gtk::Widget>()
                 .update_property(&[gtk::accessible::Property::Description(description)]);
             entry.set_sensitive(editable);
+            if let Some(progress) = progress {
+                // An entry row has no subtitle: the line goes at its end.
+                let label = gtk::Label::builder()
+                    .label(progress)
+                    .ellipsize(gtk::pango::EllipsizeMode::End)
+                    .css_classes(["dim-label"])
+                    .build();
+                label.set_widget_name(APPLY_PROGRESS);
+                entry.add_suffix(&label);
+                entry.add_prefix(&progress_spinner());
+                hold_while_changing(entry.upcast_ref());
+                // Its pencil would say the row can be edited.
+                for icon in descendants(entry.upcast_ref()) {
+                    if icon.has_css_class("edit-icon") {
+                        icon.set_visible(false);
+                    }
+                }
+            }
             let control = metadata.control();
             // Applies on Enter or the apply button, never per keystroke.
             entry.connect_apply(move |row| {
@@ -2537,16 +2595,25 @@ fn build_row_widget(
     }
 }
 
-/// Shows the change `row` is making. The row stays sensitive but takes no
-/// input: insensitive, it would dim its progress line with the other rows.
+/// Shows the change `row` is making in its subtitle.
 fn show_row_progress(row: &adw::ActionRow, progress: Option<&str>) {
     let Some(progress) = progress else {
         return;
     };
     row.set_subtitle(&escape_markup(progress));
+    row.add_prefix(&progress_spinner());
+    hold_while_changing(row.upcast_ref());
+}
+
+fn progress_spinner() -> gtk::Spinner {
     let spinner = gtk::Spinner::new();
     spinner.start();
-    row.add_prefix(&spinner);
+    spinner
+}
+
+/// The changing row stays sensitive but takes no input: insensitive, it
+/// would dim its progress line with the other rows.
+fn hold_while_changing(row: &gtk::Widget) {
     row.set_sensitive(true);
     row.set_can_target(false);
     row.set_can_focus(false);
@@ -3214,17 +3281,6 @@ mod tests {
                 .expect("a status page");
             assert_eq!(page.status().title(), "No active model");
         });
-    }
-
-    fn descendants(root: &gtk::Widget) -> Vec<gtk::Widget> {
-        let mut found = Vec::new();
-        let mut child = root.first_child();
-        while let Some(widget) = child {
-            child = widget.next_sibling();
-            found.extend(descendants(&widget));
-            found.push(widget);
-        }
-        found
     }
 
     /// The General tab's model rows as (title, subtitle, the CSS node its
@@ -4907,7 +4963,7 @@ mod tests {
     }
 
     #[test]
-    fn a_changing_entry_shows_its_progress_in_a_plain_row() {
+    fn a_changing_entry_shows_its_progress_at_its_end() {
         on_gtk_thread(|| {
             let (ui, machine, window) = applying_ui();
             machine.held.set(true);
@@ -4916,14 +4972,24 @@ mod tests {
             entry.emit_by_name::<()>("apply", &[]);
             settle(|| !machine.plans().is_empty());
 
-            let row = setting::<adw::ActionRow>(&ui, "sleep-idle-seconds").expect("plain row");
-            assert_eq!(row.subtitle().as_deref(), Some("Applying…"));
-            assert!(row.is_sensitive() && !row.can_focus());
-            assert!(descendants(row.upcast_ref()).iter().any(|widget| {
-                widget
-                    .downcast_ref::<gtk::Label>()
-                    .is_some_and(|label| label.label() == "60")
-            }));
+            let row = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            assert_eq!(row.text().as_str(), "60");
+            assert!(row.is_sensitive() && !row.can_focus() && !row.can_target());
+            let progress = || {
+                let row = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+                find_named_descendant(row.upcast_ref(), APPLY_PROGRESS)
+                    .and_downcast::<gtk::Label>()
+                    .map(|label| label.label().to_string())
+            };
+            assert_eq!(progress().as_deref(), Some("Applying…"));
+            assert!(
+                !descendants(row.upcast_ref())
+                    .iter()
+                    .any(|widget| widget.has_css_class("edit-icon") && widget.is_visible()),
+                "the pencil still offers to edit"
+            );
+            ui.show_apply_progress("myna-parakeet", Some("Waiting for snapd".to_owned()));
+            assert_eq!(progress().as_deref(), Some("Waiting for snapd"));
             machine.held.set(false);
             settle(|| applied(&ui));
             window.destroy();
@@ -4964,6 +5030,47 @@ mod tests {
                 "the page was replaced"
             );
             assert_eq!(scrolled(&ui).vadjustment().value(), 100.0);
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn applying_a_focused_entry_keeps_the_page_where_it_was() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui_of_height(240);
+            let adjustment = scrolled(&ui).vadjustment();
+            settle(|| adjustment.upper() > adjustment.page_size() + 100.0);
+            let bottom = adjustment.upper() - adjustment.page_size();
+            adjustment.set_value(bottom);
+            let entry = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            entry.grab_focus();
+            entry.set_text("60");
+            let settled = || {
+                for _ in 0..50 {
+                    glib::MainContext::default().iteration(false);
+                }
+                scrolled(&ui).vadjustment().value()
+            };
+            assert_eq!(settled(), bottom);
+
+            machine.held.set(true);
+            entry.emit_by_name::<()>("apply", &[]);
+            settle(|| !machine.plans().is_empty());
+            assert_eq!(settled(), bottom, "starting the change scrolled the page");
+            let focus = gtk::prelude::GtkWindowExt::focus(&window);
+            assert!(
+                focus.is_none(),
+                "the focus moved to {:?}",
+                focus.map(|widget| widget.widget_name())
+            );
+
+            machine.held.set(false);
+            settle(|| applied(&ui));
+            assert_eq!(settled(), bottom, "finishing the change scrolled the page");
+            let entry = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            let focus = gtk::prelude::GtkWindowExt::focus(&window).expect("a focus widget");
+            assert!(focus.is_ancestor(&entry), "the focus left the row");
+            assert_eq!(entry.selection_bounds(), None, "the value is selected");
             window.destroy();
         });
     }
