@@ -116,3 +116,41 @@ fn the_shipped_catalogs_install_valid_files() {
     assert!(merged.contains(">Canonical</name>"), "{merged}");
     std::fs::remove_dir_all(&destination).ok();
 }
+
+/// Every msgid in the template, continuation lines joined.
+fn template_msgids() -> Vec<String> {
+    let template = include_str!("../po/myna-config.pot");
+    let mut msgids = Vec::new();
+    let mut current: Option<String> = None;
+    for line in template.lines() {
+        let quoted = |rest: &str| rest.trim().trim_matches('"').to_owned();
+        if let Some(rest) = line
+            .strip_prefix("msgid_plural ")
+            .or_else(|| line.strip_prefix("msgid "))
+        {
+            msgids.extend(current.take());
+            current = Some(quoted(rest));
+        } else if line.starts_with('"') {
+            if let Some(text) = current.as_mut() {
+                text.push_str(&quoted(line));
+            }
+        } else {
+            msgids.extend(current.take());
+        }
+    }
+    msgids.extend(current);
+    msgids.retain(|msgid| !msgid.is_empty());
+    msgids
+}
+
+// Users choose among speech models; "backend" is the code's word for them.
+#[test]
+fn user_visible_strings_say_model_and_use_no_em_dash() {
+    let msgids = template_msgids();
+    assert!(msgids.len() > 100, "parsed only {} msgids", msgids.len());
+    let manual = include_str!("../data/myna-config.1");
+    for text in msgids.iter().map(String::as_str).chain([manual]) {
+        assert!(!text.to_lowercase().contains("backend"), "{text}");
+        assert!(!text.contains('\u{2014}'), "{text}");
+    }
+}
