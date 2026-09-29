@@ -14,6 +14,7 @@ use crate::backend_apply::ApplyPreview;
 use crate::command::{CancellationToken, CommandError, CommandRequest, CommandRunner};
 use crate::domain::CommandResult;
 use crate::ports::{SystemConfigurator, SystemConfiguratorError, SystemConfiguratorFailure};
+use crate::snap_changes::{apply_progress, ApplyProgress};
 
 /// Fixed plug reference the direct snapd adapter is willing to send. Any
 /// switch step whose typed target does not match these exact allowlists is
@@ -146,6 +147,15 @@ impl SystemConfigurator for PkexecSystemConfigurator {
             cancellation,
         )
         .await
+    }
+
+    async fn apply_progress(
+        &self,
+        backend_snap: &str,
+        cancellation: CancellationToken,
+    ) -> Option<ApplyProgress> {
+        let changes = self.snapd.changes_in_progress(cancellation).await.ok()?;
+        apply_progress(&changes, backend_snap)
     }
 }
 

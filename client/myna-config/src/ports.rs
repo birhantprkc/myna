@@ -10,7 +10,7 @@ use crate::domain::{
     BackendIdentity, BackendSnapshot, BackendSurfaceError, ClientSetting, ClientSettingMetadata,
     ClientSettingValue, CommandResult, ConnectionSnapshot,
 };
-use crate::snap_changes::SnapChange;
+use crate::snap_changes::{ApplyProgress, SnapChange};
 
 pub type ClientSettingsCallback = Box<dyn Fn(ClientSetting) + 'static>;
 
@@ -82,6 +82,16 @@ pub trait SystemConfigurator {
         preview: &ApplyPreview,
         cancellation: CancellationToken,
     ) -> Result<Vec<CommandResult>, SystemConfiguratorFailure>;
+
+    /// What snapd is doing on `backend_snap` now, while an apply runs; none
+    /// when it is doing nothing there or cannot be read.
+    async fn apply_progress(
+        &self,
+        _backend_snap: &str,
+        _cancellation: CancellationToken,
+    ) -> Option<ApplyProgress> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -20,6 +20,7 @@ use myna_config::adapters::system_configurator::PkexecSystemConfigurator;
 use myna_config::command::{CancellationToken, CommandOutput, FakeCommandRunner};
 use myna_config::domain::{parse_connections, BackendIdentity};
 use myna_config::ports::SystemConfigurator;
+use myna_config::snap_changes::ApplyProgress;
 
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     MainContext::new().block_on(future)
@@ -684,4 +685,54 @@ fn noop_backend_switch_makes_no_snapd_requests() {
 
     assert!(completed.is_empty());
     assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn apply_progress_reads_the_running_changes_as_the_user() {
+    let fake = FakeSnapd::start(vec![Step {
+        request_path_contains: "GET /v2/changes?select=in-progress ".to_owned(),
+        response: http_body(
+            200,
+            "OK",
+            include_str!("fixtures/snapd-changes-component-download.json"),
+        ),
+        delay: None,
+        close_early: false,
+    }]);
+    let configurator = PkexecSystemConfigurator::with_snapd_client(
+        Arc::new(FakeCommandRunner::default()),
+        Arc::new(fake.client()),
+    );
+
+    let progress = block_on(configurator.apply_progress("myna-whisper", CancellationToken::new()));
+
+    assert_eq!(
+        progress,
+        Some(ApplyProgress::Download {
+            name: "model-small".to_owned(),
+            done: 13_718_564,
+            total: 483_966_976,
+        })
+    );
+    let calls = fake.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].starts_with("GET /v2/changes?select=in-progress HTTP/1.1\r\n"));
+}
+
+#[test]
+fn unreadable_changes_are_no_progress() {
+    let fake = FakeSnapd::start(vec![Step {
+        request_path_contains: "/v2/changes".to_owned(),
+        response: http_body(200, "OK", r#"{"type":"sync","result":{"not":"a list"}}"#),
+        delay: None,
+        close_early: false,
+    }]);
+    let configurator = PkexecSystemConfigurator::with_snapd_client(
+        Arc::new(FakeCommandRunner::default()),
+        Arc::new(fake.client()),
+    );
+
+    let progress = block_on(configurator.apply_progress("myna-whisper", CancellationToken::new()));
+
+    assert_eq!(progress, None);
 }

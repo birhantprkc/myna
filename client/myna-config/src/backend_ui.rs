@@ -43,6 +43,7 @@ use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::performance::PerformanceFacts;
 use crate::ports::{BackendRepository, SystemConfigurator};
 use crate::presentation::{ControlType, Sensitivity};
+use crate::snap_changes::ApplyProgress;
 use crate::ui;
 
 struct ModelRow {
@@ -353,9 +354,36 @@ struct EntryFocus {
 #[derive(Clone, Debug, Default)]
 struct BackendApplyView {
     in_progress: bool,
+    /// Confirmed and executing, whether or not it can still be cancelled.
+    running: bool,
     cancellable: bool,
     progress_message: Option<String>,
+    progress_detail: Option<String>,
     feedback: Option<ApplyFeedback>,
+}
+
+impl BackendApplyView {
+    /// The line a changed row shows while its apply runs: what snapd is
+    /// doing, else the apply's own state.
+    fn row_progress(&self) -> Option<String> {
+        if !self.in_progress {
+            return None;
+        }
+        self.progress_detail
+            .clone()
+            .or_else(|| self.progress_message.clone())
+    }
+
+    /// The apply controls' line: snapd's step above the apply's own state.
+    fn controls_progress(&self) -> Option<String> {
+        if !self.in_progress {
+            return None;
+        }
+        match (&self.progress_detail, &self.progress_message) {
+            (Some(detail), Some(message)) => Some(format!("{detail}\n{message}")),
+            (detail, message) => detail.clone().or_else(|| message.clone()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -370,6 +398,8 @@ struct BackendApplyState {
     operation_token: Option<u64>,
     operation_cancellation: Option<CancellationToken>,
     progress_message: Option<String>,
+    /// What snapd is doing for the running apply, as last polled.
+    progress_detail: Option<String>,
     cancellation: Option<CancellationToken>,
     feedback: Option<ApplyFeedback>,
 }
@@ -378,11 +408,13 @@ impl BackendApplyState {
     fn view(&self) -> BackendApplyView {
         BackendApplyView {
             in_progress: self.confirmation_pending || self.cancellation.is_some(),
+            running: self.cancellation.is_some(),
             cancellable: self
                 .cancellation
                 .as_ref()
                 .is_some_and(|token| !token.was_refused()),
             progress_message: self.progress_message.clone(),
+            progress_detail: self.progress_detail.clone(),
             feedback: self.feedback.clone(),
         }
     }
@@ -1148,6 +1180,7 @@ impl BackendUi {
         let mut state = self.apply_state.borrow_mut();
         let entry = state.entry(snap_name.to_owned()).or_default();
         entry.progress_message = None;
+        entry.progress_detail = None;
         entry.confirmation_pending = false;
         entry.operation_token = None;
         entry.operation_cancellation = None;
@@ -1170,6 +1203,7 @@ impl BackendUi {
         let mut state = self.apply_state.borrow_mut();
         let entry = state.entry(snap_name.to_owned()).or_default();
         entry.progress_message = Some(message);
+        entry.progress_detail = None;
         entry.confirmation_pending = false;
         entry.cancellation = Some(cancellation);
         entry.feedback = None;
@@ -1369,6 +1403,8 @@ impl BackendUi {
             cancellation.clone(),
         );
         self.rebuild_backend_page(&snap_name);
+        let watching = CancellationToken::new();
+        self.watch_apply_progress(&snap_name, watching.clone());
         let coordinator = self.operation_coordinator.clone();
         let ui = Rc::downgrade(self);
         glib::spawn_future_local(async move {
@@ -1380,6 +1416,7 @@ impl BackendUi {
                 cancellation,
             )
             .await;
+            watching.cancel();
             coordinator.complete(operation_token);
             if let Some(ui) = ui.upgrade() {
                 if ui.controller.page(&snap_name).is_some() {
@@ -1390,6 +1427,70 @@ impl BackendUi {
                 }
             }
         });
+    }
+
+    /// Polls snapd about once a second while the apply runs, over the socket
+    /// and as the user, so the page says what the apply is waiting on: a model
+    /// download above all, which can take minutes.
+    fn watch_apply_progress(self: &Rc<Self>, snap_name: &str, watching: CancellationToken) {
+        let ui = Rc::downgrade(self);
+        let configurator = Rc::clone(&self.configurator);
+        let snap_name = snap_name.to_owned();
+        glib::spawn_future_local(async move {
+            while !watching.is_cancelled() {
+                let progress = configurator
+                    .apply_progress(&snap_name, watching.clone())
+                    .await;
+                if watching.is_cancelled() {
+                    break;
+                }
+                let Some(ui) = ui.upgrade() else {
+                    break;
+                };
+                ui.show_apply_progress(&snap_name, progress.as_ref().map(apply_progress_text));
+                drop(ui);
+                glib::timeout_future(APPLY_PROGRESS_INTERVAL).await;
+            }
+        });
+    }
+
+    /// Updates the changed rows and the apply controls in place: rebuilding
+    /// the page every second would reset its scroll and focus.
+    fn show_apply_progress(&self, snap_name: &str, detail: Option<String>) {
+        {
+            let mut states = self.apply_state.borrow_mut();
+            let Some(entry) = states
+                .get_mut(snap_name)
+                .filter(|entry| entry.cancellation.is_some())
+            else {
+                return;
+            };
+            if entry.progress_detail == detail {
+                return;
+            }
+            entry.progress_detail = detail;
+        }
+        let view = self.apply_state_view(snap_name);
+        let (Some(page), Some(widget)) = (
+            self.controller.page(snap_name),
+            self.backend_pages.borrow().get(snap_name).cloned(),
+        ) else {
+            return;
+        };
+        let row = |name: &str| {
+            find_named_descendant(widget.upcast_ref(), name)
+                .and_then(|row| row.downcast::<adw::ActionRow>().ok())
+        };
+        if let Some(text) = view.row_progress() {
+            for key in page.dirty_keys() {
+                if let Some(row) = row(&setting_widget_name(key)) {
+                    row.set_subtitle(&escape_markup(&text));
+                }
+            }
+        }
+        if let (Some(controls), Some(text)) = (row(APPLY_CONTROLS), view.controls_progress()) {
+            controls.set_subtitle(&escape_markup(&text));
+        }
     }
 
     fn complete_apply(
@@ -2302,6 +2403,8 @@ pub(crate) fn client_setting_widget_name(key: &str) -> String {
 
 /// Widget name of the staged-changes group, so it can be replaced in place.
 const STAGED_CHANGES_GROUP: &str = "myna-staged-changes";
+const APPLY_CONTROLS: &str = "myna-apply-controls";
+const APPLY_PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 fn find_named_descendant(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
     if root.widget_name() == name {
@@ -2564,15 +2667,15 @@ fn add_apply_group(page_widget: &adw::PreferencesPage, page: &BackendPage, ui: &
     }
 
     let controls = ui::BackendApplyControls::new();
+    controls.set_widget_name(APPLY_CONTROLS);
     let controls_subtitle = if view.in_progress {
-        view.progress_message
-            .clone()
+        view.controls_progress()
             .unwrap_or_else(|| gettextrs::gettext("Applying backend changes…"))
     } else {
         gettextrs::gettext("A single authorization applies all staged changes together.")
     };
     controls.set_subtitle(&escape_markup(&controls_subtitle));
-    if view.cancellable {
+    if view.running {
         let spinner = controls.progress_spinner();
         spinner.set_visible(true);
         spinner.start();
@@ -2663,7 +2766,10 @@ fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) ->
     let metadata = row.presentation().metadata();
     let title = metadata.title();
     let description = metadata.explanation();
-    let editable = !ui.apply_state_view(page.identity().snap_name()).in_progress;
+    let apply = ui.apply_state_view(page.identity().snap_name());
+    let editable = !apply.in_progress;
+    // A changed row says what its apply is doing, where the user changed it.
+    let applying = row.dirty().then(|| apply.row_progress()).flatten();
     if metadata.diagnostics_only() {
         let value = if metadata.sensitivity() == Sensitivity::Sensitive {
             gettextrs::gettext("Sensitive value (redacted)")
@@ -2693,6 +2799,7 @@ fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) ->
                 .upcast_ref::<gtk::Widget>()
                 .update_property(&[gtk::accessible::Property::Description(description)]);
             switch.set_sensitive(editable);
+            show_row_progress(switch.upcast_ref(), applying.as_deref());
             let controller_weak = Rc::downgrade(controller);
             let updating = Rc::new(std::cell::Cell::new(false));
             switch.connect_active_notify({
@@ -2725,6 +2832,7 @@ fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) ->
                 .upcast_ref::<gtk::Widget>()
                 .update_property(&[gtk::accessible::Property::Description(description)]);
             combo.set_sensitive(editable);
+            show_row_progress(combo.upcast_ref(), applying.as_deref());
             if let ConfigValue::Text(current) = row.effective_value() {
                 if let Some(index) = choices.iter().position(|choice| choice == current) {
                     combo.set_selected(index as u32);
@@ -2800,6 +2908,30 @@ fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) ->
             });
             entry.upcast()
         }
+    }
+}
+
+fn show_row_progress(row: &adw::ActionRow, progress: Option<&str>) {
+    let Some(progress) = progress else {
+        return;
+    };
+    row.set_subtitle(&escape_markup(progress));
+    let spinner = gtk::Spinner::new();
+    spinner.start();
+    row.add_prefix(&spinner);
+}
+
+fn apply_progress_text(progress: &ApplyProgress) -> String {
+    match progress {
+        ApplyProgress::Download { name, done, total } => {
+            // TRANSLATORS: {name} is the model part or snap being downloaded, such as "model-small"; {done} and {total} are sizes such as "210.0 MB".
+            let frame = gettextrs::gettext("Downloading {name}: {done} of {total}");
+            frame
+                .replace("{done}", &glib::format_size(*done))
+                .replace("{total}", &glib::format_size(*total))
+                .replace("{name}", name)
+        }
+        ApplyProgress::Change { summary } => summary.clone(),
     }
 }
 
@@ -4344,6 +4476,7 @@ mod tests {
                 operation_token: Some(operation.token()),
                 operation_cancellation: Some(token.clone()),
                 progress_message: Some("Applying…".to_owned()),
+                progress_detail: None,
                 cancellation: Some(token.clone()),
                 feedback: None,
             },
@@ -4378,7 +4511,101 @@ mod tests {
 
         let view = state.view();
         assert!(view.in_progress);
+        assert!(view.running, "the spinner keeps turning");
         assert!(!view.cancellable);
+    }
+
+    #[test]
+    fn a_download_reads_as_sizes() {
+        let text = apply_progress_text(&ApplyProgress::Download {
+            name: "model-small".to_owned(),
+            done: 13_718_564,
+            total: 483_966_976,
+        });
+
+        // GLib joins number and unit with a no-break space.
+        assert_eq!(
+            text,
+            "Downloading model-small: 13.7\u{a0}MB of 484.0\u{a0}MB"
+        );
+    }
+
+    #[test]
+    fn snapds_step_leads_and_the_apply_state_follows() {
+        let mut view = BackendApplyView {
+            in_progress: true,
+            progress_message: Some("Applying…".to_owned()),
+            ..BackendApplyView::default()
+        };
+        assert_eq!(view.row_progress().as_deref(), Some("Applying…"));
+        assert_eq!(view.controls_progress().as_deref(), Some("Applying…"));
+
+        view.progress_detail = Some("Downloading".to_owned());
+        assert_eq!(view.row_progress().as_deref(), Some("Downloading"));
+        assert_eq!(
+            view.controls_progress().as_deref(),
+            Some("Downloading\nApplying…")
+        );
+
+        view.in_progress = false;
+        assert_eq!(view.row_progress(), None);
+        assert_eq!(view.controls_progress(), None);
+    }
+
+    #[test]
+    fn a_running_apply_shows_its_progress_on_the_changed_row_and_the_controls() {
+        on_gtk_thread(|| {
+            let controller = discovered(PARAKEET_CONNECTED);
+            let request = controller.begin_snapshot("myna-parakeet").unwrap();
+            let mut snapshot = crate::domain::BackendSnapshot::empty(BackendIdentity::new(
+                "myna-parakeet",
+                "provider",
+            ));
+            snapshot.set_modelctl_config(
+                crate::domain::parse_modelctl_config("streaming: false\n").unwrap(),
+            );
+            controller.complete_snapshot(request, snapshot);
+            controller.stage_edit("myna-parakeet", "streaming", ConfigValue::Boolean(true));
+            let TestUi { ui, .. } = test_ui(controller);
+            ui.set_apply_progress(
+                "myna-parakeet",
+                "Applying…".to_owned(),
+                CancellationToken::new(),
+            );
+            ui.rebuild_backend_page("myna-parakeet");
+
+            ui.show_apply_progress(
+                "myna-parakeet",
+                Some("Downloading model-small: 1 MB of 2 MB".to_owned()),
+            );
+
+            let page = ui.backend_pages.borrow()["myna-parakeet"].clone();
+            let subtitle = |name: &str| {
+                find_named_descendant(page.upcast_ref(), name)
+                    .and_then(|row| row.downcast::<adw::ActionRow>().ok())
+                    .and_then(|row| row.subtitle())
+                    .map(|subtitle| subtitle.to_string())
+            };
+            assert_eq!(
+                subtitle(&setting_widget_name("streaming")).as_deref(),
+                Some("Downloading model-small: 1 MB of 2 MB")
+            );
+            assert_eq!(
+                subtitle(APPLY_CONTROLS).as_deref(),
+                Some("Downloading model-small: 1 MB of 2 MB\nApplying…")
+            );
+
+            ui.rebuild_backend_page("myna-parakeet");
+            let page = ui.backend_pages.borrow()["myna-parakeet"].clone();
+            let row = find_named_descendant(page.upcast_ref(), &setting_widget_name("streaming"))
+                .and_then(|row| row.downcast::<adw::ActionRow>().ok())
+                .unwrap();
+            assert_eq!(
+                row.subtitle().as_deref(),
+                Some("Downloading model-small: 1 MB of 2 MB"),
+                "a rebuild keeps the last progress"
+            );
+        });
     }
 
     #[test]
@@ -4395,6 +4622,7 @@ mod tests {
                     operation_token: Some(operation.token()),
                     operation_cancellation: None,
                     progress_message: Some("Applying…".to_owned()),
+                    progress_detail: None,
                     cancellation: Some(first.clone()),
                     feedback: None,
                 },
@@ -4406,6 +4634,7 @@ mod tests {
                     operation_token: None,
                     operation_cancellation: None,
                     progress_message: Some("Applying…".to_owned()),
+                    progress_detail: None,
                     cancellation: Some(second.clone()),
                     feedback: None,
                 },
