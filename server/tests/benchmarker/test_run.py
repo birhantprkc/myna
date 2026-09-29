@@ -942,6 +942,35 @@ def test_the_warm_sweep_budget_is_recorded_in_provenance(tmp_path, monkeypatch):
     assert calls[0]["provenance"]["sweep_budget_seconds"] == 42.0
 
 
+def test_only_the_warm_sweep_runs_the_schedule(tmp_path, monkeypatch):
+    from myna.benchmarker._schedule import Schedule
+
+    calls = stub_run_clips(monkeypatch, (False, 1), (False, 1))
+    schedule = Schedule(repeats=3, warmup_clips=2, seed=4)
+    sweep(tmp_path, FakeTarget(), clips_cold=[FakeClip("clip-cold")], schedule=schedule)
+    assert [c["cold"] for c in calls] == [True, False]
+    assert calls[0].get("schedule") in (None, Schedule())
+    assert calls[1]["schedule"] == schedule
+
+
+def test_the_warm_budget_is_per_pass_so_repeats_multiply_it(tmp_path, monkeypatch):
+    from myna.benchmarker._schedule import Schedule
+
+    calls = stub_run_clips(monkeypatch, (True, 3))
+    kwargs = sweep(tmp_path, FakeTarget(), budget=60.0, schedule=Schedule(repeats=3))
+    assert calls[0]["budget_seconds"] == 180.0
+    assert calls[0]["provenance"]["sweep_budget_seconds"] == 60.0
+    assert kwargs["unusable"] == [("myna-whisper/cpu/tiny/batch", "exceeded 180s budget")]
+
+
+def test_the_schedule_is_recorded_in_provenance(tmp_path, monkeypatch):
+    from myna.benchmarker._schedule import Schedule
+
+    calls = stub_run_clips(monkeypatch, (False, 1))
+    sweep(tmp_path, FakeTarget(), schedule=Schedule(repeats=2, warmup_clips=1, seed=3))
+    assert calls[0]["provenance"]["schedule"] == {"repeats": 2, "warmup_clips": 1, "seed": 3}
+
+
 def test_a_crashing_target_is_recorded_and_does_not_propagate(tmp_path, monkeypatch, capsys):
     async def boom(**kwargs):
         raise RuntimeError("adapter died")
@@ -1776,6 +1805,37 @@ def test_the_budget_flag_overrides_the_config(
     cmd_run(RunArgs(config, out=out, budget=45.0))
 
     assert "budget: 45s" in capsys.readouterr().out
+
+
+def test_each_target_sweeps_under_its_own_schedule(tmp_path, corpus, stub_target, monkeypatch):
+    """repeats/warmup_clips/seed are global, and a target may override any of them."""
+    from myna.benchmarker._schedule import Schedule
+
+    monkeypatch.setattr(_run.os, "geteuid", lambda: 0)
+    seen = []
+    monkeypatch.setattr(
+        _run, "_sweep_one", lambda **kw: seen.append((kw["target"].snap, kw["schedule"]))
+    )
+    out = tmp_path / "results.jsonl"
+    config = write_config(
+        tmp_path / "bench.yaml",
+        manifest=str(corpus),
+        out=str(out),
+        repeats=3,
+        warmup_clips=1,
+        seed=11,
+        targets=[
+            {"snap": "myna-whisper", "files": [WHISPER_SNAP]},
+            {"snap": "myna-parakeet", "files": [WHISPER_SNAP], "repeats": 5},
+        ],
+    )
+
+    cmd_run(RunArgs(config, out=out))
+
+    assert seen == [
+        ("myna-whisper", Schedule(repeats=3, warmup_clips=1, seed=11)),
+        ("myna-parakeet", Schedule(repeats=5, warmup_clips=1, seed=11)),
+    ]
 
 
 def test_results_are_handed_back_to_the_invoking_user(

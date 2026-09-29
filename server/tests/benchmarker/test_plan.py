@@ -712,6 +712,50 @@ def test_the_plan_prices_the_sweep_in_wall_clock(tmp_path, snaps, capsys):
     assert "2.0 h" in out
 
 
+def test_the_estimate_multiplies_by_each_targets_repeats(tmp_path, snaps, capsys):
+    """The budget is per pass over the corpus, so N repeats is N budgets."""
+    snaps()  # one cpu engine, two models, batch only
+    config = write_config(tmp_path / "bench.yaml", sweep_budget_seconds=3600, repeats=3)
+    cmd_plan(PlanArgs(config))
+    out = capsys.readouterr().out
+    assert "3 repeat(s)" in out
+    assert "6.0 h" in out
+
+
+def test_a_targets_own_repeats_override_the_global_ones_in_the_estimate(tmp_path, snaps, capsys):
+    snaps()
+    config = write_config(
+        tmp_path / "bench.yaml",
+        sweep_budget_seconds=3600,
+        repeats=3,
+        targets=[{"snap": "myna-whisper", "files": target_files(), "repeats": 2}],
+    )
+    cmd_plan(PlanArgs(config))
+    assert "4.0 h" in capsys.readouterr().out
+
+
+def test_a_bad_schedule_in_the_config_is_refused(tmp_path, snaps):
+    snaps()
+    config = write_config(tmp_path / "bench.yaml", warmup_clips=-1)
+    with pytest.raises(SystemExit, match="warmup_clips"):
+        load_config(config, only=None, out_override=None, budget_override=None)
+
+
+def test_a_bad_schedule_on_any_target_is_refused_before_the_sweep(tmp_path, snaps):
+    """The run builds each target only when the sweep reaches it, so a bad
+    second target would otherwise surface after the first had installed."""
+    snaps()
+    config = write_config(
+        tmp_path / "bench.yaml",
+        targets=[
+            {"snap": "myna-parakeet", "files": target_files()},
+            {"snap": "myna-whisper", "files": target_files(), "repeats": 0},
+        ],
+    )
+    with pytest.raises(SystemExit, match="myna-whisper: repeats"):
+        load_config(config, only=None, out_override=None, budget_override=None)
+
+
 def test_the_estimate_counts_one_engine_per_target_not_all_of_them(tmp_path, snaps, capsys):
     """Exactly one engine runs. Summing them would quote a machine with an
     NVIDIA card double the sweep it is about to start."""

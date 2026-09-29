@@ -22,9 +22,19 @@ out: ./results.jsonl
 # Must be a clip id present in the manifest; omit to skip cold sampling.
 # cold_clip: librispeech-84-121123-0000
 
-# Wall-clock budget for the warm sweep per target, in seconds.
+# Wall-clock budget for one pass of the warm sweep, per target, in seconds.
 # A target that overruns is marked usability_fail in the results.
 sweep_budget_seconds: 600
+
+# Repeats: full passes over the clips per cell, each in its own shuffled order
+# (seeded, so a rerun is reproducible). The budget above applies per pass. One
+# pass is enough to compare; publication numbers want 3 or more, which is what
+# gives a variance estimate. Warmup clips run first and are kept in the file
+# but never scored: they absorb one-off costs such as GPU kernel setup. A
+# target may set any of these three keys to override them.
+# repeats: 3
+# warmup_clips: 3
+# seed: 0
 
 # One entry per snap to benchmark. `files:` lists the .snap and .comp files you
 # downloaded; the snap and its components are installed and removed together.

@@ -77,7 +77,10 @@ Config format::
     root: .                       # base for relative paths (default: config's dir)
     cold_clip: librispeech-84-121123-0000  # one clip, run first, tagged cold
     clips: []                     # warm sweep clips; omit = whole manifest
-    sweep_budget_seconds: 600
+    sweep_budget_seconds: 600     # per pass over the clips
+    repeats: 1                    # passes per cell, each shuffled (see _schedule)
+    warmup_clips: 0               # run first, tagged warmup, never scored
+    seed: 0                       # clip-order shuffle seed, recorded per row
 
     targets:
       - snap: myna-whisper
@@ -88,6 +91,7 @@ Config format::
         service: myna-whisper.server
         socket: /var/snap/myna-whisper/common/share/provider/myna.sock
         models: [tiny, base]        # optional allowlist
+        repeats: 3                  # optional; overrides the global schedule keys
         engines: [cpu, nvidia-gpu]  # optional; omitted = one auto-selected pass
         configs:
           - label: int8
@@ -118,6 +122,7 @@ from typing import TYPE_CHECKING, Any, Self, TypedDict
 
 import yaml
 
+from myna.benchmarker._schedule import Schedule, parse_schedule
 from myna.benchmarker._summarize import SCHEMA_VERSION
 
 if TYPE_CHECKING:
@@ -616,13 +621,21 @@ def variants_for(
 class SnapTarget:
     """A packed snap: purge, sideload, measure, purge."""
 
-    def __init__(self, spec: dict[str, Any], root: Path, label_suffix: str = ""):
+    def __init__(
+        self,
+        spec: dict[str, Any],
+        root: Path,
+        label_suffix: str = "",
+        schedule: Schedule | None = None,
+    ):
         self.snap: str = spec["snap"]
         if self.snap not in PURGEABLE:
             raise SystemExit(
                 f"{self.snap!r} is not in the purge allowlist {sorted(PURGEABLE)} - "
                 "this runner removes what it benchmarks, so it refuses unknown snaps"
             )
+        # Repeats, warmup and seed: the config's, with this target's overrides.
+        self.schedule: Schedule = parse_schedule(spec, schedule or Schedule(), self.snap)
         self.label_suffix = label_suffix
         if not spec.get("files"):
             raise SystemExit(
@@ -1148,8 +1161,12 @@ def _sweep_one(
     unusable: list[tuple[str, str]],
     machine: str = "unknown",
     events: RecordSink | None = None,
+    schedule: Schedule | None = None,
 ) -> None:
     """Configure one matrix cell, then cold-sample and warm-sweep it.
+
+    ``budget`` is per pass over the clips; the warm sweep gets one per repeat
+    of ``schedule``, whose warmup clips run outside it like the cold sample.
 
     Applying the cell belongs inside this boundary because it is the step most
     likely to fail: a value the engine refuses takes the daemon down with it,
@@ -1163,6 +1180,8 @@ def _sweep_one(
 
     label = target.cell_label(mode, variant)
     sampler = None
+    schedule = schedule or Schedule()
+    cell_budget = schedule.budget(budget)
 
     try:
         target.apply(mode=mode, variant=variant, togglable=togglable)
@@ -1193,7 +1212,7 @@ def _sweep_one(
                 out.status(label, "usability_fail", "cold sample overran")
                 return
 
-        print(f"[{label}] warm sweep (budget {budget:.0f}s)")
+        print(f"[{label}] warm sweep (budget {cell_budget:.0f}s)")
         overran, _ = asyncio.run(
             run_clips(
                 socket=target.socket,
@@ -1201,18 +1220,23 @@ def _sweep_one(
                 label=label,
                 cold=False,
                 streaming=target.streaming,
-                provenance={**provenance, "sweep_budget_seconds": budget},
+                provenance={
+                    **provenance,
+                    "sweep_budget_seconds": budget,
+                    "schedule": schedule.as_dict(),
+                },
                 corpus=corpus,
-                budget_seconds=budget,
+                budget_seconds=cell_budget,
                 out_fp=out,
                 events_fp=events,
+                schedule=schedule,
             )
         )
         if overran:
             # Slower than the budget is a product verdict, not a datapoint to
             # wait out. Whatever clips landed are kept and flagged, so a partial
             # WER cannot pass as a full sweep.
-            reason = f"exceeded {budget:.0f}s budget"
+            reason = f"exceeded {cell_budget:.0f}s budget"
             unusable.append((label, reason))
             out.status(label, "usability_fail", reason)
             print(f"[{label}] USABILITY FAIL: {reason}")
@@ -1279,6 +1303,7 @@ class SweepConfig:
     warm_clip_ids: list[str]
     budget: float
     targets: list[dict[str, Any]]
+    schedule: Schedule = field(default_factory=Schedule)
 
 
 def load_config(
@@ -1303,6 +1328,11 @@ def load_config(
         targets = [t for t in targets if t.get("snap") in set(only)]
     if not targets:
         raise SystemExit("no targets selected")
+    schedule = parse_schedule(cfg, Schedule(), config_path.name)
+    for spec in targets:
+        # Refused here, before anything installs, rather than when the sweep
+        # reaches the target.
+        parse_schedule(spec, schedule, str(spec.get("snap", "(unnamed)")))
     return SweepConfig(
         path=config_path,
         root=root,
@@ -1314,6 +1344,7 @@ def load_config(
         warm_clip_ids=list(cfg.get("clips") or []),
         budget=budget_override or cfg.get("sweep_budget_seconds") or DEFAULT_SWEEP_BUDGET_S,
         targets=targets,
+        schedule=schedule,
     )
 
 
@@ -1335,7 +1366,7 @@ def cmd_plan(args: argparse.Namespace) -> None:
         Path(args.config), only=args.only, out_override=args.out, budget_override=args.budget
     )
     print(f"config={cfg.path}  manifest={cfg.manifest.name}  out={cfg.out}")
-    print(f"warm-sweep budget: {cfg.budget:.0f}s per target")
+    print(f"warm-sweep budget: {cfg.budget:.0f}s per pass over the clips")
     if cfg.cold_clip:
         print(f"cold clip: {cfg.cold_clip}")
     print()
@@ -1346,6 +1377,8 @@ def cmd_plan(args: argparse.Namespace) -> None:
     # A machine with an NVIDIA card would otherwise be quoted double the sweep
     # it is about to start, which is the number someone plans a day around.
     will_run = 0
+    # Each cell spends up to one budget per repeat, and repeats are per target.
+    will_run_seconds = 0.0
     # Two kinds of finding, kept apart because only one is the config's fault.
     # A snap that is not packed yet is a state of the tree - `run` skips that
     # target and carries on - while a config naming a key no engine declares is
@@ -1358,7 +1391,7 @@ def cmd_plan(args: argparse.Namespace) -> None:
     for spec in cfg.targets:
         snap = spec.get("snap", "(unnamed)")
         try:
-            target = SnapTarget(spec, cfg.root, args.label_suffix)
+            target = SnapTarget(spec, cfg.root, args.label_suffix, cfg.schedule)
             target.check_machine(machine)
         except TargetUnavailable as exc:
             # Collected, not fatal: a plan that stops at the first unpacked snap
@@ -1369,6 +1402,12 @@ def cmd_plan(args: argparse.Namespace) -> None:
         variants = target.variants
         print(f"  {snap:20} cli={target.cli}  socket={target.socket}")
         print(f"  {'':20} files={[Path(f).name for f in target.files]}")
+        schedule = target.schedule
+        if schedule != Schedule():
+            print(
+                f"  {'':20} {schedule.repeats} repeat(s), {schedule.warmup_clips} warmup "
+                f"clip(s), seed {schedule.seed}"
+            )
         engines = target.static_engines()
         if not engines:
             print(f"  {'':20} axes unknown (engines unreadable; read at install time)")
@@ -1409,11 +1448,13 @@ def cmd_plan(args: argparse.Namespace) -> None:
         # Named engines all run; an unnamed target runs exactly one, so quote
         # its largest rather than the sum - a box with a GPU in it would
         # otherwise be told to plan a day around double the sweep it will start.
-        will_run += (
+        cells_here = (
             sum(len(r) for r in run_here)
             if target.only_engines
             else max((len(r) for r in run_here), default=0)
         )
+        will_run += cells_here
+        will_run_seconds += cells_here * schedule.budget(cfg.budget)
         if target.only_engines:
             print(f"  {'':20} engines: {target.only_engines} - each is measured in turn")
         elif len(engines) > 1:
@@ -1452,8 +1493,8 @@ def cmd_plan(args: argparse.Namespace) -> None:
     print(f"\n{total} row(s) across all engines.")
     print(f"at most {will_run} will run here.")
     print(
-        f"upper bound if every one of those spends its full {cfg.budget:.0f}s budget: "
-        f"{will_run * cfg.budget / 3600:.1f} h"
+        f"upper bound if every one of those spends its full {cfg.budget:.0f}s budget "
+        f"on every repeat: {will_run_seconds / 3600:.1f} h"
     )
     if unavailable:
         print("\nthese targets will be skipped:")
@@ -1545,7 +1586,11 @@ def cmd_run(args: argparse.Namespace) -> None:
     )
     print(f"harness: myna-bench {machine['harness']['version'] or '(unversioned source tree)'}")
     print(f"manifest: {cfg.manifest.name}  cold={len(clips_cold)} warm={len(clips_warm)} clips")
-    print(f"warm-sweep budget: {cfg.budget:.0f}s per target")
+    print(f"warm-sweep budget: {cfg.budget:.0f}s per pass over the clips")
+    print(
+        f"schedule: {cfg.schedule.repeats} repeat(s), {cfg.schedule.warmup_clips} warmup "
+        f"clip(s), seed {cfg.schedule.seed} (targets may override)"
+    )
     print(f"output: {cfg.out}  events: {events_path.name}\n")
 
     broken: list[tuple[str, str]] = []
@@ -1560,7 +1605,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         for spec in cfg.targets:
             snap = spec.get("snap", "(unnamed)")
             try:
-                target = SnapTarget(spec, cfg.root, args.label_suffix)
+                target = SnapTarget(spec, cfg.root, args.label_suffix, cfg.schedule)
                 target.check_machine(machine)
             except TargetUnavailable as exc:
                 # Not packed, or nothing it ships can run here. Neither is a
@@ -1639,6 +1684,7 @@ def cmd_run(args: argparse.Namespace) -> None:
                                 unusable=unusable,
                                 machine=machine["hostname"],
                                 events=events,
+                                schedule=target.schedule,
                             )
             except SystemExit as exc:
                 broken.append((target.label, str(exc)))

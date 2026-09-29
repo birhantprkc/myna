@@ -210,3 +210,38 @@ async def test_the_bench_command_writes_the_sidecar_beside_its_results(tmp_path,
     await asyncio.to_thread(cmd_bench, args)
 
     assert [c.clip for c in load_events(events_path_for(out))] == [clip.id]
+
+
+async def test_the_phase_round_trips_through_the_sidecar(tmp_path):
+    record = await fake_session(tmp_path)
+    path = tmp_path / "r-events.jsonl.gz"
+    kw = {"label": "l", "clip": "c", "machine": None}
+    write(
+        path,
+        event_line(record, repeat=0, cold=False, phase="warmup", **kw),
+        event_line(record, repeat=2, cold=False, phase="measured", **kw),
+        event_line(record, repeat=0, cold=True, **kw),
+    )
+    assert [(c.repeat, c.phase) for c in load_events(path)] == [
+        (0, "warmup"),
+        (2, "measured"),
+        (0, "cold"),
+    ]
+
+
+def test_a_sidecar_written_before_phases_reads_its_phase_from_cold(tmp_path):
+    path = tmp_path / "r-events.jsonl.gz"
+    base = {
+        "schema_version": SCHEMA_VERSION,
+        "machine": None,
+        "label": "l",
+        "clip": "c",
+        "repeat": 0,
+        "started_at": "2026-09-29T00:00:00+00:00",
+        "audio_start": 0.0,
+        "audio_end": None,
+        "feed": [],
+        "events": [],
+    }
+    write(path, {**base, "cold": True}, {**base, "cold": False})
+    assert [c.phase for c in load_events(path)] == ["cold", "measured"]

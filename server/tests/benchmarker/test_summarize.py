@@ -72,6 +72,55 @@ def test_load_latest_separates_cold_from_warm_for_the_same_clip(tmp_path):
     assert {r["cold"] for r in records} == {True, False}
 
 
+def test_load_latest_keeps_one_record_per_repeat(tmp_path):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, [record(repeat=0), record(repeat=1), record(repeat=1, wer_edits=4)])
+    records, _ = _load_latest(path)
+    assert sorted((r["repeat"], r["wer_edits"]) for r in records) == [(0, 0), (1, 4)]
+
+
+def test_load_latest_leaves_warmup_rows_out_of_every_aggregate(tmp_path):
+    """Warmup rows stay in the file, as a record of what ran, and never score."""
+    path = tmp_path / "results.jsonl"
+    write_jsonl(
+        path,
+        [
+            record(clip="clip-0", phase="warmup", wer_edits=9, time_to_ready=5.0),
+            record(clip="clip-1", phase="measured"),
+        ],
+    )
+    records, _ = _load_latest(path)
+    assert [r["phase"] for r in records] == ["measured"]
+
+
+def test_a_warmup_row_does_not_shadow_the_measured_row_of_the_same_clip(tmp_path):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, [record(phase="measured"), record(phase="warmup", wer_edits=9)])
+    records, _ = _load_latest(path)
+    assert [r["wer_edits"] for r in records] == [0]
+
+
+def test_a_file_written_before_repeats_still_summarises(tmp_path):
+    path = tmp_path / "results.jsonl"
+    old = [{k: v for k, v in record().items() if k not in ("repeat", "phase")}]
+    write_jsonl(path, old + [{**old[0], "cold": True}])
+    records, _ = _load_latest(path)
+    summary = _summarize(records)
+    assert summary[UNKNOWN]["clips"] == 1
+    assert summary[UNKNOWN]["cold_ready"] == 0.2
+
+
+def test_repeats_pool_into_one_micro_average():
+    summary = _summarize(
+        [
+            record(repeat=0, wer_edits=1, ref_words=10),
+            record(repeat=1, wer_edits=3, ref_words=10),
+        ]
+    )
+    assert summary[UNKNOWN]["wer"] == pytest.approx(0.2)
+    assert summary[UNKNOWN]["clips"] == 2
+
+
 def test_load_latest_skips_the_machine_header_and_error_records(tmp_path):
     path = tmp_path / "results.jsonl"
     write_jsonl(

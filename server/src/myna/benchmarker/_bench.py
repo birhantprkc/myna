@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Protocol
 
 from myna.benchmarker._events import EventsFile, event_line, events_path_for
+from myna.benchmarker._schedule import MEASURED, WARMUP, Schedule, plan_clips
 from myna.benchmarker._summarize import SCHEMA_VERSION, Record
 from myna.core import SessionConfig, WsUnixClient
 from myna.testbed import (
@@ -93,6 +94,8 @@ def to_line(
     *,
     label: str,
     cold: bool,
+    repeat: int = 0,
+    phase: str = MEASURED,
     run_started: str,
     served_models: list[str],
     usability_fail: bool,
@@ -110,6 +113,10 @@ def to_line(
         "error": error,
         "label": label,
         "cold": cold,
+        # Which pass over the corpus, and whether it counts: warmup rows are
+        # kept in the file but out of every aggregate.
+        "repeat": repeat,
+        "phase": phase,
         "clip": clip.id,
         "category": clip.category,
         "language": clip.language,
@@ -176,17 +183,23 @@ async def run_clips(
     corpus: dict[str, str] | None = None,
     realtime: bool = False,
     events_fp: RecordSink | None = None,
-    repeat: int = 0,
+    schedule: Schedule | None = None,
 ) -> tuple[bool, int]:
     """Sweep ``clips`` and append JSONL records to ``out_fp``.
 
+    ``schedule`` runs its warmup clips first, then its repeats as shuffled
+    passes (see ``_schedule``); a cold sample ignores it. The budget covers
+    the measured passes only, and the clock starts at the first of them.
+
     ``events_fp``, when given, receives each clip's timed event stream as it
-    lands, keyed by (label, clip, repeat) like its row.
+    lands, keyed by (label, clip, repeat, phase) like its row.
 
     Returns ``(overran, scored)`` - overran is True when the budget was
-    exceeded before all clips completed. Raises ``AllClipsFailed`` when no clip
-    produced a transcript.
+    exceeded before all measured clips completed; scored counts measured rows
+    only. Raises ``AllClipsFailed`` when no measured clip produced a transcript.
     """
+    plan = plan_clips(clips, schedule or Schedule(), cold=cold)
+    measured = sum(1 for item in plan if item.phase != WARMUP)
     served_models: list[str] = []
     served_runtime: dict[str, str] | None = None
     try:
@@ -209,7 +222,8 @@ async def run_clips(
     finals: list[float] = []
     readys: list[float] = []
     overran = False
-    wall_start = time.monotonic()
+    wall_start: float | None = None
+    done = 0
 
     pace = "real-time pace" if realtime else "fast as possible"
     print(f"label={label}  clips={len(clips)}  socket={socket}")
@@ -223,15 +237,18 @@ async def run_clips(
     )
     print("-" * 84)
 
-    for index, clip in enumerate(clips):
-        if budget_seconds and time.monotonic() - wall_start > budget_seconds:
+    for item in plan:
+        clip, warmup = item.clip, item.phase == WARMUP
+        if not warmup and wall_start is None:
+            wall_start = time.monotonic()
+        elapsed = 0.0 if wall_start is None else time.monotonic() - wall_start
+        if not warmup and budget_seconds and elapsed > budget_seconds:
             # A backend slower than the budget is a usability verdict, not a
             # datapoint worth waiting out. Stop here rather than being killed
             # from outside, so the clips that did land still get written.
             overran = True
-            elapsed = time.monotonic() - wall_start
             print(
-                f"budget exceeded after {index}/{len(clips)} clips "
+                f"budget exceeded after {done}/{measured} clips "
                 f"({elapsed:.0f}s > {budget_seconds:.0f}s) - stopping"
             )
             break
@@ -246,11 +263,13 @@ async def run_clips(
             cer,
             label=label,
             cold=cold,
+            repeat=item.repeat,
+            phase=item.phase,
             run_started=run_started,
             served_models=served_models,
             usability_fail=overran,
             clips_scored=0,  # back-patched below
-            clips_requested=len(clips),
+            clips_requested=measured,
             provenance=provenance,
             corpus=corpus,
             served_runtime=served_runtime,
@@ -262,18 +281,25 @@ async def run_clips(
                     record,
                     label=label,
                     clip=clip.id,
-                    repeat=repeat,
+                    repeat=item.repeat,
+                    phase=item.phase,
                     cold=cold,
                     machine=machine,
                 )
             )
 
+        done += 0 if warmup else 1
+        tag = "  (warmup)" if warmup else f"  #{item.repeat}" if item.repeat else ""
         if line["error"]:
             # Not a 100%-WER data point: the backend never ran. Keep it out of
             # the score entirely so a broken target can't masquerade as a bad
             # model in the aggregate.
-            failed.append(line)
-            print(f"{clip.id:24} {clip.category:10} {'FAILED':>6} {line['error']['code']}")
+            if not warmup:
+                failed.append(line)
+            print(f"{clip.id:24} {clip.category:10} {'FAILED':>6} {line['error']['code']}{tag}")
+            continue
+        if warmup:
+            print(f"{clip.id:24} {clip.category:10} {'--':>6} {'--':>6}{tag}")
             continue
 
         tot_edits += wer.substitutions + wer.deletions + wer.insertions
@@ -288,7 +314,7 @@ async def run_clips(
             f"{_fmt(wer.rate * 100)} {_fmt(cer.rate * 100)} "
             f"{_fmt(line['audio_seconds'], '8.2f')} "
             f"{_fmt(line['time_to_ready'], '8.3f')} "
-            f"{_fmt(line['finalize_latency'], '8.3f')}"
+            f"{_fmt(line['finalize_latency'], '8.3f')}{tag}"
         )
 
     # The library versions are only reported once the server has loaded them,
@@ -297,7 +323,7 @@ async def run_clips(
         served_runtime = (await WsUnixClient(socket).capabilities()).runtime
     except Exception as exc:  # noqa: BLE001 - discovery is advisory
         print(f"(runtime re-query failed: {type(exc).__name__}: {exc})")
-    scored = len(lines) - len(failed)
+    scored = sum(1 for line in lines if line["phase"] != WARMUP) - len(failed)
     # Back-patch usability_fail and clips_scored now that we know the final values.
     for line in lines:
         line["usability_fail"] = overran
@@ -310,7 +336,7 @@ async def run_clips(
     print("-" * 84)
     if failed:
         codes = ", ".join(sorted({ln["error"]["code"] for ln in failed}))
-        print(f"FAILED             : {len(failed)}/{len(clips)} clips  ({codes})")
+        print(f"FAILED             : {len(failed)}/{measured} clips  ({codes})")
         print(f"  {failed[0]['error']['message']}")
     if tot_words:
         print(
@@ -332,9 +358,7 @@ async def run_clips(
         print(f"median finalize    : {median_final:.3f}s  (end-of-audio -> committed text)")
     print(f"audio streamed     : {tot_audio:.1f}s total")
     if overran:
-        print(
-            f"USABILITY FAIL     : scored {scored}/{len(clips)} clips within {budget_seconds:.0f}s"
-        )
+        print(f"USABILITY FAIL     : scored {scored}/{measured} clips within {budget_seconds:.0f}s")
 
     if failed and not tot_words:
         raise AllClipsFailed(f"{label}: every clip failed ({failed[0]['error']['code']})")

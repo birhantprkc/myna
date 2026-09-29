@@ -502,3 +502,162 @@ async def test_realtime_pacing_is_opt_in(tmp_path, socket, capsys):
         realtime=True,
     )
     assert "real-time pace" in capsys.readouterr().out
+
+
+# ─── repeats and warmup ──────────────────────────────────────────────────────
+
+
+async def scheduled(tmp_path, socket, schedule, *, n=2, budget=None, events=None):
+    from myna.benchmarker._schedule import Schedule
+
+    out = Collector()
+    result = await run_clips(
+        socket=socket,
+        clips=[make_clip(tmp_path, f"clip-{i}") for i in range(n)],
+        label="fake/batch",
+        cold=False,
+        streaming=False,
+        provenance=None,
+        budget_seconds=budget,
+        out_fp=out,
+        events_fp=events,
+        schedule=Schedule(**schedule),
+    )
+    return result, out.records
+
+
+async def test_every_row_says_which_repeat_and_phase_it_is(tmp_path, socket):
+    _, rows = await scheduled(tmp_path, socket, {"repeats": 2, "warmup_clips": 1})
+
+    assert [(r["repeat"], r["phase"]) for r in rows] == [
+        (0, "warmup"),
+        (0, "measured"),
+        (0, "measured"),
+        (1, "measured"),
+        (1, "measured"),
+    ]
+    assert rows[0]["clip"] == "clip-0"
+    for repeat in (0, 1):
+        passed = [r["clip"] for r in rows if r["phase"] == "measured" and r["repeat"] == repeat]
+        assert sorted(passed) == ["clip-0", "clip-1"]
+
+
+async def test_a_default_sweep_is_one_measured_pass(tmp_path, socket):
+    _, rows = await scheduled(tmp_path, socket, {})
+    assert [(r["clip"], r["repeat"], r["phase"]) for r in rows] == [
+        ("clip-0", 0, "measured"),
+        ("clip-1", 0, "measured"),
+    ]
+
+
+async def test_a_cold_sample_is_tagged_cold(tmp_path, socket):
+    out = Collector()
+    await run_clips(
+        socket=socket,
+        clips=[make_clip(tmp_path)],
+        label="fake/batch",
+        cold=True,
+        streaming=False,
+        provenance=None,
+        budget_seconds=None,
+        out_fp=out,
+    )
+    assert [(r["repeat"], r["phase"]) for r in out.records] == [(0, "cold")]
+
+
+async def test_warmup_rows_are_not_counted_as_scored_or_requested(tmp_path, socket):
+    (overran, scored), rows = await scheduled(tmp_path, socket, {"repeats": 2, "warmup_clips": 1})
+    assert (overran, scored) == (False, 4)
+    assert {r["clips_scored"] for r in rows} == {4}
+    assert {r["clips_requested"] for r in rows} == {4}
+
+
+async def test_warmup_runs_outside_the_budget(tmp_path, socket):
+    """Like the cold sample, warmup is not a usability verdict: a spent budget
+    stops the measured passes, not the warmup."""
+    (overran, scored), rows = await scheduled(tmp_path, socket, {"warmup_clips": 1}, budget=-1.0)
+    assert (overran, scored) == (True, 0)
+    assert [r["phase"] for r in rows] == ["warmup"]
+
+
+async def test_the_budget_clock_starts_at_the_first_measured_clip(tmp_path, monkeypatch):
+    """A slow warmup (a model still paging in) must not eat the measured
+    passes' budget."""
+    from types import SimpleNamespace
+
+    from myna.benchmarker import _bench
+
+    clock = 0.0
+    monkeypatch.setattr(_bench, "time", SimpleNamespace(monotonic=lambda: clock))
+
+    class SlowWarmup(FakeAdapter):
+        async def run_session(self, config, audio, emit):
+            nonlocal clock
+            clock += 100.0 if clock == 0.0 else 1.0
+            await transcribing("hello world").run_session(config, audio, emit)
+
+    path = tmp_path / "slow.sock"
+    async with serve_unix(SlowWarmup(), path):
+        (overran, scored), rows = await scheduled(tmp_path, path, {"warmup_clips": 1}, budget=10.0)
+    assert (overran, scored) == (False, 2)
+    assert [(r["clip"], r["phase"]) for r in rows] == [
+        ("clip-0", "warmup"),
+        ("clip-0", "measured"),
+        ("clip-1", "measured"),
+    ]
+
+
+async def test_a_sweep_whose_measured_clips_all_fail_is_broken_despite_a_good_warmup(tmp_path):
+    """Warmup rows must not rescue a cell whose measured rows never scored."""
+    from myna.benchmarker._schedule import Schedule
+
+    sessions = 0
+
+    class FirstOnly(FakeAdapter):
+        async def run_session(self, config, audio, emit):
+            nonlocal sessions
+            sessions += 1
+            inner = transcribing("hello world") if sessions == 1 else failing()
+            await inner.run_session(config, audio, emit)
+
+    path = tmp_path / "first.sock"
+    async with serve_unix(FirstOnly(), path):
+        with pytest.raises(AllClipsFailed):
+            await run_clips(
+                socket=path,
+                clips=[make_clip(tmp_path)],
+                label="fake/batch",
+                cold=False,
+                streaming=False,
+                provenance=None,
+                budget_seconds=None,
+                out_fp=Collector(),
+                schedule=Schedule(warmup_clips=1),
+            )
+
+
+async def test_a_failed_warmup_clip_is_not_counted_as_a_failed_measurement(tmp_path):
+    """Warmup exists to absorb a first session that fails while the model pages in."""
+    sessions = 0
+
+    class FirstFails(FakeAdapter):
+        async def run_session(self, config, audio, emit):
+            nonlocal sessions
+            sessions += 1
+            inner = failing() if sessions == 1 else transcribing("hello world")
+            await inner.run_session(config, audio, emit)
+
+    path = tmp_path / "first-fails.sock"
+    async with serve_unix(FirstFails(), path):
+        (overran, scored), rows = await scheduled(tmp_path, path, {"warmup_clips": 1})
+    assert (overran, scored) == (False, 2)
+    assert {r["clips_scored"] for r in rows} == {2}
+
+
+async def test_the_event_stream_is_keyed_like_its_row(tmp_path, socket):
+    events = Collector()
+    _, rows = await scheduled(tmp_path, socket, {"repeats": 2, "warmup_clips": 1}, events=events)
+    key = ("clip", "repeat", "phase")
+    assert [tuple(e[k] for k in key) for e in events.records] == [
+        tuple(r[k] for k in key) for r in rows
+    ]

@@ -7,8 +7,9 @@ comparison the specs need: one row per label (e.g. ``myna-whisper/cpu/tiny/batch
 with micro-averaged WER/CER (total edits / total reference, so long clips count
 proportionally) and finalize-latency percentiles.
 
-Records are deduplicated by (label, clip, cold), keeping the most recent - so
-re-running a label replaces its old rows rather than double-counting.
+Records are deduplicated by (label, clip, repeat, phase), keeping the most
+recent - so re-running a label replaces its old rows rather than
+double-counting. Warmup rows are read past: they record what ran, not a score.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any, TypedDict
+
+from myna.benchmarker._schedule import COLD, MEASURED, WARMUP
 
 Record = dict[str, Any]
 
@@ -66,8 +69,10 @@ def row_key(record: Record) -> RowKey:
 def _load_latest(path: Path) -> tuple[list[Record], dict[RowKey, tuple[str, str]]]:
     """Return (clip records, {(machine, label): (status, reason)}), last wins.
 
-    Cold samples are keyed separately so a clip measured both cold and warm
-    keeps both rows rather than the warm run clobbering the cold one.
+    Cold samples and each repeat are keyed separately, so a clip measured cold,
+    warm and in several passes keeps every row. Warmup rows are dropped here,
+    which keeps them out of every table. A row written before repeats existed
+    reads as repeat 0 in the phase its ``cold`` flag names.
 
     Status records (``{"machine", "label", "status", "reason"}``, no "clip")
     come from the sweep runner: "usability_fail" when a target ran out of its
@@ -80,7 +85,7 @@ def _load_latest(path: Path) -> tuple[list[Record], dict[RowKey, tuple[str, str]
     """
     if not path.exists():
         raise SystemExit(f"no results at {path}")
-    latest: dict[tuple[str, str, str, bool], Record] = {}
+    latest: dict[tuple[str, str, str, int, str], Record] = {}
     statuses: dict[RowKey, tuple[str, str]] = {}
     for raw in path.read_text(encoding="utf-8").splitlines():
         raw = raw.strip()
@@ -97,8 +102,11 @@ def _load_latest(path: Path) -> tuple[list[Record], dict[RowKey, tuple[str, str]
             # library, unloadable weights). Its empty hypothesis would score as
             # a flawless 100% WER and drag the label's micro-average with it.
             continue
+        phase = rec.get("phase") or (COLD if rec.get("cold", False) else MEASURED)
+        if phase == WARMUP:
+            continue
         machine, label = row_key(rec)
-        latest[(machine, label, rec["clip"], bool(rec.get("cold", False)))] = rec
+        latest[(machine, label, rec["clip"], int(rec.get("repeat") or 0), phase)] = rec
     return list(latest.values()), statuses
 
 

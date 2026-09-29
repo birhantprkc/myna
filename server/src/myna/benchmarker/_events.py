@@ -5,8 +5,8 @@ stream it was derived from lets a later metric (partial stability, time to
 first correct word) be computed from data already on disk instead of from a
 rerun. ``summarize`` never reads this file; ``load_events`` is its only reader.
 
-One gzipped JSON line per clip, keyed like its result row by (label, clip,
-repeat). Times are seconds on the harness's monotonic clock, shifted so the
+One gzipped JSON line per clip run, keyed like its result row by (label, clip,
+repeat, phase). Times are seconds on the harness's monotonic clock, shifted so the
 first audio chunk was issued at 0; ``audio_start`` is that instant measured
 from session open, which is the origin the row's latencies use. An event that
 beat the first chunk has a negative time.
@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from myna.benchmarker._schedule import COLD, MEASURED
 from myna.benchmarker._summarize import SCHEMA_VERSION, Record
 from myna.core import event_from_wire, event_to_wire
 from myna.testbed import FedChunk, ResultRecord, TimedEvent
@@ -38,6 +39,7 @@ def event_line(
     repeat: int,
     cold: bool,
     machine: str | None,
+    phase: str | None = None,
 ) -> Record:
     """One clip's stream as a JSON-ready line."""
     start = record.feed[0].t if record.feed else 0.0
@@ -47,6 +49,7 @@ def event_line(
         "label": label,
         "clip": clip,
         "repeat": repeat,
+        "phase": phase or (COLD if cold else MEASURED),
         "cold": cold,
         "started_at": record.started_at,
         "audio_start": start,
@@ -83,6 +86,7 @@ class ClipEvents:
     label: str
     clip: str
     repeat: int
+    phase: str
     cold: bool
     started_at: str
     audio_start: float
@@ -108,6 +112,7 @@ def load_events(path: Path) -> list[ClipEvents]:
                     label=raw["label"],
                     clip=raw["clip"],
                     repeat=raw["repeat"],
+                    phase=raw.get("phase") or (COLD if raw["cold"] else MEASURED),
                     cold=raw["cold"],
                     started_at=raw["started_at"],
                     audio_start=raw["audio_start"],
