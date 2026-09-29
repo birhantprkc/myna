@@ -256,6 +256,48 @@ def test_no_latencies_at_all_leaves_the_cells_empty():
     assert (stats["cold_ready"], stats["warm_ready"]) == (None, None)
 
 
+def test_a_starved_realtime_rows_latency_is_kept_out_but_its_accuracy_counts():
+    """A feed that fell behind real time delivered a burst no microphone would,
+    so its finalize latency is not live latency; the transcript is still one."""
+    summary = _summarize(
+        [
+            record(clip="c1", finalize_latency=0.4, pace="realtime", pace_starved=False),
+            record(clip="c2", finalize_latency=9.0, pace="realtime", pace_starved=True),
+        ]
+    )
+    stats = summary[UNKNOWN]
+    assert (stats["median_final"], stats["p95_final"]) == (0.4, 0.4)
+    assert stats["clips"] == 2
+    assert stats["starved"] == 1
+
+
+def test_a_realtime_rows_rtf_is_the_pace_not_a_speed():
+    """Fed on the capture clock, (terminal - ready) / audio cannot drop much
+    below 1, so it would print as ~1x and rank the cell slowest."""
+    summary = _summarize(
+        [
+            record(clip="c1", rtf=1.02, pace="realtime"),
+            record(clip="c2", rtf=1.05, pace="realtime"),
+        ]
+    )
+    assert summary[UNKNOWN]["rtf"] is None
+    assert _speed(summary[UNKNOWN]["rtf"]).strip() == "--"
+
+
+def test_a_max_rows_rtf_still_counts():
+    assert _summarize([record(rtf=0.07, pace="max")])[UNKNOWN]["rtf"] == 0.07
+
+
+def test_rows_from_before_the_pace_axis_are_not_starved():
+    assert _summarize([record()])[UNKNOWN]["starved"] == 0
+
+
+def test_the_table_warns_when_starved_latencies_were_left_out(capsys):
+    summary = _summarize([record(pace="realtime", pace_starved=True)])
+    print_overall(summary)
+    assert "1 starved realtime clip(s)" in capsys.readouterr().out
+
+
 def test_each_record_is_attributed_to_the_machine_that_produced_it():
     """Not "any record that carries provenance speaks for the label": on a
     leaderboard that would file one host's clips under another's row."""

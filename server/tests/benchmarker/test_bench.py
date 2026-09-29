@@ -476,7 +476,8 @@ async def test_a_partly_failing_sweep_still_scores_the_clips_that_worked(tmp_pat
 
 async def test_realtime_pacing_is_opt_in(tmp_path, socket, capsys):
     """The sweep feeds flat out, which is what makes a full matrix affordable;
-    real-time pacing exists for long clips that outrun a keepalive."""
+    real-time pacing is a cell of its own (the pace axis), and keeps a long
+    clip from outrunning a websocket keepalive."""
     out = Collector()
     await run_clips(
         socket=socket,
@@ -661,3 +662,110 @@ async def test_the_event_stream_is_keyed_like_its_row(tmp_path, socket):
     assert [tuple(e[k] for k in key) for e in events.records] == [
         tuple(r[k] for k in key) for r in rows
     ]
+
+
+# ─── pace ────────────────────────────────────────────────────────────────────
+
+
+def paced_line(clip, record, wer, cer, **kwargs):
+    return to_line(
+        clip,
+        record,
+        wer,
+        cer,
+        label="fake/streaming",
+        cold=False,
+        run_started="2026-08-20T00:00:00+00:00",
+        served_models=[],
+        usability_fail=False,
+        clips_scored=1,
+        clips_requested=1,
+        provenance=None,
+        **kwargs,
+    )
+
+
+async def test_a_max_pace_row_says_so_and_has_no_lag_to_judge(tmp_path, socket):
+    clip = make_clip(tmp_path)
+    line = paced_line(clip, *await bench_clip(socket, clip, "fake/streaming", streaming=True))
+    assert (line["pace"], line["pace_lag"], line["pace_starved"]) == ("max", None, False)
+
+
+async def test_a_realtime_row_records_how_far_its_feed_lagged(tmp_path, socket):
+    clip = make_clip(tmp_path)
+    got = await bench_clip(socket, clip, "fake/streaming", streaming=True, realtime=True)
+    line = paced_line(clip, *got, pace="realtime")
+    assert line["pace"] == "realtime"
+    assert 0.0 <= line["pace_lag"] < 0.1
+    assert line["pace_starved"] is False
+
+
+async def test_a_realtime_row_whose_sender_fell_behind_is_flagged_starved(tmp_path, socket):
+    from dataclasses import replace
+
+    from myna.testbed import FedChunk
+
+    clip = make_clip(tmp_path)
+    record, wer, cer = await bench_clip(socket, clip, "fake/streaming", streaming=True)
+    late = (FedChunk(0.1, 0.1), FedChunk(0.2, 0.2), FedChunk(0.45, 0.3), FedChunk(0.46, 0.4))
+    line = paced_line(clip, replace(record, feed=late), wer, cer, pace="realtime")
+    assert line["pace_lag"] == pytest.approx(0.15)
+    assert line["pace_starved"] is True
+
+
+async def test_run_clips_stamps_the_pace_it_fed_at(tmp_path, socket):
+    rows = {}
+    for realtime in (False, True):
+        out = Collector()
+        await run_clips(
+            socket=socket,
+            clips=[make_clip(tmp_path)],
+            label="fake/streaming",
+            cold=False,
+            streaming=True,
+            provenance=None,
+            budget_seconds=None,
+            out_fp=out,
+            realtime=realtime,
+        )
+        rows[realtime] = out.records[0]
+    assert rows[False]["pace"] == "max" and rows[True]["pace"] == "realtime"
+
+
+async def test_a_realtime_run_marks_its_label_so_it_never_shares_a_max_row(tmp_path, socket):
+    """Rows are keyed by label; a realtime and a max run under one --label
+    would otherwise mix their finalize latencies."""
+    labels = []
+    for realtime, label in ((False, "x"), (True, "x"), (True, "x@realtime")):
+        out = Collector()
+        await run_clips(
+            socket=socket,
+            clips=[make_clip(tmp_path)],
+            label=label,
+            cold=False,
+            streaming=True,
+            provenance=None,
+            budget_seconds=None,
+            out_fp=out,
+            realtime=realtime,
+        )
+        labels.append(out.records[0]["label"])
+    assert labels == ["x", "x@realtime", "x@realtime"]
+
+
+async def test_starved_rows_are_counted_on_screen(tmp_path, socket, monkeypatch, capsys):
+    from myna.benchmarker import _bench
+
+    monkeypatch.setattr(_bench, "starved", lambda feed: True)
+    await run_clips(
+        socket=socket,
+        clips=[make_clip(tmp_path)],
+        label="fake/streaming",
+        cold=False,
+        streaming=True,
+        provenance=None,
+        budget_seconds=None,
+        out_fp=Collector(),
+        realtime=True,
+    )
+    assert "STARVED" in capsys.readouterr().out

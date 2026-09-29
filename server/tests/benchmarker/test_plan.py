@@ -782,3 +782,87 @@ def test_every_engine_is_planned_and_the_choice_is_named_as_the_machines(tmp_pat
     assert "myna-whisper/cpu/tiny/batch" in out
     assert "myna-whisper/nvidia-gpu/tiny/batch" in out
     assert "one engine is chosen on the machine" in out
+
+
+# ─── the pace axis ───────────────────────────────────────────────────────────
+
+
+def write_manifest(tmp_path, *durations):
+    """A manifest whose clips last ``durations`` seconds; plan reads no audio."""
+    clips = [
+        {
+            "id": f"clip-{i}",
+            "path": f"audio/clip-{i}.wav",
+            "text": "hello",
+            "language": "en",
+            "category": "quiet",
+            "duration_seconds": seconds,
+            "sample_rate_hz": 16_000,
+            "channels": 1,
+            "source": "test",
+            "license": "CC0-1.0",
+            "sha256": "0" * 64,
+        }
+        for i, seconds in enumerate(durations)
+    ]
+    path = tmp_path / "corpus" / "manifest.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps({"schema_version": 1, "clips": clips}), encoding="utf-8")
+    return path
+
+
+def test_realtime_is_planned_for_streaming_rows_only(tmp_path, snaps, capsys):
+    snaps(streaming=True, engines=(("cpu", ["tiny"], {}),))
+    config = write_config(tmp_path / "bench.yaml", pace=["max", "realtime"])
+    cmd_plan(PlanArgs(config))
+    out = capsys.readouterr().out
+    assert "myna-whisper/cpu/tiny/streaming@realtime" in out
+    assert "batch@realtime" not in out
+    assert "3 row(s)" in out  # batch, streaming, streaming@realtime
+
+
+def test_the_default_pace_plans_no_realtime_rows(tmp_path, snaps, capsys):
+    snaps(streaming=True, engines=(("cpu", ["tiny"], {}),))
+    cmd_plan(PlanArgs(write_config(tmp_path / "bench.yaml")))
+    assert "@realtime" not in capsys.readouterr().out
+
+
+def test_a_realtime_cell_is_priced_at_least_the_corpus_duration(tmp_path, snaps, capsys):
+    snaps(streaming=True, engines=(("cpu", ["tiny"], {}),))
+    write_manifest(tmp_path, 1200.0, 600.0, 1800.0)
+    config = write_config(
+        tmp_path / "bench.yaml",
+        cold_clip="clip-0",  # held out of the warm pass, so 2400 s of audio
+        sweep_budget_seconds=600,
+        repeats=2,
+        pace=["max", "realtime"],
+    )
+    cmd_plan(PlanArgs(config))
+    out = capsys.readouterr().out
+    assert "1 realtime cell(s) take at least 1.3 h" in out  # 2 x 2400 s
+    # 3 cells x 2 x 600 s budget + 1 realtime cell x 2 x 2400 s of audio = 8400 s
+    assert "2.3 h" in out
+
+
+def test_a_realtime_cell_is_priced_from_the_clips_the_config_names(tmp_path, snaps, capsys):
+    snaps(streaming=True, engines=(("cpu", ["tiny"], {}),))
+    write_manifest(tmp_path, 1200.0, 600.0, 1800.0)
+    config = write_config(tmp_path / "bench.yaml", clips=["clip-1", "clip-2"], pace=["realtime"])
+    cmd_plan(PlanArgs(config))
+    assert "take at least 0.7 h on their own: 2400s of audio" in capsys.readouterr().out
+
+
+def test_a_realtime_plan_without_the_corpus_says_it_cannot_price_it(tmp_path, snaps, capsys):
+    snaps(streaming=True, engines=(("cpu", ["tiny"], {}),))
+    cmd_plan(PlanArgs(write_config(tmp_path / "bench.yaml", pace=["realtime"])))
+    assert "corpus duration unknown" in capsys.readouterr().out
+
+
+def test_a_bad_pace_on_any_target_is_refused_before_the_sweep(tmp_path, snaps):
+    snaps()
+    config = write_config(
+        tmp_path / "bench.yaml",
+        targets=[{"snap": "myna-whisper", "files": target_files(), "pace": ["slow"]}],
+    )
+    with pytest.raises(SystemExit, match="myna-whisper: unknown pace"):
+        load_config(config, only=None, out_override=None, budget_override=None)

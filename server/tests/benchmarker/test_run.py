@@ -33,6 +33,7 @@ WHISPER_SNAP = str(_ARTEFACTS / "myna-whisper.snap")
 PARAKEET_SNAP = str(_ARTEFACTS / "myna-parakeet.snap")
 FUNASR_SNAP = str(_ARTEFACTS / "myna-funasr.snap")
 
+from myna.benchmarker._pace import MAX, REALTIME
 from myna.benchmarker._run import (
     BATCH,
     DEFAULT_SWEEP_BUDGET_S,
@@ -435,6 +436,24 @@ def test_a_batch_label_carries_its_own_config_suffix():
     target = target_for()
     target.engine, target.config_suffix = "cpu", "int8"
     assert target.label.endswith("/batch-int8")
+
+
+def test_a_realtime_cell_label_carries_its_pace():
+    target = target_for()
+    target.engine, target.model = "cpu", "tiny"
+    variant = Variant(label="arm3s", modes=(STREAMING,), settings={"stream-arm-seconds": "3"})
+    assert target.cell_label(STREAMING, variant, REALTIME).endswith("/streaming-arm3s@realtime")
+
+
+def test_a_max_pace_label_is_unchanged_so_earlier_results_still_compare():
+    target = target_for()
+    target.engine, target.model = "cpu", "tiny"
+    assert target.cell_label(STREAMING, None, MAX) == "myna-whisper/cpu/tiny/streaming"
+
+
+def test_a_target_paces_at_max_unless_told_otherwise():
+    assert target_for().paces == (MAX,)
+    assert target_for(pace=["max", "realtime"]).paces == (MAX, REALTIME)
 
 
 def test_purge_removes_the_snap(fake_run):
@@ -844,10 +863,11 @@ def test_writer_appends_to_an_existing_file(tmp_path):
 
 
 class FakeClip:
-    """Just enough Clip for the sweep's progress printing."""
+    """Just enough Clip for the sweep's progress printing and pacing budget."""
 
-    def __init__(self, clip_id="clip-a"):
+    def __init__(self, clip_id="clip-a", duration_seconds=1.0):
         self.id = clip_id
+        self.duration_seconds = duration_seconds
 
 
 class FakeTarget:
@@ -856,13 +876,13 @@ class FakeTarget:
         self.socket = Path("/tmp/myna-whisper.sock")
         self.streaming = streaming
         self.pid = pid
-        self.label = "myna-whisper/cpu/tiny/batch"
+        self.label = f"myna-whisper/cpu/tiny/{'streaming' if streaming else 'batch'}"
         self.applied = {}
         self.applied_calls = []
         self._apply_error = apply_error
 
-    def cell_label(self, mode, variant):
-        return self.label
+    def cell_label(self, mode, variant, pace="max"):
+        return self.label if pace == "max" else f"{self.label}@{pace}"
 
     def apply(self, *, mode, variant, togglable):
         if self._apply_error is not None:
@@ -969,6 +989,47 @@ def test_the_schedule_is_recorded_in_provenance(tmp_path, monkeypatch):
     calls = stub_run_clips(monkeypatch, (False, 1))
     sweep(tmp_path, FakeTarget(), schedule=Schedule(repeats=2, warmup_clips=1, seed=3))
     assert calls[0]["provenance"]["schedule"] == {"repeats": 2, "warmup_clips": 1, "seed": 3}
+
+
+def test_a_max_pace_cell_feeds_flat_out(tmp_path, monkeypatch):
+    calls = stub_run_clips(monkeypatch, (False, 1), (False, 1))
+    sweep(tmp_path, FakeTarget(), clips_cold=[FakeClip("clip-cold")])
+    assert [c["realtime"] for c in calls] == [False, False]
+    assert calls[1]["provenance"]["pace"] == MAX
+
+
+def test_a_realtime_cell_paces_its_cold_sample_and_its_warm_sweep(tmp_path, monkeypatch):
+    calls = stub_run_clips(monkeypatch, (False, 1), (False, 1))
+    sweep(
+        tmp_path,
+        FakeTarget(streaming=True),
+        mode=STREAMING,
+        pace=REALTIME,
+        clips_cold=[FakeClip("clip-cold")],
+    )
+    assert [c["realtime"] for c in calls] == [True, True]
+    assert [c["label"] for c in calls] == ["myna-whisper/cpu/tiny/streaming@realtime"] * 2
+    assert calls[1]["provenance"]["pace"] == REALTIME
+
+
+def test_a_realtime_budget_adds_the_audio_it_must_wait_through(tmp_path, monkeypatch):
+    """At real-time pace a pass cannot beat the corpus duration, so the budget
+    for being too slow starts after it."""
+    from myna.benchmarker._schedule import Schedule
+
+    calls = stub_run_clips(monkeypatch, (True, 3))
+    kwargs = sweep(
+        tmp_path,
+        FakeTarget(streaming=True),
+        mode=STREAMING,
+        pace=REALTIME,
+        budget=60.0,
+        clips_warm=[FakeClip("a", 30.0), FakeClip("b", 90.0)],
+        schedule=Schedule(repeats=2),
+    )
+    assert calls[0]["budget_seconds"] == 2 * (60.0 + 120.0)
+    assert calls[0]["provenance"]["sweep_budget_seconds"] == 60.0
+    assert kwargs["unusable"][0][1] == "exceeded 360s budget"
 
 
 def test_a_crashing_target_is_recorded_and_does_not_propagate(tmp_path, monkeypatch, capsys):
@@ -1166,6 +1227,25 @@ def test_every_cell_leaves_a_status_record(tmp_path, corpus, stub_target, monkey
     }
 
 
+def test_the_pace_axis_adds_a_realtime_cell_to_streaming_only(
+    tmp_path, corpus, stub_sweep, stub_target, monkeypatch
+):
+    monkeypatch.setattr(_run.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(stub_target, "supports_streaming", lambda self: True)
+    out = tmp_path / "results.jsonl"
+    config = write_config(
+        tmp_path / "bench.yaml", manifest=str(corpus), out=str(out), pace=["max", "realtime"]
+    )
+
+    cmd_run(RunArgs(config, out=out))
+
+    assert [label for label, *_ in stub_sweep] == [
+        "myna-whisper/cpu/tiny/batch",
+        "myna-whisper/cpu/tiny/streaming",
+        "myna-whisper/cpu/tiny/streaming@realtime",
+    ]
+
+
 def test_a_cell_that_overran_is_stamped_usability_fail_in_the_file(
     tmp_path, corpus, stub_target, monkeypatch
 ):
@@ -1236,7 +1316,7 @@ def stub_sweep(monkeypatch):
     def fake(*, target, out, **kwargs):
         # The cell is applied inside the real _sweep_one, so its name comes from
         # cell_label - the same call the runner makes before trying to apply it.
-        label = target.cell_label(kwargs["mode"], kwargs["variant"])
+        label = target.cell_label(kwargs["mode"], kwargs["variant"], kwargs.get("pace", "max"))
         swept.append((label, kwargs["clips_cold"], kwargs["clips_warm"]))
         out.write(record(label=label))
 

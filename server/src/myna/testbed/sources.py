@@ -8,18 +8,47 @@ client, not here: ``client/myna-audio`` owns it natively (T49-T52).
 from __future__ import annotations
 
 import asyncio
+import time
 import wave
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
 from myna.core import AudioFormat, PcmChunk
 
 
+async def paced(
+    chunks: AsyncIterable[PcmChunk],
+    *,
+    clock: Callable[[], float] | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+) -> AsyncIterator[PcmChunk]:
+    """Hand each chunk over when a microphone would: once its last sample is in.
+
+    Chunk k is due at ``origin + audio_end(k)`` on a monotonic clock, with the
+    origin taken when the first chunk is asked for. Due times are absolute, so
+    the consumer's time on a chunk never accumulates into drift, and a consumer
+    that fell behind gets the overdue chunks at once, as it would from a
+    buffered capture device.
+    """
+    clock = clock or time.monotonic
+    sleep = sleep or asyncio.sleep
+    origin: float | None = None
+    audio_end = 0.0
+    async for chunk in chunks:
+        if origin is None:
+            origin = clock()
+        audio_end += chunk.duration_seconds
+        delay = origin + audio_end - clock()
+        if delay > 0:
+            await sleep(delay)
+        yield chunk
+
+
 class WavFileSource:
     """Streams a PCM WAV file as chunks in its native format.
 
-    ``realtime=True`` paces chunks at capture rate, mimicking live audio
-    (Phase 1 lab runs); ``False`` streams as fast as the consumer accepts
+    ``realtime=True`` paces chunks on the capture clock (see ``paced``),
+    mimicking live audio; ``False`` streams as fast as the consumer accepts
     (batch accuracy runs). Resampling is not done here: candidates declare
     what they accept and adapters convert — the harness stays format-honest.
 
@@ -50,11 +79,11 @@ class WavFileSource:
     def format(self) -> AudioFormat:
         return self._format
 
-    async def chunks(self) -> AsyncIterator[PcmChunk]:
+    def chunks(self) -> AsyncIterator[PcmChunk]:
+        return paced(self._read()) if self._realtime else self._read()
+
+    async def _read(self) -> AsyncIterator[PcmChunk]:
         frames_per_chunk = max(1, round(self._format.sample_rate_hz * self._chunk_seconds))
         with wave.open(str(self._path), "rb") as wav:
             while data := wav.readframes(frames_per_chunk):
-                chunk = PcmChunk(data=data, format=self._format)
-                if self._realtime:
-                    await asyncio.sleep(chunk.duration_seconds)
-                yield chunk
+                yield PcmChunk(data=data, format=self._format)

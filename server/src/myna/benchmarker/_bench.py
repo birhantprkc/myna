@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Protocol
 
 from myna.benchmarker._events import EventsFile, event_line, events_path_for
+from myna.benchmarker._pace import MAX, REALTIME, feed_lag, paced_label, starved
 from myna.benchmarker._schedule import MEASURED, WARMUP, Schedule, plan_clips
 from myna.benchmarker._summarize import SCHEMA_VERSION, Record
 from myna.core import SessionConfig, WsUnixClient
@@ -65,10 +66,9 @@ async def bench_clip(
 ) -> tuple[ResultRecord, ErrorRate, ErrorRate]:
     """Run one clip against the socket; return (record, wer, cer).
 
-    ``realtime`` paces the feed like live dictation. The sweep feeds as fast as
-    the socket accepts, which is what makes a full matrix affordable, but a
-    long clip fed flat out can outrun a backend's websocket keepalive - so the
-    pacing stays available rather than being compiled out.
+    ``realtime`` feeds on the capture clock, like live dictation (see
+    ``_pace``); otherwise the feed is as fast as the socket accepts, which can
+    outrun a backend's websocket keepalive on a long clip.
     """
     source = clip.open_source(realtime=realtime)
     record = await Harness().run(
@@ -104,10 +104,12 @@ def to_line(
     provenance: dict[str, object] | None,
     corpus: dict[str, str] | None = None,
     served_runtime: dict[str, str] | None = None,
+    pace: str = MAX,
 ) -> Record:
     """Serialise a single-clip result to the JSONL record schema."""
     m = record.metrics
     error = session_error(record)
+    lag = feed_lag(record.feed) if pace == REALTIME else None
     line: Record = {
         "schema_version": SCHEMA_VERSION,
         "error": error,
@@ -150,6 +152,11 @@ def to_line(
         "commit_stability": m.commit_stability,
         "committed_segments": m.committed_segments,
         "streaming_strategy": record.candidate.streaming_strategy,
+        # How the audio was fed. A realtime row whose sender fell more than a
+        # chunk behind the capture clock did not measure live latency.
+        "pace": pace,
+        "pace_lag": None if lag is None else round(lag, 4),
+        "pace_starved": pace == REALTIME and starved(record.feed),
         "started_at": record.started_at,
         "run_started": run_started,
         "served_models": served_models,
@@ -191,6 +198,8 @@ async def run_clips(
     passes (see ``_schedule``); a cold sample ignores it. The budget covers
     the measured passes only, and the clock starts at the first of them.
 
+    A ``realtime`` run's label gains ``@realtime`` unless it has it already.
+
     ``events_fp``, when given, receives each clip's timed event stream as it
     lands, keyed by (label, clip, repeat, phase) like its row.
 
@@ -198,6 +207,7 @@ async def run_clips(
     exceeded before all measured clips completed; scored counts measured rows
     only. Raises ``AllClipsFailed`` when no measured clip produced a transcript.
     """
+    label = paced_label(label, REALTIME if realtime else MAX)
     plan = plan_clips(clips, schedule or Schedule(), cold=cold)
     measured = sum(1 for item in plan if item.phase != WARMUP)
     served_models: list[str] = []
@@ -273,6 +283,7 @@ async def run_clips(
             provenance=provenance,
             corpus=corpus,
             served_runtime=served_runtime,
+            pace=REALTIME if realtime else MAX,
         )
         lines.append(line)
         if events_fp is not None:
@@ -357,6 +368,13 @@ async def run_clips(
         median_final = sorted(finals)[len(finals) // 2]
         print(f"median finalize    : {median_final:.3f}s  (end-of-audio -> committed text)")
     print(f"audio streamed     : {tot_audio:.1f}s total")
+    hungry = [ln for ln in lines if ln["pace_starved"]]
+    if hungry:
+        worst = max(ln["pace_lag"] for ln in hungry)
+        print(
+            f"STARVED FEED       : {len(hungry)} clip(s) fell over a chunk behind real time"
+            f" (worst {worst:.3f}s); their latency is not live latency"
+        )
     if overran:
         print(f"USABILITY FAIL     : scored {scored}/{measured} clips within {budget_seconds:.0f}s")
 

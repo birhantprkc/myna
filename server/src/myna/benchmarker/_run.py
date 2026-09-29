@@ -20,6 +20,10 @@ the shape of the trade-off:
 - **engine** (``engines:``): cpu, nvidia-gpu. Omitted, the machine decides and
   the target is swept once. Named, each engine is selected, configured and swept
   in turn - the device is not a setting, it is which engine is active.
+- **pace** (``pace:``): ``max`` feeds audio as fast as the socket accepts;
+  ``realtime`` feeds it on the capture clock, the only pace at which streaming
+  latency is a dictating user's. Batch cells always run at ``max``. See
+  ``_pace``.
 - **config point** (``configs:``): any other shipped knob worth a row -
   whisper's ``compute-type`` (the quantization axis), parakeet's
   ``stream-arm-seconds``. Each entry names the modes and the engines it
@@ -28,7 +32,7 @@ the shape of the trade-off:
   only on CUDA is not requested on CPU. Values must be explicit: ``auto`` defers
   the choice, so the row could not say what it measured.
 
-Labels come out as ``<snap>/<engine>/<model>/<mode>[-<config>]``.
+Labels come out as ``<snap>/<engine>/<model>/<mode>[-<config>][@realtime]``.
 
     sudo myna-bench run --config bench.yaml
     sudo myna-bench run --config bench.yaml --only myna-whisper
@@ -81,6 +85,7 @@ Config format::
     repeats: 1                    # passes per cell, each shuffled (see _schedule)
     warmup_clips: 0               # run first, tagged warmup, never scored
     seed: 0                       # clip-order shuffle seed, recorded per row
+    pace: [max]                   # add realtime for live streaming latency
 
     targets:
       - snap: myna-whisper
@@ -92,6 +97,7 @@ Config format::
         socket: /var/snap/myna-whisper/common/share/provider/myna.sock
         models: [tiny, base]        # optional allowlist
         repeats: 3                  # optional; overrides the global schedule keys
+        pace: [max, realtime]       # optional; overrides the global pace
         engines: [cpu, nvidia-gpu]  # optional; omitted = one auto-selected pass
         configs:
           - label: int8
@@ -122,6 +128,7 @@ from typing import TYPE_CHECKING, Any, Self, TypedDict
 
 import yaml
 
+from myna.benchmarker._pace import MAX, REALTIME, paced_label, paces_for, parse_paces
 from myna.benchmarker._schedule import Schedule, parse_schedule
 from myna.benchmarker._summarize import SCHEMA_VERSION
 
@@ -627,6 +634,7 @@ class SnapTarget:
         root: Path,
         label_suffix: str = "",
         schedule: Schedule | None = None,
+        paces: tuple[str, ...] = (MAX,),
     ):
         self.snap: str = spec["snap"]
         if self.snap not in PURGEABLE:
@@ -636,6 +644,7 @@ class SnapTarget:
             )
         # Repeats, warmup and seed: the config's, with this target's overrides.
         self.schedule: Schedule = parse_schedule(spec, schedule or Schedule(), self.snap)
+        self.paces: tuple[str, ...] = parse_paces(spec, paces, self.snap)
         self.label_suffix = label_suffix
         if not spec.get("files"):
             raise SystemExit(
@@ -712,12 +721,13 @@ class SnapTarget:
 
     # -- identity ---------------------------------------------------------
 
-    def _label_for(self, mode: str, config_suffix: str) -> str:
+    def _label_for(self, mode: str, config_suffix: str, pace: str = MAX) -> str:
         snap = f"{self.snap}+{self.label_suffix}" if self.label_suffix else self.snap
         parts = [snap, self.engine or "unknown-engine"]
         if self.model:
             parts.append(self.model)
-        parts.append(f"{mode}-{config_suffix}" if config_suffix else mode)
+        cell = f"{mode}-{config_suffix}" if config_suffix else mode
+        parts.append(paced_label(cell, pace))
         return "/".join(parts)
 
     @property
@@ -731,14 +741,14 @@ class SnapTarget:
         """
         return self._label_for(STREAMING if self.streaming else BATCH, self.config_suffix)
 
-    def cell_label(self, mode: str, variant: Variant | None) -> str:
+    def cell_label(self, mode: str, variant: Variant | None, pace: str = MAX) -> str:
         """The label a cell will carry, before it has been applied.
 
         Applying a cell can fail - a value the engine refuses takes the daemon
         down - and the failure has to be recorded against the row that caused
         it, which means naming the row before trying it.
         """
-        return self._label_for(mode, variant.label if variant else "")
+        return self._label_for(mode, variant.label if variant else "", pace)
 
     # -- lifecycle --------------------------------------------------------
 
@@ -1162,11 +1172,14 @@ def _sweep_one(
     machine: str = "unknown",
     events: RecordSink | None = None,
     schedule: Schedule | None = None,
+    pace: str = MAX,
 ) -> None:
     """Configure one matrix cell, then cold-sample and warm-sweep it.
 
     ``budget`` is per pass over the clips; the warm sweep gets one per repeat
     of ``schedule``, whose warmup clips run outside it like the cold sample.
+    A ``realtime`` pass cannot finish before its audio has played, so its
+    budget starts after the audio duration.
 
     Applying the cell belongs inside this boundary because it is the step most
     likely to fail: a value the engine refuses takes the daemon down with it,
@@ -1178,16 +1191,18 @@ def _sweep_one(
     """
     from myna.benchmarker._bench import AllClipsFailed, run_clips
 
-    label = target.cell_label(mode, variant)
+    label = target.cell_label(mode, variant, pace)
     sampler = None
     schedule = schedule or Schedule()
-    cell_budget = schedule.budget(budget)
+    realtime = pace == REALTIME
+    audio = sum(c.duration_seconds for c in clips_warm) if realtime else 0.0
+    cell_budget = schedule.budget(budget + audio)
 
     try:
         target.apply(mode=mode, variant=variant, togglable=togglable)
         # The complete assignment this cell served under, so a row records what
         # ran and not just what it was called.
-        provenance = {**provenance, "settings": dict(target.applied)}
+        provenance = {**provenance, "settings": dict(target.applied), "pace": pace}
         if sample_resources and target.pid is not None:
             sampler = ResourceSampler(target.pid)
             sampler.start()
@@ -1200,6 +1215,7 @@ def _sweep_one(
                     label=label,
                     cold=True,
                     streaming=target.streaming,
+                    realtime=realtime,
                     provenance=provenance,
                     corpus=corpus,
                     budget_seconds=None,
@@ -1220,6 +1236,7 @@ def _sweep_one(
                 label=label,
                 cold=False,
                 streaming=target.streaming,
+                realtime=realtime,
                 provenance={
                     **provenance,
                     "sweep_budget_seconds": budget,
@@ -1304,6 +1321,7 @@ class SweepConfig:
     budget: float
     targets: list[dict[str, Any]]
     schedule: Schedule = field(default_factory=Schedule)
+    paces: tuple[str, ...] = (MAX,)
 
 
 def load_config(
@@ -1329,10 +1347,12 @@ def load_config(
     if not targets:
         raise SystemExit("no targets selected")
     schedule = parse_schedule(cfg, Schedule(), config_path.name)
+    paces = parse_paces(cfg, (MAX,), config_path.name)
     for spec in targets:
         # Refused here, before anything installs, rather than when the sweep
         # reaches the target.
         parse_schedule(spec, schedule, str(spec.get("snap", "(unnamed)")))
+        parse_paces(spec, paces, str(spec.get("snap", "(unnamed)")))
     return SweepConfig(
         path=config_path,
         root=root,
@@ -1345,12 +1365,27 @@ def load_config(
         budget=budget_override or cfg.get("sweep_budget_seconds") or DEFAULT_SWEEP_BUDGET_S,
         targets=targets,
         schedule=schedule,
+        paces=paces,
     )
 
 
 # ---------------------------------------------------------------------------
 # `plan`: the matrix, without installing anything
 # ---------------------------------------------------------------------------
+
+
+def warm_audio_seconds(cfg: SweepConfig) -> float | None:
+    """Audio in one warm pass, from manifest durations; None if unreadable."""
+    from myna.testbed.corpus import load_manifest
+
+    try:
+        clips = load_manifest(cfg.manifest)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if cfg.warm_clip_ids:
+        wanted = set(cfg.warm_clip_ids)
+        return sum(c.duration_seconds for c in clips if c.id in wanted)
+    return sum(c.duration_seconds for c in clips if c.id != cfg.cold_clip)
 
 
 def cmd_plan(args: argparse.Namespace) -> None:
@@ -1371,7 +1406,12 @@ def cmd_plan(args: argparse.Namespace) -> None:
         print(f"cold clip: {cfg.cold_clip}")
     print()
 
+    # A realtime pass lasts at least as long as the audio it plays, so it is
+    # priced from the manifest's durations when the corpus is there to read.
+    audio = warm_audio_seconds(cfg)
     total = 0
+    realtime_seconds = 0.0
+    realtime_cells = 0
     # Exactly one engine per target actually runs, so the wall-clock estimate
     # counts each target's largest engine rather than the sum over all of them.
     # A machine with an NVIDIA card would otherwise be quoted double the sweep
@@ -1391,7 +1431,7 @@ def cmd_plan(args: argparse.Namespace) -> None:
     for spec in cfg.targets:
         snap = spec.get("snap", "(unnamed)")
         try:
-            target = SnapTarget(spec, cfg.root, args.label_suffix, cfg.schedule)
+            target = SnapTarget(spec, cfg.root, args.label_suffix, cfg.schedule, cfg.paces)
             target.check_machine(machine)
         except TargetUnavailable as exc:
             # Collected, not fatal: a plan that stops at the first unpacked snap
@@ -1408,6 +1448,8 @@ def cmd_plan(args: argparse.Namespace) -> None:
                 f"  {'':20} {schedule.repeats} repeat(s), {schedule.warmup_clips} warmup "
                 f"clip(s), seed {schedule.seed}"
             )
+        if target.paces != (MAX,):
+            print(f"  {'':20} pace {list(target.paces)} (streaming only; batch stays max)")
         engines = target.static_engines()
         if not engines:
             print(f"  {'':20} axes unknown (engines unreadable; read at install time)")
@@ -1427,11 +1469,15 @@ def cmd_plan(args: argparse.Namespace) -> None:
             if target.only_models:
                 models = [m for m in models if m in set(target.only_models)]
             rows_by_engine[engine] = [
-                f"{snap}/{engine}/{model}/"
-                + (mode if variant is None else f"{mode}-{variant.label}")
+                paced_label(
+                    f"{snap}/{engine}/{model}/"
+                    + (mode if variant is None else f"{mode}-{variant.label}"),
+                    pace,
+                )
                 for model in models
                 for mode in modes
                 for variant in variants_for(variants, mode, engine)
+                for pace in paces_for(mode, target.paces)
             ]
             total += len(rows_by_engine[engine])
             mark = (
@@ -1448,12 +1494,13 @@ def cmd_plan(args: argparse.Namespace) -> None:
         # Named engines all run; an unnamed target runs exactly one, so quote
         # its largest rather than the sum - a box with a GPU in it would
         # otherwise be told to plan a day around double the sweep it will start.
-        cells_here = (
-            sum(len(r) for r in run_here)
-            if target.only_engines
-            else max((len(r) for r in run_here), default=0)
-        )
+        if not target.only_engines:
+            run_here = [max(run_here, key=len)] if run_here else []
+        cells_here = sum(len(r) for r in run_here)
+        realtime_here = sum(1 for rows in run_here for row in rows if row.endswith(f"@{REALTIME}"))
         will_run += cells_here
+        realtime_cells += realtime_here
+        realtime_seconds += realtime_here * schedule.budget(audio or 0.0)
         will_run_seconds += cells_here * schedule.budget(cfg.budget)
         if target.only_engines:
             print(f"  {'':20} engines: {target.only_engines} - each is measured in turn")
@@ -1492,9 +1539,19 @@ def cmd_plan(args: argparse.Namespace) -> None:
 
     print(f"\n{total} row(s) across all engines.")
     print(f"at most {will_run} will run here.")
+    if realtime_cells and audio is None:
+        print(
+            f"{realtime_cells} realtime cell(s) take at least the corpus duration per repeat; "
+            f"corpus duration unknown ({cfg.manifest} not readable), so not priced below"
+        )
+    elif realtime_cells:
+        print(
+            f"{realtime_cells} realtime cell(s) take at least {realtime_seconds / 3600:.1f} h "
+            f"on their own: {audio:.0f}s of audio per pass, played in real time"
+        )
     print(
         f"upper bound if every one of those spends its full {cfg.budget:.0f}s budget "
-        f"on every repeat: {will_run_seconds / 3600:.1f} h"
+        f"on every repeat: {(will_run_seconds + realtime_seconds) / 3600:.1f} h"
     )
     if unavailable:
         print("\nthese targets will be skipped:")
@@ -1605,7 +1662,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         for spec in cfg.targets:
             snap = spec.get("snap", "(unnamed)")
             try:
-                target = SnapTarget(spec, cfg.root, args.label_suffix, cfg.schedule)
+                target = SnapTarget(spec, cfg.root, args.label_suffix, cfg.schedule, cfg.paces)
                 target.check_machine(machine)
             except TargetUnavailable as exc:
                 # Not packed, or nothing it ships can run here. Neither is a
@@ -1651,8 +1708,9 @@ def cmd_run(args: argparse.Namespace) -> None:
                     togglable = target.supports_streaming()
                     cells = target.cells(list(MODES) if togglable else [BATCH])
                     described = [
-                        mode if variant is None else f"{mode}-{variant.label}"
+                        target.cell_label(mode, variant, pace).rpartition("/")[2]
                         for mode, variant in cells
+                        for pace in paces_for(mode, target.paces)
                     ]
                     print(
                         f"[{target.snap}] engine={target.engine} "
@@ -1666,11 +1724,14 @@ def cmd_run(args: argparse.Namespace) -> None:
                         # us between snaps.
                         if model:
                             target.use_model(model)
-                        for mode, variant in cells:
+                        for mode, variant, pace in (
+                            (m, v, p) for m, v in cells for p in paces_for(m, target.paces)
+                        ):
                             _sweep_one(
                                 target=target,
                                 mode=mode,
                                 variant=variant,
+                                pace=pace,
                                 togglable=togglable,
                                 clips_cold=clips_cold,
                                 clips_warm=clips_warm,

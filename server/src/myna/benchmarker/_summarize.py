@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 from typing import Any, TypedDict
 
+from myna.benchmarker._pace import REALTIME
 from myna.benchmarker._schedule import COLD, MEASURED, WARMUP
 
 Record = dict[str, Any]
@@ -51,6 +52,7 @@ class SummaryRow(TypedDict):
     audio: float
     peak_rss_mb: float | None
     peak_vram_mb: float | None
+    starved: int
 
 
 def machine_of(record: Record) -> str:
@@ -191,11 +193,19 @@ def _summarize(records: list[Record]) -> dict[RowKey, SummaryRow]:
         machine, label = key
         warm = [r for r in recs if not r.get("cold", False)]
         cold = [r for r in recs if r.get("cold", False)]
-        finals = [r["finalize_latency"] for r in warm if r.get("finalize_latency") is not None]
+        # A realtime feed that fell behind measured no live latency; its
+        # transcript still scores.
+        starved = [r for r in warm if r.get("pace_starved")]
+        finals = [
+            r["finalize_latency"]
+            for r in warm
+            if r.get("finalize_latency") is not None and not r.get("pace_starved")
+        ]
         # Pure model-load wait (session open -> ready), independent of decode.
         cold_readys = [r["time_to_ready"] for r in cold if r.get("time_to_ready") is not None]
         warm_readys = [r["time_to_ready"] for r in warm if r.get("time_to_ready") is not None]
-        rtfs = [r["rtf"] for r in warm if r.get("rtf") is not None]
+        # A realtime feed's RTF is set by the pace (about 1), not throughput.
+        rtfs = [r["rtf"] for r in warm if r.get("rtf") is not None and r.get("pace") != REALTIME]
         wer_edits = sum(r["wer_edits"] for r in warm)
         ref_words = sum(r["ref_words"] for r in warm)
         cer_edits = sum(r["cer_edits"] for r in warm)
@@ -219,6 +229,7 @@ def _summarize(records: list[Record]) -> dict[RowKey, SummaryRow]:
             "audio": sum(r["audio_seconds"] for r in warm),
             "peak_rss_mb": None,
             "peak_vram_mb": None,
+            "starved": len(starved),
         }
     return summary
 
@@ -363,6 +374,12 @@ def _print_overall(
     )
     if show_res:
         print("RSS/VRAM = peak memory during the run.")
+    starved = sum(s["starved"] for s in summary.values())
+    if starved:
+        print(
+            f"{starved} starved realtime clip(s): the feed fell over a chunk behind real time,"
+            " so their finalize latency is left out of med/p95 final."
+        )
 
 
 def _print_by_category(

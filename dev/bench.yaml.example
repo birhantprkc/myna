@@ -36,6 +36,14 @@ sweep_budget_seconds: 600
 # warmup_clips: 3
 # seed: 0
 
+# Pace: how fast audio is fed. `max` feeds as fast as the backend accepts,
+# which keeps a run short and is right for accuracy and speed. `realtime` plays
+# each clip at the speed it was spoken, the only way streaming latency is what
+# a dictating user sees; it applies to streaming cells only, and each realtime
+# cell takes at least the corpus duration per repeat (`plan` says how long).
+# Publication runs use both. A target may override it.
+# pace: [max, realtime]
+
 # One entry per snap to benchmark. `files:` lists the .snap and .comp files you
 # downloaded; the snap and its components are installed and removed together.
 # Entries are globs, so `./snaps/myna-whisper_*.snap` survives a version bump.
