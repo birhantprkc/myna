@@ -3,8 +3,6 @@ use std::sync::Once;
 use gtk::gio;
 use gtk4 as gtk;
 
-mod apply_dialog;
-mod backend_apply_controls;
 mod backend_page;
 mod balanced_label;
 mod diagnostics_page;
@@ -19,8 +17,6 @@ mod operation_error_dialog;
 mod shortcut_dialog;
 mod status_page;
 
-pub use apply_dialog::ApplyDialog;
-pub use backend_apply_controls::BackendApplyControls;
 pub use backend_page::BackendPage;
 pub use balanced_label::BalancedLabel;
 pub use diagnostics_page::DiagnosticsPage;

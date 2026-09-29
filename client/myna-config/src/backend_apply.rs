@@ -1,4 +1,3 @@
-use std::fmt::Write as _;
 use std::time::Duration;
 
 use crate::backend_controller::BackendPage;
@@ -54,15 +53,6 @@ impl RestartImpact {
     pub fn requires_readiness(self) -> bool {
         matches!(self, Self::Required | Self::Mixed | Self::Unknown)
     }
-
-    pub fn summary(self) -> String {
-        match self {
-            Self::None => gettextrs::gettext("No restart needed."),
-            Self::Required => gettextrs::gettext("The model restarts to apply these changes."),
-            Self::Mixed => gettextrs::gettext("Some of these changes restart the model."),
-            Self::Unknown => gettextrs::gettext("The model may restart."),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,7 +60,6 @@ pub struct ApplyPreview {
     backend: BackendIdentity,
     changes: Vec<StagedChange>,
     operations: Vec<CommandRequest>,
-    confirmation_text: String,
     restart_impact: RestartImpact,
 }
 
@@ -147,13 +136,10 @@ impl ApplyPreview {
                 vec!["restart".to_owned(), backend.snap_name().to_owned()],
             ));
         }
-        let confirmation_text = confirmation_text(&changes, restart_impact);
-
         Ok(Self {
             backend,
             changes,
             operations,
-            confirmation_text,
             restart_impact,
         })
     }
@@ -168,10 +154,6 @@ impl ApplyPreview {
 
     pub fn operations(&self) -> &[CommandRequest] {
         &self.operations
-    }
-
-    pub fn confirmation_text(&self) -> &str {
-        &self.confirmation_text
     }
 
     pub fn restart_impact(&self) -> RestartImpact {
@@ -233,7 +215,6 @@ impl PrivilegedFailure {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ApplyFailure {
-    CancelledConfirmation,
     CancelledExecution,
     VerificationCancelled {
         commands: Vec<CommandResult>,
@@ -285,23 +266,18 @@ pub fn prepare_change(
     key: &str,
     value: ConfigValue,
 ) -> Result<ApplyPreview, PrepareApplyError> {
-    let Some(row) = page
-        .rows()
-        .iter()
-        .find(|row| row.presentation().key() == key)
-    else {
+    let Some(row) = page.rows().iter().find(|row| row.key() == key) else {
         return Err(PrepareApplyError::NoChanges);
     };
-    let presentation = row.presentation();
-    if presentation.value() == &value {
+    if row.value() == &value {
         return Err(PrepareApplyError::NoChanges);
     }
-    let metadata = presentation.metadata();
+    let metadata = row.metadata();
     let invalid = |message: String| {
         PrepareApplyError::Invalid(vec![ValidationIssue::new(metadata.title(), message)])
     };
     metadata.validation().validate(&value).map_err(invalid)?;
-    let change = StagedChange::new(key, presentation.value().clone(), value)
+    let change = StagedChange::new(key, row.value().clone(), value)
         .map_err(|error| invalid(error.message().to_owned()))?;
     let identity = page
         .snapshot()
@@ -316,15 +292,10 @@ pub fn prepare_change(
 
 pub async fn execute_backend_apply(
     preview: &ApplyPreview,
-    confirmed: bool,
     configurator: &dyn SystemConfigurator,
     repository: &dyn BackendRepository,
     cancellation: CancellationToken,
 ) -> Result<ApplySuccess, ApplyFailure> {
-    if !confirmed {
-        return Err(ApplyFailure::CancelledConfirmation);
-    }
-
     let commands = match configurator
         .apply_backend_config(preview, cancellation.clone())
         .await
@@ -574,31 +545,6 @@ fn restart_impact_from_behaviors(behaviors: &[RestartBehavior]) -> RestartImpact
             (true, true) => RestartImpact::Mixed,
             (false, false) => RestartImpact::Unknown,
         }
-    }
-}
-
-fn confirmation_text(changes: &[StagedChange], restart_impact: RestartImpact) -> String {
-    let mut text = String::new();
-    for change in changes {
-        let _ = writeln!(
-            text,
-            "{}: {} → {}",
-            change.key(),
-            display_value(change.original()),
-            display_value(change.proposed())
-        );
-    }
-    let _ = write!(text, "\n{}", restart_impact.summary());
-    text
-}
-
-fn display_value(value: &ConfigValue) -> String {
-    match value {
-        ConfigValue::Null => "null".to_owned(),
-        ConfigValue::Boolean(value) => value.to_string(),
-        ConfigValue::Integer(value) => value.to_string(),
-        ConfigValue::Number(value) => value.to_string(),
-        ConfigValue::Text(value) => value.clone(),
     }
 }
 
@@ -989,10 +935,6 @@ mod tests {
             preview.operations()[1].arguments(),
             &["restart", "myna-whisper"]
         );
-        let confirmation = preview.confirmation_text();
-        assert!(confirmation.contains("alpha: old →  spaced ; $(rm -rf /) "));
-        assert!(!confirmation.contains("myna-whisper.whisper"));
-        assert!(confirmation.ends_with(RestartImpact::Mixed.summary().as_str()));
     }
 
     #[test]
@@ -1269,36 +1211,6 @@ mod tests {
     }
 
     #[test]
-    fn confirmation_cancellation_skips_privileged_execution() {
-        let preview = ApplyPreview::new(
-            backend(),
-            vec![StagedChange::new(
-                "verbose",
-                ConfigValue::Boolean(false),
-                ConfigValue::Boolean(true),
-            )
-            .unwrap()],
-            RestartImpact::Required,
-        )
-        .unwrap();
-        let configurator = FakeConfigurator::scripted([]);
-        let repository = FakeRepository {
-            snapshots: Rc::new(RefCell::new(VecDeque::new())),
-        };
-
-        let result = block_on(execute_backend_apply(
-            &preview,
-            false,
-            &configurator,
-            &repository,
-            CancellationToken::new(),
-        ));
-
-        assert!(matches!(result, Err(ApplyFailure::CancelledConfirmation)));
-        assert_eq!(configurator.call_count(), 0);
-    }
-
-    #[test]
     fn authorization_denial_is_distinct() {
         let preview = ApplyPreview::new(
             backend(),
@@ -1329,7 +1241,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1373,7 +1284,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1403,7 +1313,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1433,7 +1342,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1470,7 +1378,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             cancellation,
@@ -1514,7 +1421,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1563,7 +1469,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1600,7 +1505,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1635,7 +1539,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1673,7 +1576,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1700,7 +1602,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1728,7 +1629,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),
@@ -1792,7 +1692,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &adapter,
             &repository,
             CancellationToken::new(),
@@ -1846,7 +1745,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &adapter,
             &repository,
             CancellationToken::new(),
@@ -1915,7 +1813,6 @@ mod tests {
 
         let result = block_on(execute_backend_apply(
             &preview,
-            true,
             &configurator,
             &repository,
             CancellationToken::new(),

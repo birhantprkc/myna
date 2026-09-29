@@ -975,8 +975,6 @@ fn template_probe() -> glib::ExitCode {
     let application = new_application(&probe_app_id());
     let _ = application.register(None::<&gio::Cancellable>);
     for resource in [
-        "apply-dialog.ui",
-        "backend-apply-controls.ui",
         "backend-page.ui",
         "diagnostics-page.ui",
         "install-models-dialog.ui",
@@ -1006,16 +1004,6 @@ fn template_probe() -> glib::ExitCode {
         window.diagnostics_nav(),
     );
     println!("MainWindow");
-    let _apply = ui::ApplyDialog::new("preview");
-    println!("ApplyDialog");
-    let controls = ui::BackendApplyControls::new();
-    let _ = (
-        controls.progress_spinner(),
-        controls.button_box(),
-        controls.revert_button(),
-        controls.apply_button(),
-    );
-    println!("BackendApplyControls");
     let myna = ui::MynaPage::new();
     let _ = (
         myna.preferences_page(),

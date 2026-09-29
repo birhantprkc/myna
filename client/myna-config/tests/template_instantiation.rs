@@ -22,8 +22,6 @@ fn every_top_level_template_instantiates_headlessly_when_enabled() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for name in [
         "MainWindow",
-        "ApplyDialog",
-        "BackendApplyControls",
         "MynaPage",
         "BackendPage",
         "DiagnosticsPage",

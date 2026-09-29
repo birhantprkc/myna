@@ -25,7 +25,7 @@ use crate::backend_apply::{
     PrepareApplyError, ValidationIssue,
 };
 use crate::backend_controller::{
-    BackendController, BackendPage, BackendRow, ConnectionKind, ControllerEvent, DiscoveryRequest,
+    BackendController, BackendPage, ConnectionKind, ControllerEvent, DiscoveryRequest,
 };
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::diagnostics::{
@@ -42,7 +42,7 @@ use crate::model_family::{
 use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::performance::PerformanceFacts;
 use crate::ports::{BackendRepository, SystemConfigurator};
-use crate::presentation::{ControlType, Sensitivity};
+use crate::presentation::{ControlType, PresentationRow, Sensitivity};
 use crate::snap_changes::ApplyProgress;
 use crate::ui;
 
@@ -1201,7 +1201,6 @@ impl BackendUi {
         glib::spawn_future_local(async move {
             let result = execute_backend_apply(
                 &preview,
-                true,
                 configurator.as_ref(),
                 repository.as_ref(),
                 cancellation,
@@ -1282,10 +1281,10 @@ impl BackendUi {
         let setting = page
             .rows()
             .iter()
-            .find(|row| row.presentation().key() == change.key)
+            .find(|row| row.key() == change.key)
             .map_or_else(
                 || change.key.clone(),
-                |row| row.presentation().metadata().title().to_owned(),
+                |row| row.metadata().title().to_owned(),
             );
         let (snapshot, notice) = apply_report(result);
         match snapshot {
@@ -1348,7 +1347,6 @@ impl BackendUi {
                 self.rebuild_backend_page(identity.snap_name());
                 self.rebuild_diagnostics_page();
             }
-            ControllerEvent::BackendDirtyChanged(_) => {}
             ControllerEvent::DiscoveryFailed(error) => {
                 self.rebuild_diagnostics_page();
                 self.overlay.add_toast(adw::Toast::new(&format!(
@@ -1854,7 +1852,7 @@ fn apply_report(
 ) -> (Option<crate::domain::BackendSnapshot>, Option<ApplyNotice>) {
     match result {
         Ok(success) => (Some(success.snapshot().clone()), None),
-        Err(ApplyFailure::CancelledConfirmation | ApplyFailure::CancelledExecution) => (None, None),
+        Err(ApplyFailure::CancelledExecution) => (None, None),
         Err(ApplyFailure::ReadBackMismatch {
             snapshot,
             mismatches,
@@ -2361,10 +2359,10 @@ fn add_configuration_groups(
     let mut groups: BTreeMap<crate::presentation::PresentationGroup, adw::PreferencesGroup> =
         BTreeMap::new();
     for row in page.rows() {
-        if row.presentation().metadata().diagnostics_only() {
+        if row.metadata().diagnostics_only() {
             continue;
         }
-        let key = row.presentation().metadata().group();
+        let key = row.metadata().group();
         let group = groups.entry(key).or_insert_with(|| {
             adw::PreferencesGroup::builder()
                 .title(group_title(key))
@@ -2405,21 +2403,21 @@ fn group_description(group: crate::presentation::PresentationGroup) -> String {
 }
 
 fn build_row_widget(
-    row: &BackendRow,
+    row: &PresentationRow,
     ui: &Rc<BackendUi>,
     page: &BackendPage,
     applying: Option<&ApplyingView>,
 ) -> gtk::Widget {
     let snap = page.identity().snap_name().to_owned();
-    let key = row.presentation().key().to_owned();
-    let metadata = row.presentation().metadata();
+    let key = row.key().to_owned();
+    let metadata = row.metadata();
     let title = metadata.title();
     let description = metadata.explanation();
     let editable = applying.is_none();
     // The row being changed shows the value it is changing to and what the
     // change is doing.
     let changing = applying.filter(|applying| applying.key == key);
-    let value = changing.map_or(row.presentation().value(), |changing| &changing.value);
+    let value = changing.map_or(row.value(), |changing| &changing.value);
     let progress = changing.map(|changing| changing.progress.as_str());
     if metadata.diagnostics_only() {
         let value = if metadata.sensitivity() == Sensitivity::Sensitive {
@@ -2453,7 +2451,7 @@ fn build_row_widget(
                 .subtitle(description)
                 .active(matches!(value, ConfigValue::Boolean(true)))
                 .build();
-            switch.set_widget_name(&setting_widget_name(row.presentation().key()));
+            switch.set_widget_name(&setting_widget_name(row.key()));
             switch
                 .upcast_ref::<gtk::Widget>()
                 .update_property(&[gtk::accessible::Property::Description(description)]);
@@ -2463,7 +2461,7 @@ fn build_row_widget(
             switch.upcast()
         }
         ControlType::Choice => {
-            let choices = row.presentation().choices();
+            let choices = row.choices();
             let model =
                 gtk::StringList::new(&choices.iter().map(String::as_str).collect::<Vec<_>>());
             let combo = adw::ComboRow::builder()
@@ -2471,7 +2469,7 @@ fn build_row_widget(
                 .subtitle(description)
                 .model(&model)
                 .build();
-            combo.set_widget_name(&setting_widget_name(row.presentation().key()));
+            combo.set_widget_name(&setting_widget_name(row.key()));
             combo
                 .upcast_ref::<gtk::Widget>()
                 .update_property(&[gtk::accessible::Property::Description(description)]);
@@ -2509,7 +2507,7 @@ fn build_row_widget(
                 .title(title)
                 .subtitle(escape_markup(progress.unwrap_or_default()))
                 .build();
-            action.set_widget_name(&setting_widget_name(row.presentation().key()));
+            action.set_widget_name(&setting_widget_name(row.key()));
             action.add_suffix(
                 &gtk::Label::builder()
                     .label(config_value_display(value))
@@ -2525,7 +2523,7 @@ fn build_row_widget(
                 .text(config_value_display(value))
                 .show_apply_button(true)
                 .build();
-            entry.set_widget_name(&setting_widget_name(row.presentation().key()));
+            entry.set_widget_name(&setting_widget_name(row.key()));
             entry.set_tooltip_text(Some(description));
             entry
                 .upcast_ref::<gtk::Widget>()

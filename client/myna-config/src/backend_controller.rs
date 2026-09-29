@@ -18,8 +18,7 @@ use std::time::{Duration, Instant};
 
 use crate::command::CancellationToken;
 use crate::domain::{
-    ActiveBackendState, BackendIdentity, BackendSnapshot, BackendSurfaceError, ConfigValue,
-    ConnectionSnapshot,
+    ActiveBackendState, BackendIdentity, BackendSnapshot, BackendSurfaceError, ConnectionSnapshot,
 };
 use crate::ports::BackendRepository;
 use crate::presentation::{present_configuration, PresentationRow};
@@ -37,29 +36,6 @@ pub enum ConnectionKind {
     Contested,
 }
 
-/// A single presentation row on a backend page, combined with any staged
-/// dirty edit the user has made locally.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BackendRow {
-    presentation: PresentationRow,
-    effective_value: ConfigValue,
-    dirty: bool,
-}
-
-impl BackendRow {
-    pub fn presentation(&self) -> &PresentationRow {
-        &self.presentation
-    }
-
-    pub fn effective_value(&self) -> &ConfigValue {
-        &self.effective_value
-    }
-
-    pub fn dirty(&self) -> bool {
-        self.dirty
-    }
-}
-
 /// Public, read-only view of a single backend page.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackendPage {
@@ -68,9 +44,8 @@ pub struct BackendPage {
     loading: bool,
     partial: bool,
     snapshot: Option<BackendSnapshot>,
-    rows: Vec<BackendRow>,
+    rows: Vec<PresentationRow>,
     errors: Vec<BackendSurfaceError>,
-    dirty_keys: Vec<String>,
 }
 
 impl BackendPage {
@@ -96,16 +71,12 @@ impl BackendPage {
         self.snapshot.as_ref()
     }
 
-    pub fn rows(&self) -> &[BackendRow] {
+    pub fn rows(&self) -> &[PresentationRow] {
         &self.rows
     }
 
     pub fn errors(&self) -> &[BackendSurfaceError] {
         &self.errors
-    }
-
-    pub fn dirty_keys(&self) -> &[String] {
-        &self.dirty_keys
     }
 
     /// Concise summary of a backend's connection, model and refresh state.
@@ -148,10 +119,8 @@ pub enum ControllerEvent {
     DiscoveryChanged,
     /// Discovery failed and the failure should be reported to the user.
     DiscoveryFailed(BackendSurfaceError),
-    /// A backend page's snapshot or dirty state changed.
+    /// A backend page's snapshot changed.
     BackendChanged(BackendIdentity),
-    /// A locally staged value changed without altering the snapshot structure.
-    BackendDirtyChanged(BackendIdentity),
 }
 
 /// Least time from the start of any discovery to a rediscovery on focus, so
@@ -215,7 +184,6 @@ struct PageEntry {
     identity: BackendIdentity,
     connection: ConnectionKind,
     snapshot: Option<BackendSnapshot>,
-    dirty: BTreeMap<String, ConfigValue>,
     snapshot_generation: u64,
     latest_completed_snapshot: u64,
     inflight_token: Option<CancellationToken>,
@@ -386,56 +354,9 @@ impl BackendController {
             entry.loading = false;
             entry.inflight_token = None;
             entry.snapshot = Some(snapshot);
-            prune_stale_dirty_edits(entry);
             events.push(ControllerEvent::BackendChanged(entry.identity.clone()));
         }
         self.emit(events);
-    }
-
-    pub fn stage_edit(&self, snap: &str, key: &str, value: ConfigValue) -> bool {
-        let mut events = Vec::new();
-        let changed = {
-            let mut inner = self.inner.borrow_mut();
-            let Some(entry) = inner.pages.get_mut(snap) else {
-                return false;
-            };
-            let original = original_value(entry, key);
-            if original.as_ref() == Some(&value) {
-                if entry.dirty.remove(key).is_some() {
-                    events.push(ControllerEvent::BackendDirtyChanged(entry.identity.clone()));
-                    true
-                } else {
-                    false
-                }
-            } else if entry.dirty.get(key) == Some(&value) {
-                false
-            } else {
-                entry.dirty.insert(key.to_owned(), value);
-                events.push(ControllerEvent::BackendDirtyChanged(entry.identity.clone()));
-                true
-            }
-        };
-        self.emit(events);
-        changed
-    }
-
-    pub fn revert_all_edits(&self, snap: &str) -> bool {
-        let mut events = Vec::new();
-        let changed = {
-            let mut inner = self.inner.borrow_mut();
-            let Some(entry) = inner.pages.get_mut(snap) else {
-                return false;
-            };
-            if entry.dirty.is_empty() {
-                false
-            } else {
-                entry.dirty.clear();
-                events.push(ControllerEvent::BackendDirtyChanged(entry.identity.clone()));
-                true
-            }
-        };
-        self.emit(events);
-        changed
     }
 
     pub fn apply_readback(&self, snap: &str, snapshot: BackendSnapshot) {
@@ -450,7 +371,6 @@ impl BackendController {
             }
             entry.loading = false;
             entry.snapshot = Some(snapshot);
-            prune_stale_dirty_edits(entry);
             events.push(ControllerEvent::BackendChanged(entry.identity.clone()));
         }
         self.emit(events);
@@ -566,7 +486,6 @@ fn apply_discovery(
                     identity: identity.clone(),
                     connection: ConnectionKind::Disconnected,
                     snapshot: None,
-                    dirty: BTreeMap::new(),
                     snapshot_generation: 0,
                     latest_completed_snapshot: 0,
                     inflight_token: None,
@@ -621,35 +540,14 @@ fn apply_discovery(
     }
 }
 
-fn original_value(entry: &PageEntry, key: &str) -> Option<ConfigValue> {
-    let snapshot = entry.snapshot.as_ref()?;
-    snapshot.value(key)
-}
-
-fn prune_stale_dirty_edits(entry: &mut PageEntry) {
-    if entry.dirty.is_empty() {
-        return;
-    }
-    let Some(snapshot) = entry.snapshot.as_ref() else {
-        return;
-    };
-    entry
-        .dirty
-        .retain(|key, value| snapshot.value(key).is_none_or(|current| current != *value));
-}
-
 fn build_page(entry: &PageEntry) -> BackendPage {
     let (rows, errors, snapshot) = match &entry.snapshot {
         Some(snapshot) => {
-            let presented = present_configuration(
+            let rows = present_configuration(
                 snapshot.configuration(),
                 snapshot.models(),
                 snapshot.engines(),
             );
-            let rows = presented
-                .into_iter()
-                .map(|presentation| build_row(&entry.dirty, presentation))
-                .collect();
             let errors = snapshot.errors().values().cloned().collect();
             (rows, errors, Some(snapshot.clone()))
         }
@@ -658,7 +556,6 @@ fn build_page(entry: &PageEntry) -> BackendPage {
     let partial = snapshot
         .as_ref()
         .is_some_and(|snapshot| !snapshot.errors().is_empty());
-    let dirty_keys = entry.dirty.keys().cloned().collect();
     BackendPage {
         identity: entry.identity.clone(),
         connection: entry.connection,
@@ -667,19 +564,6 @@ fn build_page(entry: &PageEntry) -> BackendPage {
         snapshot,
         rows,
         errors,
-        dirty_keys,
-    }
-}
-
-fn build_row(dirty: &BTreeMap<String, ConfigValue>, presentation: PresentationRow) -> BackendRow {
-    let dirty_value = dirty.get(presentation.key()).cloned();
-    let effective_value = dirty_value
-        .clone()
-        .unwrap_or_else(|| presentation.value().clone());
-    BackendRow {
-        presentation,
-        effective_value,
-        dirty: dirty_value.is_some(),
     }
 }
 
@@ -688,7 +572,7 @@ mod tests {
     use super::*;
     use crate::domain::{
         parse_connections, parse_engine_options, parse_model_options, parse_modelctl_config,
-        BackendSurface,
+        BackendSurface, ConfigValue,
     };
 
     fn parakeet() -> BackendIdentity {
@@ -854,83 +738,10 @@ mod tests {
         assert!(page.partial(), "partial snapshots must be flagged");
         assert!(!page.errors().is_empty(), "surface errors surfaced");
         assert!(
-            page.rows()
-                .iter()
-                .any(|row| row.presentation().key() == "verbose"),
+            page.rows().iter().any(|row| row.key() == "verbose"),
             "known data still shown"
         );
         assert!(!page.loading());
-    }
-
-    #[test]
-    fn refresh_preserves_dirty_edits_over_new_snapshot() {
-        let controller = BackendController::detached();
-        let request = controller.begin_discovery();
-        controller.complete_discovery(request, Ok(discovery_connected_parakeet()));
-        let snapshot_request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(snapshot_request, snap_get_verbose_false());
-
-        assert!(controller.stage_edit("myna-parakeet", "verbose", ConfigValue::Boolean(true),));
-
-        // Simulate a background refresh replacing the snapshot.
-        let snapshot_request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(snapshot_request, snap_get_verbose_false());
-
-        let page = controller.page("myna-parakeet").expect("page exists");
-        let row = page
-            .rows()
-            .iter()
-            .find(|row| row.presentation().key() == "verbose")
-            .expect("verbose row");
-        assert!(row.dirty(), "dirty flag survives refresh");
-        assert_eq!(row.effective_value(), &ConfigValue::Boolean(true));
-        assert_eq!(page.dirty_keys(), &["verbose".to_owned()]);
-    }
-
-    #[test]
-    fn restaging_the_same_edit_is_silent() {
-        let controller = BackendController::detached();
-        let request = controller.begin_discovery();
-        controller.complete_discovery(request, Ok(discovery_connected_parakeet()));
-        let snapshot_request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(snapshot_request, snap_get_verbose_false());
-        assert!(controller.stage_edit("myna-parakeet", "verbose", ConfigValue::Boolean(true)));
-        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        {
-            let events = events.clone();
-            controller.observe(move |event| events.borrow_mut().push(event.clone()));
-        }
-
-        assert!(!controller.stage_edit("myna-parakeet", "verbose", ConfigValue::Boolean(true)));
-
-        assert!(events.borrow().is_empty());
-        assert_eq!(
-            controller.page("myna-parakeet").unwrap().dirty_keys(),
-            &["verbose".to_owned()]
-        );
-    }
-
-    #[test]
-    fn dirty_edit_is_cleared_when_snapshot_agrees() {
-        let controller = BackendController::detached();
-        let request = controller.begin_discovery();
-        controller.complete_discovery(request, Ok(discovery_connected_parakeet()));
-        let snapshot_request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(snapshot_request, snap_get_verbose_false());
-
-        controller.stage_edit("myna-parakeet", "verbose", ConfigValue::Boolean(true));
-
-        let snapshot_request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(snapshot_request, snap_get_verbose_true());
-
-        let page = controller.page("myna-parakeet").expect("page exists");
-        let row = page
-            .rows()
-            .iter()
-            .find(|row| row.presentation().key() == "verbose")
-            .expect("verbose row");
-        assert!(!row.dirty());
-        assert!(page.dirty_keys().is_empty());
     }
 
     #[test]
@@ -1008,9 +819,9 @@ mod tests {
         let row = page
             .rows()
             .iter()
-            .find(|row| row.presentation().key() == "verbose")
+            .find(|row| row.key() == "verbose")
             .expect("verbose row");
-        assert_eq!(row.effective_value(), &ConfigValue::Boolean(true));
+        assert_eq!(row.value(), &ConfigValue::Boolean(true));
     }
 
     #[test]
@@ -1121,54 +932,21 @@ mod tests {
         let model_row = page
             .rows()
             .iter()
-            .find(|row| row.presentation().key() == "model")
+            .find(|row| row.key() == "model")
             .expect("model row");
         assert_eq!(
-            model_row.presentation().choices(),
+            model_row.choices(),
             &["parakeet-ctc-en".to_owned(), "parakeet-tdt-en".to_owned(),]
         );
         let engine_row = page
             .rows()
             .iter()
-            .find(|row| row.presentation().key() == "engine")
+            .find(|row| row.key() == "engine")
             .expect("engine row");
         assert_eq!(
-            engine_row.presentation().choices(),
+            engine_row.choices(),
             &["onnxruntime".to_owned(), "tensorrt".to_owned()]
         );
-    }
-
-    #[test]
-    fn model_and_engine_dirty_edits_clear_when_refresh_agrees() {
-        let controller = BackendController::detached();
-        let request = controller.begin_discovery();
-        controller.complete_discovery(request, Ok(discovery_connected_parakeet()));
-
-        let snapshot = || {
-            let mut snapshot = BackendSnapshot::empty(parakeet());
-            snapshot.set_models(
-                parse_model_options(
-                    r#"{"active-model":"parakeet","models":[{"name":"parakeet"}]}"#,
-                )
-                .unwrap(),
-            );
-            snapshot.set_engines(
-                parse_engine_options(
-                    r#"{"active-engine":"cpu","engines":[{"name":"cpu","compatible":true}]}"#,
-                )
-                .unwrap(),
-            );
-            snapshot
-        };
-
-        let request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(request, snapshot());
-        assert!(!controller.stage_edit(
-            "myna-parakeet",
-            "model",
-            ConfigValue::Text("parakeet".into())
-        ));
-        assert!(!controller.stage_edit("myna-parakeet", "engine", ConfigValue::Text("cpu".into())));
     }
 
     fn recorded(controller: &BackendController) -> Rc<RefCell<Vec<ControllerEvent>>> {

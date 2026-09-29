@@ -2,8 +2,6 @@
 <gresources>
   <gresource prefix="/com/canonical/Myna/Config/ui">
     <file>appearance.css</file>
-    <file>apply-dialog.ui</file>
-    <file>backend-apply-controls.ui</file>
     <file>backend-page.ui</file>
     <file>diagnostics-page.ui</file>
     <file>install-models-dialog.ui</file>

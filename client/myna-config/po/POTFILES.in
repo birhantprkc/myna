@@ -1,6 +1,4 @@
 # Source files containing translatable strings, relative to this crate.
-data/apply-dialog.blp
-data/backend-apply-controls.blp
 data/backend-page.blp
 data/diagnostics-page.blp
 data/install-models-dialog.blp

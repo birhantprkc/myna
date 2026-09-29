@@ -9,8 +9,6 @@ mod blueprint_version;
 mod version;
 
 const BLUEPRINTS: &[(&str, &str)] = &[
-    ("apply-dialog.blp", "apply-dialog.ui"),
-    ("backend-apply-controls.blp", "backend-apply-controls.ui"),
     ("backend-page.blp", "backend-page.ui"),
     ("diagnostics-page.blp", "diagnostics-page.ui"),
     ("install-models-dialog.blp", "install-models-dialog.ui"),

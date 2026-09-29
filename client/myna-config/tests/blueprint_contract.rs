@@ -2,8 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const BLUEPRINTS: &[(&str, &str)] = &[
-    ("apply-dialog.blp", "apply-dialog.ui"),
-    ("backend-apply-controls.blp", "backend-apply-controls.ui"),
     ("backend-page.blp", "backend-page.ui"),
     ("diagnostics-page.blp", "diagnostics-page.ui"),
     ("install-models-dialog.blp", "install-models-dialog.ui"),
@@ -19,15 +17,12 @@ const BLUEPRINTS: &[(&str, &str)] = &[
 ];
 
 #[test]
-fn model_list_and_apply_controls_are_static_blueprint_shells() {
+fn the_model_list_is_a_static_blueprint_shell() {
     let root = crate_root();
     let page = fs::read_to_string(root.join("data/myna-page.blp")).unwrap();
-    let apply_controls = fs::read_to_string(root.join("data/backend-apply-controls.blp")).unwrap();
     assert!(page.contains("model_group"));
     assert!(!page.contains("active_backend_row"));
     assert!(page.contains("sensitive: false;"));
-    assert!(apply_controls
-        .contains("apply_button {\n      label: _(\"Apply\");\n      sensitive: false;"));
 }
 
 fn crate_root() -> PathBuf {

@@ -140,7 +140,6 @@ pub struct CancellationToken {
 #[derive(Debug, Default)]
 struct CancellationState {
     cancelled: AtomicBool,
-    refused: AtomicBool,
     wakers: Mutex<Vec<Waker>>,
 }
 
@@ -172,13 +171,7 @@ impl CancellationToken {
     /// that now runs as root. The operation carries on to its real outcome,
     /// so the token reads as not cancelled again.
     pub fn refuse(&self) {
-        self.inner.refused.store(true, Ordering::SeqCst);
         self.inner.cancelled.store(false, Ordering::SeqCst);
-    }
-
-    /// Whether a cancellation was withdrawn by [`Self::refuse`].
-    pub fn was_refused(&self) -> bool {
-        self.inner.refused.load(Ordering::SeqCst)
     }
 
     fn poll_cancelled(&self, waker: &Waker) -> bool {
@@ -470,7 +463,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(output.exit_status(), Some(0));
-        assert!(token.was_refused());
         assert!(!token.is_cancelled());
     }
 
@@ -484,6 +476,6 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, CommandError::Cancelled);
-        assert!(!token.was_refused());
+        assert!(token.is_cancelled());
     }
 }
