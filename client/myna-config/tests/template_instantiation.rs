@@ -381,10 +381,10 @@ fn the_application_starts_without_toolkit_warnings() {
 }
 
 /// The backend pages end to end through the real repository adapter, against a
-/// fixture machine: discovery, a page's snapshot, staging an edit, and a
-/// confirmed apply that is written and read back.
+/// fixture machine: discovery, a page's snapshot, and a change that applies
+/// on its own and is read back, or is refused and put back.
 #[test]
-fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
+fn backend_pages_discover_and_apply_against_a_fixture_machine() {
     if std::env::var_os("MYNA_CONFIG_GTK_TESTS").is_none() {
         eprintln!("skipped: set MYNA_CONFIG_GTK_TESTS=1 under Xvfb");
         return;
@@ -421,8 +421,8 @@ fn backend_pages_discover_stage_and_apply_against_a_fixture_machine() {
         "mode: a choice is stored as the user's",
         "sounds: the switch writes the setting",
         "backend-snapshot: read",
-        "backend-edit: staged",
         "backend-apply: read back",
+        "backend-apply: a refused change reverts with a toast",
         "diagnostics-report: lists backends",
         "refresh-accelerator: refreshes the tab",
         "setup: reopens the wizard",

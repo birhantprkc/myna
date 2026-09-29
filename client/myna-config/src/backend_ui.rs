@@ -21,7 +21,7 @@ use crate::active_backend::{
 use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::backend_apply::{
-    execute_backend_apply, prepare_backend_apply, ApplyFailure, ApplyPreview, ApplySuccess,
+    execute_backend_apply, prepare_change, ApplyFailure, ApplyPreview, ApplySuccess,
     PrepareApplyError, ValidationIssue,
 };
 use crate::backend_controller::{
@@ -318,7 +318,7 @@ pub struct BackendUi {
     active_backend: ActiveBackendController,
     diagnostics_page: RefCell<Option<adw::NavigationPage>>,
     backend_pages: RefCell<BTreeMap<String, adw::NavigationPage>>,
-    apply_state: RefCell<BTreeMap<String, BackendApplyState>>,
+    apply_state: RefCell<BTreeMap<String, PendingChange>>,
     /// The active-backend state the Model tab last rendered.
     shown_state: RefCell<Option<ActiveBackendState>>,
     backend_tab_shown: std::cell::Cell<bool>,
@@ -351,120 +351,60 @@ struct EntryFocus {
     cursor_position: i32,
 }
 
-#[derive(Clone, Debug, Default)]
-struct BackendApplyView {
-    in_progress: bool,
-    /// Confirmed and executing, whether or not it can still be cancelled.
-    running: bool,
-    cancellable: bool,
-    progress_message: Option<String>,
+/// The one Model tab change being applied, from the user's change until the
+/// read-back: every change applies on its own.
+struct PendingChange {
+    key: String,
+    /// Shown on the row while it applies.
+    value: ConfigValue,
+    operation_token: u64,
+    cancellation: CancellationToken,
+    /// The apply's own state.
+    progress_message: String,
+    /// What snapd is doing for it, as last polled.
     progress_detail: Option<String>,
-    feedback: Option<ApplyFeedback>,
+    /// The row to focus once the change is done, since the page is rebuilt.
+    focus: Option<BackendFocus>,
 }
 
-impl BackendApplyView {
-    /// The line a changed row shows while its apply runs: what snapd is
-    /// doing, else the apply's own state.
-    fn row_progress(&self) -> Option<String> {
-        if !self.in_progress {
-            return None;
-        }
+impl PendingChange {
+    /// The line the changed row shows: what snapd is doing, else the
+    /// apply's own state.
+    fn progress(&self) -> &str {
         self.progress_detail
-            .clone()
-            .or_else(|| self.progress_message.clone())
-    }
-
-    /// The apply controls' line: snapd's step above the apply's own state.
-    fn controls_progress(&self) -> Option<String> {
-        if !self.in_progress {
-            return None;
-        }
-        match (&self.progress_detail, &self.progress_message) {
-            (Some(detail), Some(message)) => Some(format!("{detail}\n{message}")),
-            (detail, message) => detail.clone().or_else(|| message.clone()),
-        }
+            .as_deref()
+            .unwrap_or(&self.progress_message)
     }
 }
 
+/// What a page rebuild shows of the change being applied.
 #[derive(Clone, Debug)]
-struct ApplyFeedback {
-    title: String,
-    description: String,
+struct ApplyingView {
+    key: String,
+    value: ConfigValue,
+    progress: String,
 }
 
-#[derive(Clone, Debug, Default)]
-struct BackendApplyState {
-    confirmation_pending: bool,
-    operation_token: Option<u64>,
-    operation_cancellation: Option<CancellationToken>,
-    progress_message: Option<String>,
-    /// What snapd is doing for the running apply, as last polled.
-    progress_detail: Option<String>,
-    cancellation: Option<CancellationToken>,
-    feedback: Option<ApplyFeedback>,
-}
-
-impl BackendApplyState {
-    fn view(&self) -> BackendApplyView {
-        BackendApplyView {
-            in_progress: self.confirmation_pending || self.cancellation.is_some(),
-            running: self.cancellation.is_some(),
-            cancellable: self
-                .cancellation
-                .as_ref()
-                .is_some_and(|token| !token.was_refused()),
-            progress_message: self.progress_message.clone(),
-            progress_detail: self.progress_detail.clone(),
-            feedback: self.feedback.clone(),
-        }
-    }
-
-    fn cancel(&mut self) {
-        if let Some(token) = self.operation_cancellation.take() {
-            token.cancel();
-        }
-        if let Some(token) = self.cancellation.take() {
-            token.cancel();
-        }
-        self.progress_message = None;
-    }
-}
-
-fn remove_apply_state(
-    state: &mut BTreeMap<String, BackendApplyState>,
+/// Signals a vanished backend's apply to stop. The entry, and with it the
+/// operation gate, stays until the apply returns.
+fn cancel_apply_state(
+    state: &mut BTreeMap<String, PendingChange>,
     coordinator: &OperationCoordinator,
     snap_name: &str,
 ) {
-    let started = state
-        .get(snap_name)
-        .is_some_and(|entry| entry.cancellation.is_some());
-    if started {
-        let entry = state
-            .get_mut(snap_name)
-            .expect("started apply state still exists");
-        let operation_token = entry.operation_token;
-        entry.cancel();
-        if let Some(token) = operation_token {
-            coordinator.cancel(token);
-        }
-    } else if let Some(mut entry) = state.remove(snap_name) {
-        let operation_token = entry.operation_token;
-        entry.cancel();
-        if let Some(token) = operation_token {
-            coordinator.abandon(token);
-        }
+    if let Some(change) = state.get(snap_name) {
+        change.cancellation.cancel();
+        coordinator.cancel(change.operation_token);
     }
 }
 
 fn abandon_all_apply_state(
-    state: &mut BTreeMap<String, BackendApplyState>,
+    state: &mut BTreeMap<String, PendingChange>,
     coordinator: &OperationCoordinator,
 ) {
-    for entry in state.values_mut() {
-        if let Some(token) = entry.operation_token {
-            coordinator.abandon(token);
-        }
-        entry.cancel();
+    for (_, change) in std::mem::take(state) {
+        coordinator.abandon(change.operation_token);
+        change.cancellation.cancel();
     }
 }
 
@@ -677,11 +617,6 @@ impl BackendUi {
             }
         });
         self.overlay.add_toast(toast);
-    }
-
-    fn present_operation_error_dialog(&self, heading: &str, summary: &str, details: &str) {
-        let dialog = ui::OperationErrorDialog::new(heading, summary, details);
-        dialog.present(Some(self.overlay.upcast_ref::<gtk::Widget>()));
     }
 
     fn sync_active_backend(self: &Rc<Self>) {
@@ -1168,241 +1103,97 @@ impl BackendUi {
         Rc::clone(&self.controller)
     }
 
-    fn apply_state_view(&self, snap_name: &str) -> BackendApplyView {
+    fn apply_state_view(&self, snap_name: &str) -> Option<ApplyingView> {
         self.apply_state
             .borrow()
             .get(snap_name)
-            .map(BackendApplyState::view)
-            .unwrap_or_default()
+            .map(|change| ApplyingView {
+                key: change.key.clone(),
+                value: change.value.clone(),
+                progress: change.progress().to_owned(),
+            })
     }
 
-    fn set_apply_feedback(&self, snap_name: &str, title: String, description: String) {
-        let mut state = self.apply_state.borrow_mut();
-        let entry = state.entry(snap_name.to_owned()).or_default();
-        entry.progress_message = None;
-        entry.progress_detail = None;
-        entry.confirmation_pending = false;
-        entry.operation_token = None;
-        entry.operation_cancellation = None;
-        entry.cancellation = None;
-        entry.feedback = Some(ApplyFeedback { title, description });
-    }
-
-    fn clear_apply_feedback(&self, snap_name: &str) {
-        if let Some(entry) = self.apply_state.borrow_mut().get_mut(snap_name) {
-            entry.feedback = None;
-        }
-    }
-
-    fn set_apply_progress(
-        &self,
-        snap_name: &str,
-        message: String,
-        cancellation: CancellationToken,
-    ) {
-        let mut state = self.apply_state.borrow_mut();
-        let entry = state.entry(snap_name.to_owned()).or_default();
-        entry.progress_message = Some(message);
-        entry.progress_detail = None;
-        entry.confirmation_pending = false;
-        entry.cancellation = Some(cancellation);
-        entry.feedback = None;
-    }
-
-    fn finish_apply(self: &Rc<Self>, snap_name: &str, title: String, description: String) {
-        if let Some(token) = self
-            .apply_state
-            .borrow()
-            .get(snap_name)
-            .and_then(|state| state.operation_token)
-        {
-            self.operation_coordinator.complete(token);
-        }
-        if self.controller.page(snap_name).is_none() {
-            self.apply_state.borrow_mut().remove(snap_name);
-            self.overlay
-                .add_toast(adw::Toast::new(&format!("{title}: {description}")));
-            self.render_model_group();
-            return;
-        }
-        self.set_apply_feedback(snap_name, title.clone(), description.clone());
-        self.overlay
-            .add_toast(adw::Toast::new(&format!("{title}: {description}")));
-        self.rebuild_backend_page(snap_name);
-        self.render_model_group();
-    }
-
-    fn cancel_apply(self: &Rc<Self>, snap_name: &str) {
-        let token = self
-            .apply_state
-            .borrow_mut()
-            .get_mut(snap_name)
-            .and_then(|entry| {
-                let token = entry.cancellation.clone()?;
-                token.cancel();
-                entry.progress_message = Some(gettextrs::gettext("Cancelling…"));
-                Some(token)
-            });
-        self.rebuild_backend_page(snap_name);
-        let Some(token) = token else {
-            return;
-        };
-        // The runner answers within a main-loop turn: the apply ends as
-        // cancelled, or its process already runs as root and refuses.
+    /// A row's widget reports the user's change here; it applies once the
+    /// widget's own signal has returned, since applying rebuilds the page.
+    fn request_change(self: &Rc<Self>, snap_name: &str, key: &str, value: ConfigValue) {
         let ui = Rc::downgrade(self);
-        let snap_name = snap_name.to_owned();
-        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-            let Some(ui) = ui.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            {
-                let mut states = ui.apply_state.borrow_mut();
-                let Some(entry) = states
-                    .get_mut(&snap_name)
-                    .filter(|entry| entry.cancellation.is_some())
-                else {
-                    return glib::ControlFlow::Break;
-                };
-                if !token.was_refused() {
-                    return glib::ControlFlow::Continue;
-                }
-                entry.progress_message = Some(gettextrs::gettext(
-                    "This change already runs as administrator and cannot be stopped. Waiting for it to finish…",
-                ));
+        let (snap_name, key) = (snap_name.to_owned(), key.to_owned());
+        glib::idle_add_local_once(move || {
+            if let Some(ui) = ui.upgrade() {
+                ui.apply_change(&snap_name, &key, value);
             }
-            ui.rebuild_backend_page(&snap_name);
-            glib::ControlFlow::Break
         });
     }
 
-    fn begin_apply(self: &Rc<Self>, snap_name: &str) {
-        if self.apply_state_view(snap_name).in_progress {
-            return;
-        }
+    /// Applies one change the user made: the polkit prompt is the only
+    /// question. A change that cannot start puts the row back.
+    fn apply_change(self: &Rc<Self>, snap_name: &str, key: &str, value: ConfigValue) {
         let Some(page) = self.controller.page(snap_name) else {
             return;
         };
-        match prepare_backend_apply(&page) {
-            Ok(preview) => {
-                let operation = match self
-                    .operation_coordinator
-                    .begin(OperationKind::BackendApply)
-                {
-                    Ok(operation) => operation,
-                    Err(_) => {
-                        self.overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
-                            "Wait for the current change to finish.",
-                        )));
-                        return;
-                    }
-                };
-                {
-                    let mut states = self.apply_state.borrow_mut();
-                    let state = states.entry(snap_name.to_owned()).or_default();
-                    state.confirmation_pending = true;
-                    state.operation_token = Some(operation.token());
-                    state.operation_cancellation = Some(operation.cancellation());
-                    state.feedback = None;
-                    state.progress_message =
-                        Some(gettextrs::gettext("Waiting for change confirmation…"));
-                }
-                self.rebuild_backend_page(snap_name);
-                self.render_model_group();
-                let ui = Rc::downgrade(self);
-                glib::spawn_future_local(async move {
-                    let Some(ui) = ui.upgrade() else {
-                        return;
-                    };
-                    let confirmed = ui.confirm_apply(&preview).await;
-                    if !confirmed {
-                        ui.finish_apply(
-                            preview.backend().snap_name(),
-                            gettextrs::gettext("Apply cancelled"),
-                            gettextrs::gettext("No administrator authorization was requested."),
-                        );
-                        return;
-                    }
-                    ui.run_apply(preview);
-                });
-            }
-            Err(PrepareApplyError::NoChanges) => {
-                self.finish_apply(
-                    snap_name,
-                    gettextrs::gettext("Nothing to apply"),
-                    gettextrs::gettext("There are no changes to apply."),
-                );
-            }
-            Err(PrepareApplyError::Invalid(issues)) => {
-                self.finish_apply(
-                    snap_name,
-                    gettextrs::gettext("Invalid values"),
-                    validation_issue_summary(&issues),
-                );
-            }
-        }
-    }
-
-    async fn confirm_apply(&self, preview: &ApplyPreview) -> bool {
-        let dialog = ui::ApplyDialog::new(preview.confirmation_text());
-        dialog
-            .choose_future(Some(self.overlay.upcast_ref::<gtk::Widget>()))
-            .await
-            == "apply"
-    }
-
-    fn run_apply(self: &Rc<Self>, preview: ApplyPreview) {
-        let snap_name = preview.backend().snap_name().to_owned();
-        if self.controller.page(&snap_name).is_none()
-            || !self
-                .apply_state
-                .borrow()
-                .get(&snap_name)
-                .is_some_and(|state| state.confirmation_pending)
-        {
-            if let Some(token) = self
-                .apply_state
-                .borrow()
-                .get(&snap_name)
-                .and_then(|state| state.operation_token)
-            {
-                self.operation_coordinator.abandon(token);
-            }
-            remove_apply_state(
-                &mut self.apply_state.borrow_mut(),
-                &self.operation_coordinator,
-                &snap_name,
-            );
+        if self.apply_state.borrow().contains_key(snap_name) {
+            self.rebuild_backend_page(snap_name);
             return;
         }
-        let operation_token = self
-            .apply_state
-            .borrow()
-            .get(&snap_name)
-            .and_then(|state| state.operation_token)
-            .expect("confirmed apply has an operation token");
+        let preview = match prepare_change(&page, key, value.clone()) {
+            Ok(preview) => preview,
+            Err(PrepareApplyError::NoChanges) => return,
+            Err(PrepareApplyError::Invalid(issues)) => {
+                self.rebuild_backend_page(snap_name);
+                self.overlay
+                    .add_toast(adw::Toast::new(&escape_markup(&validation_issue_summary(
+                        &issues,
+                    ))));
+                return;
+            }
+        };
+        let Ok(operation) = self
+            .operation_coordinator
+            .begin(OperationKind::BackendApply)
+        else {
+            self.rebuild_backend_page(snap_name);
+            self.overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
+                "Wait for the current change to finish.",
+            )));
+            return;
+        };
+        let focus = self.backend_focus(snap_name).map(|focus| BackendFocus {
+            entry: None,
+            ..focus
+        });
+        self.apply_state.borrow_mut().insert(
+            snap_name.to_owned(),
+            PendingChange {
+                key: key.to_owned(),
+                value,
+                operation_token: operation.token(),
+                cancellation: operation.cancellation(),
+                progress_message: apply_progress_message(preview.restart_impact()),
+                progress_detail: None,
+                focus,
+            },
+        );
+        self.rebuild_backend_page(snap_name);
+        self.render_model_group();
+        self.run_apply(preview, operation.token(), operation.cancellation());
+    }
+
+    fn run_apply(
+        self: &Rc<Self>,
+        preview: ApplyPreview,
+        operation_token: u64,
+        cancellation: CancellationToken,
+    ) {
+        let snap_name = preview.backend().snap_name().to_owned();
         let Some(repository) = self.controller.repository().cloned() else {
             self.operation_coordinator.abandon(operation_token);
-            remove_apply_state(
-                &mut self.apply_state.borrow_mut(),
-                &self.operation_coordinator,
-                &snap_name,
-            );
+            self.apply_state.borrow_mut().remove(&snap_name);
+            self.rebuild_backend_page(&snap_name);
             self.render_model_group();
             return;
         };
         let configurator = Rc::clone(&self.configurator);
-        let cancellation = self
-            .apply_state
-            .borrow()
-            .get(&snap_name)
-            .and_then(|state| state.operation_cancellation.clone())
-            .unwrap_or_default();
-        self.set_apply_progress(
-            &snap_name,
-            apply_progress_message(preview.restart_impact()),
-            cancellation.clone(),
-        );
-        self.rebuild_backend_page(&snap_name);
         let watching = CancellationToken::new();
         self.watch_apply_progress(&snap_name, watching.clone());
         let coordinator = self.operation_coordinator.clone();
@@ -1419,18 +1210,13 @@ impl BackendUi {
             watching.cancel();
             coordinator.complete(operation_token);
             if let Some(ui) = ui.upgrade() {
-                if ui.controller.page(&snap_name).is_some() {
-                    ui.complete_apply(result, &snap_name);
-                } else {
-                    ui.apply_state.borrow_mut().remove(&snap_name);
-                    ui.render_model_group();
-                }
+                ui.complete_apply(result, &snap_name);
             }
         });
     }
 
     /// Polls snapd about once a second while the apply runs, over the socket
-    /// and as the user, so the page says what the apply is waiting on: a model
+    /// and as the user, so the row says what the apply is waiting on: a model
     /// download above all, which can take minutes.
     fn watch_apply_progress(self: &Rc<Self>, snap_name: &str, watching: CancellationToken) {
         let ui = Rc::downgrade(self);
@@ -1454,158 +1240,91 @@ impl BackendUi {
         });
     }
 
-    /// Updates the changed rows and the apply controls in place: rebuilding
-    /// the page every second would reset its scroll and focus.
+    /// Updates the changed row in place: rebuilding the page every second
+    /// would reset its scroll and focus.
     fn show_apply_progress(&self, snap_name: &str, detail: Option<String>) {
-        {
+        let (key, text) = {
             let mut states = self.apply_state.borrow_mut();
-            let Some(entry) = states
-                .get_mut(snap_name)
-                .filter(|entry| entry.cancellation.is_some())
-            else {
+            let Some(change) = states.get_mut(snap_name) else {
                 return;
             };
-            if entry.progress_detail == detail {
+            if change.progress_detail == detail {
                 return;
             }
-            entry.progress_detail = detail;
-        }
-        let view = self.apply_state_view(snap_name);
-        let (Some(page), Some(widget)) = (
-            self.controller.page(snap_name),
-            self.backend_pages.borrow().get(snap_name).cloned(),
-        ) else {
+            change.progress_detail = detail;
+            (change.key.clone(), change.progress().to_owned())
+        };
+        let Some(widget) = self.backend_pages.borrow().get(snap_name).cloned() else {
             return;
         };
-        let row = |name: &str| {
-            find_named_descendant(widget.upcast_ref(), name)
-                .and_then(|row| row.downcast::<adw::ActionRow>().ok())
-        };
-        if let Some(text) = view.row_progress() {
-            for key in page.dirty_keys() {
-                if let Some(row) = row(&setting_widget_name(key)) {
-                    row.set_subtitle(&escape_markup(&text));
-                }
-            }
-        }
-        if let (Some(controls), Some(text)) = (row(APPLY_CONTROLS), view.controls_progress()) {
-            controls.set_subtitle(&escape_markup(&text));
+        if let Some(row) = find_named_descendant(widget.upcast_ref(), &setting_widget_name(&key))
+            .and_then(|row| row.downcast::<adw::ActionRow>().ok())
+        {
+            row.set_subtitle(&escape_markup(&text));
         }
     }
 
+    /// The change is over: the row shows what the model read back. Only a
+    /// change that did not take is announced, in a toast naming the setting
+    /// whose Details button opens the full report.
     fn complete_apply(
         self: &Rc<Self>,
         result: Result<ApplySuccess, ApplyFailure>,
         snap_name: &str,
     ) {
-        match result {
-            Ok(success) => {
-                self.controller
-                    .apply_readback(snap_name, success.snapshot().clone());
-                self.finish_apply(
-                    snap_name,
-                    gettextrs::gettext("Changes applied"),
-                    gettextrs::gettext("Requested values were confirmed by read-back."),
-                );
-            }
-            Err(ApplyFailure::ReadBackMismatch {
-                snapshot,
-                mismatches,
-            }) => {
-                self.controller.apply_readback(snap_name, *snapshot);
-                let heading = gettextrs::gettext("Read-back mismatch");
-                let summary =
-                    gettextrs::gettext("The model saved different values than the ones you chose.");
-                let details = diagnostics::redact_text(&mismatch_summary(&mismatches));
-                self.finish_apply(snap_name, heading.clone(), summary.clone());
-                self.present_operation_error_dialog(&heading, &summary, &details);
-            }
-            Err(ApplyFailure::RestartReadiness { snapshot, message }) => {
-                self.controller.apply_readback(snap_name, *snapshot);
-                let heading = gettextrs::gettext("The model did not restart");
-                let summary = gettextrs::gettext(
-                    "The settings were saved, but the model did not start again.",
-                );
-                let details = diagnostics::redact_text(&message);
-                self.finish_apply(snap_name, heading.clone(), summary.clone());
-                self.present_operation_error_dialog(&heading, &summary, &details);
-            }
-            Err(ApplyFailure::ReadBackUnavailable { snapshot, errors }) => {
-                self.controller.apply_readback(snap_name, *snapshot);
-                let heading = gettextrs::gettext("Read-back failed");
-                let summary = gettextrs::gettext(
-                    "The settings were changed, but the saved values could not be verified.",
-                );
-                let details = read_back_failure_details(&errors);
-                self.finish_apply(snap_name, heading.clone(), summary.clone());
-                self.present_operation_error_dialog(&heading, &summary, &details);
-            }
-            Err(ApplyFailure::PartialExecution {
-                snapshot,
-                commands,
-                failure,
-            }) => {
-                let snapshot_ref = snapshot.as_ref().clone();
-                let details = partial_execution_details(&failure, &commands, snapshot.as_ref());
-                self.controller.apply_readback(snap_name, snapshot_ref);
-                let (title, message) = partial_failure_presentation(&failure);
-                let redacted_message = diagnostics::redact_text(&message);
-                self.finish_apply(snap_name, title.clone(), redacted_message.clone());
-                self.present_operation_error_dialog(&title, &redacted_message, &details);
-            }
-            Err(ApplyFailure::CancelledConfirmation) => {
-                self.finish_apply(
-                    snap_name,
-                    gettextrs::gettext("Apply cancelled"),
-                    gettextrs::gettext("No administrator authorization was requested."),
-                );
-            }
-            Err(ApplyFailure::CancelledExecution) => {
-                self.finish_apply(
-                    snap_name,
-                    gettextrs::gettext("Apply interrupted"),
-                    gettextrs::gettext(
-                        "It is not known whether the change was saved. Refresh before trying again.",
-                    ),
-                );
-            }
-            Err(ApplyFailure::VerificationCancelled { snapshot, .. }) => {
-                self.controller.apply_readback(snap_name, *snapshot);
-                self.finish_apply(
-                    snap_name,
-                    gettextrs::gettext("Verification cancelled"),
-                    gettextrs::gettext(
-                        "The write completed, but read-back was cancelled. Refresh to verify persisted values.",
-                    ),
-                );
-            }
-            Err(ApplyFailure::AuthorizationDenied { details }) => {
-                let heading = gettextrs::gettext("Authorization denied");
-                let summary = diagnostics::redact_text(details.message());
-                let full = format!(
-                    "{}\n\n{}\n{}",
-                    heading,
-                    gettextrs::gettext("snapd or polkit rejected the request."),
-                    privileged_failure_details(&details),
-                );
-                self.finish_apply(snap_name, heading.clone(), summary.clone());
-                self.present_operation_error_dialog(&heading, &summary, &full);
-            }
-            Err(ApplyFailure::ValuesRejected { details }) => {
-                let heading = gettextrs::gettext("The model rejected the changes");
-                let summary = diagnostics::redact_text(details.message());
-                let full = format!("{}\n\n{}", heading, privileged_failure_details(&details),);
-                self.finish_apply(snap_name, heading.clone(), summary.clone());
-                self.present_operation_error_dialog(&heading, &summary, &full);
-            }
-            Err(ApplyFailure::Execution { details }) => {
-                let heading = gettextrs::gettext("Apply failed");
-                let summary = diagnostics::redact_text(details.message());
-                let full = format!("{}\n\n{}", heading, privileged_failure_details(&details),);
-                self.finish_apply(snap_name, heading.clone(), summary.clone());
-                self.present_operation_error_dialog(&heading, &summary, &full);
-            }
+        let Some(change) = self.apply_state.borrow_mut().remove(snap_name) else {
+            return;
+        };
+        let Some(page) = self.controller.page(snap_name) else {
+            self.render_model_group();
+            return;
+        };
+        let setting = page
+            .rows()
+            .iter()
+            .find(|row| row.presentation().key() == change.key)
+            .map_or_else(
+                || change.key.clone(),
+                |row| row.presentation().metadata().title().to_owned(),
+            );
+        let (snapshot, notice) = apply_report(result);
+        match snapshot {
+            Some(snapshot) => self.controller.apply_readback(snap_name, snapshot),
+            None => self.rebuild_backend_page(snap_name),
         }
+        if let (Some(focus), true) = (
+            change.focus,
+            self.shown_backend().as_deref() == Some(snap_name),
+        ) {
+            self.restore_backend_focus(&focus);
+        }
+        self.render_model_group();
+        if let Some(notice) = notice {
+            self.present_apply_notice(&setting, notice);
+        }
+    }
+
+    fn present_apply_notice(&self, setting: &str, notice: ApplyNotice) {
+        let frame = if notice.failed {
+            // TRANSLATORS: {setting} is a setting's name on the Model tab, such as "Unload when idle".
+            gettextrs::gettext("Changing “{setting}” failed")
+        } else {
+            // TRANSLATORS: {setting} is a setting's name on the Model tab, such as "Unload when idle".
+            gettextrs::gettext("Changing “{setting}” could not be confirmed")
+        };
+        let heading = frame.replace("{setting}", setting);
+        let toast = adw::Toast::builder()
+            .title(escape_markup(&heading))
+            .button_label(gettextrs::gettext("Details"))
+            .build();
+        toast.connect_button_clicked({
+            let overlay = self.overlay.clone();
+            move |_| {
+                ui::OperationErrorDialog::new(&heading, &notice.summary, &notice.details)
+                    .present(Some(overlay.upcast_ref::<gtk::Widget>()));
+            }
+        });
+        self.overlay.add_toast(toast);
     }
 
     fn on_controller_event(self: &Rc<Self>, event: &ControllerEvent) {
@@ -1629,14 +1348,7 @@ impl BackendUi {
                 self.rebuild_backend_page(identity.snap_name());
                 self.rebuild_diagnostics_page();
             }
-            ControllerEvent::BackendDirtyChanged(identity) => {
-                if let Some(page) = self.controller.page(identity.snap_name()) {
-                    if !page.dirty_keys().is_empty() {
-                        self.clear_apply_feedback(identity.snap_name());
-                    }
-                }
-                self.refresh_staged_changes(identity.snap_name());
-            }
+            ControllerEvent::BackendDirtyChanged(_) => {}
             ControllerEvent::DiscoveryFailed(error) => {
                 self.rebuild_diagnostics_page();
                 self.overlay.add_toast(adw::Toast::new(&format!(
@@ -1667,7 +1379,7 @@ impl BackendUi {
             .collect();
         for name in stale {
             self.backend_pages.borrow_mut().remove(&name);
-            remove_apply_state(
+            cancel_apply_state(
                 &mut self.apply_state.borrow_mut(),
                 &self.operation_coordinator,
                 &name,
@@ -1741,28 +1453,6 @@ impl BackendUi {
         }
     }
 
-    /// Rebuilds only the staged-changes group, leaving the setting widgets
-    /// alone. Staging happens while the user is typing, and destroying the
-    /// entry mid-edit loses the keystrokes GTK has not delivered yet.
-    fn refresh_staged_changes(self: &Rc<Self>, snap_name: &str) {
-        let Some(page) = self.controller.page(snap_name) else {
-            return;
-        };
-        let Some(widget) = self.backend_pages.borrow().get(snap_name).cloned() else {
-            return;
-        };
-        let Ok(backend_page) = widget.downcast::<ui::BackendPage>() else {
-            return;
-        };
-        let preferences = backend_page.preferences_page();
-        if let Some(group) = find_named_descendant(preferences.upcast_ref(), STAGED_CHANGES_GROUP)
-            .and_then(|group| group.downcast::<adw::PreferencesGroup>().ok())
-        {
-            preferences.remove(&group);
-        }
-        add_apply_group(&preferences, &page, self);
-    }
-
     fn rebuild_backend_page(self: &Rc<Self>, snap_name: &str) {
         let focus = self.backend_focus(snap_name);
         let Some(page) = self.controller.page(snap_name) else {
@@ -1815,9 +1505,8 @@ impl BackendUi {
         widget.grab_focus();
         if let (Some(focus), Ok(entry)) = (focus.entry.as_ref(), widget.downcast::<adw::EntryRow>())
         {
-            if typed_text_stages_as(&focus.text, entry.text().as_str()) {
-                entry.set_text(&focus.text);
-            }
+            // Text the user has not applied yet survives a rebuild.
+            entry.set_text(&focus.text);
             entry.set_position(focus.cursor_position);
         }
     }
@@ -2132,24 +1821,119 @@ impl BackendUi {
     }
 }
 
-fn partial_failure_presentation(error: &crate::ports::SystemConfiguratorError) -> (String, String) {
-    match error {
-        crate::ports::SystemConfiguratorError::Cancelled => (
-            gettextrs::gettext("Apply interrupted"),
-            gettextrs::gettext(
-                "Apply was cancelled after some operations completed. Persisted values were read back.",
+/// What the error report says about a change that did not take.
+struct ApplyNotice {
+    /// Failed, rather than not confirmed either way.
+    failed: bool,
+    summary: String,
+    details: String,
+}
+
+impl ApplyNotice {
+    fn failed(summary: String, details: String) -> Option<Self> {
+        Some(Self {
+            failed: true,
+            summary,
+            details,
+        })
+    }
+
+    fn unconfirmed(summary: String, details: String) -> Option<Self> {
+        Some(Self {
+            failed: false,
+            summary,
+            details,
+        })
+    }
+}
+
+/// The state an apply leaves to show, when it read one back, and what to
+/// report about it: nothing for a success or a dismissed prompt.
+fn apply_report(
+    result: Result<ApplySuccess, ApplyFailure>,
+) -> (Option<crate::domain::BackendSnapshot>, Option<ApplyNotice>) {
+    match result {
+        Ok(success) => (Some(success.snapshot().clone()), None),
+        Err(ApplyFailure::CancelledConfirmation | ApplyFailure::CancelledExecution) => (None, None),
+        Err(ApplyFailure::ReadBackMismatch {
+            snapshot,
+            mismatches,
+        }) => (
+            Some(*snapshot),
+            ApplyNotice::failed(
+                gettextrs::gettext("The model kept a different value than the one you chose."),
+                diagnostics::redact_text(&mismatch_summary(&mismatches)),
             ),
         ),
-        crate::ports::SystemConfiguratorError::AuthorizationDenied { message, .. } => (
-            gettextrs::gettext("Authorization denied"),
-            message.clone(),
+        Err(ApplyFailure::RestartReadiness { snapshot, message }) => (
+            Some(*snapshot),
+            ApplyNotice::failed(
+                gettextrs::gettext("The setting was saved, but the model did not start again."),
+                diagnostics::redact_text(&message),
+            ),
         ),
-        crate::ports::SystemConfiguratorError::ValuesRejected { message, .. } => (
-            gettextrs::gettext("The model rejected the changes"),
-            message.clone(),
+        Err(ApplyFailure::ReadBackUnavailable { snapshot, errors }) => (
+            Some(*snapshot),
+            ApplyNotice::unconfirmed(
+                gettextrs::gettext("The setting was changed, but it could not be read back."),
+                read_back_failure_details(&errors),
+            ),
         ),
-        crate::ports::SystemConfiguratorError::Execution { message, .. } => {
-            (gettextrs::gettext("Apply failed"), message.clone())
+        Err(ApplyFailure::VerificationCancelled { snapshot, .. }) => (
+            Some(*snapshot),
+            ApplyNotice::unconfirmed(
+                gettextrs::gettext("The setting was changed, but reading it back was interrupted."),
+                String::new(),
+            ),
+        ),
+        Err(ApplyFailure::PartialExecution {
+            snapshot,
+            commands,
+            failure,
+        }) => {
+            let details = partial_execution_details(&failure, &commands, &snapshot);
+            (
+                Some(*snapshot),
+                ApplyNotice::failed(system_failure_summary(&failure), details),
+            )
+        }
+        Err(ApplyFailure::AuthorizationDenied { details }) => (
+            None,
+            ApplyNotice::failed(
+                gettextrs::gettext("The system did not allow the change."),
+                privileged_failure_details(&details),
+            ),
+        ),
+        Err(ApplyFailure::ValuesRejected { details }) => (
+            None,
+            ApplyNotice::failed(
+                gettextrs::gettext("The model rejected the value."),
+                privileged_failure_details(&details),
+            ),
+        ),
+        Err(ApplyFailure::Execution { details }) => (
+            None,
+            ApplyNotice::failed(
+                gettextrs::gettext("The change could not be made."),
+                privileged_failure_details(&details),
+            ),
+        ),
+    }
+}
+
+fn system_failure_summary(error: &crate::ports::SystemConfiguratorError) -> String {
+    match error {
+        crate::ports::SystemConfiguratorError::Cancelled => {
+            gettextrs::gettext("The change was interrupted after it started.")
+        }
+        crate::ports::SystemConfiguratorError::AuthorizationDenied { .. } => {
+            gettextrs::gettext("The system did not allow the change.")
+        }
+        crate::ports::SystemConfiguratorError::ValuesRejected { .. } => {
+            gettextrs::gettext("The model rejected the value.")
+        }
+        crate::ports::SystemConfiguratorError::Execution { .. } => {
+            gettextrs::gettext("The change could not be made.")
         }
     }
 }
@@ -2400,9 +2184,6 @@ pub(crate) fn client_setting_widget_name(key: &str) -> String {
     setting_widget_name(&format!("client-{key}"))
 }
 
-/// Widget name of the staged-changes group, so it can be replaced in place.
-const STAGED_CHANGES_GROUP: &str = "myna-staged-changes";
-const APPLY_CONTROLS: &str = "myna-apply-controls";
 const APPLY_PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 fn find_named_descendant(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
@@ -2528,7 +2309,7 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
         preferences.add(&details);
     }
 
-    let applying = ui.apply_state_view(page.identity().snap_name()).in_progress;
+    let applying = ui.apply_state_view(page.identity().snap_name()).is_some();
     let (refresh_enabled, refresh_label) = refresh_control_state(page.loading(), applying);
     refresh.set_icon_name(if page.loading() || applying {
         "content-loading-symbolic"
@@ -2576,10 +2357,7 @@ fn add_configuration_groups(
     page: &BackendPage,
     ui: &Rc<BackendUi>,
 ) {
-    if page.rows().is_empty() {
-        add_apply_group(page_widget, page, ui);
-        return;
-    }
+    let applying = ui.apply_state_view(page.identity().snap_name());
     let mut groups: BTreeMap<crate::presentation::PresentationGroup, adw::PreferencesGroup> =
         BTreeMap::new();
     for row in page.rows() {
@@ -2593,143 +2371,11 @@ fn add_configuration_groups(
                 .description(group_description(key))
                 .build()
         });
-        group.add(&build_row_widget(row, ui, page));
+        group.add(&build_row_widget(row, ui, page, applying.as_ref()));
     }
     for (_, group) in groups {
         page_widget.add(&group);
     }
-    add_apply_group(page_widget, page, ui);
-}
-
-fn add_apply_group(page_widget: &adw::PreferencesPage, page: &BackendPage, ui: &Rc<BackendUi>) {
-    let view = ui.apply_state_view(page.identity().snap_name());
-    let validation = match prepare_backend_apply(page) {
-        Ok(_) | Err(PrepareApplyError::NoChanges) => None,
-        Err(PrepareApplyError::Invalid(issues)) => Some(issues),
-    };
-    let has_content = view.in_progress
-        || view.feedback.is_some()
-        || !page.dirty_keys().is_empty()
-        || validation.is_some();
-    if !has_content {
-        return;
-    }
-
-    let description = if let Some(message) = view.progress_message.as_deref() {
-        message.to_owned()
-    } else if let Some(feedback) = &view.feedback {
-        feedback.description.clone()
-    } else if validation.is_some() {
-        gettextrs::gettext("Fix the highlighted values before applying.")
-    } else {
-        gettextrs::gettext(
-            "Review staged changes, authorize one privileged operation, then verify read-back.",
-        )
-    };
-    let group = adw::PreferencesGroup::builder()
-        .title(gettextrs::gettext("Staged changes"))
-        .description(escape_markup(&description))
-        .build();
-    group.set_widget_name(STAGED_CHANGES_GROUP);
-
-    if let Some(feedback) = &view.feedback {
-        let row = adw::ActionRow::builder()
-            .title(escape_markup(&feedback.title))
-            .subtitle(escape_markup(&feedback.description))
-            .build();
-        row.set_activatable(false);
-        group.add(&row);
-    }
-
-    for row in page.rows().iter().filter(|row| row.dirty()) {
-        let diff = adw::ActionRow::builder()
-            .title(escape_markup(row.presentation().metadata().title()))
-            .subtitle(escape_markup(&format!(
-                "{} → {}",
-                config_value_display(row.presentation().value()),
-                config_value_display(row.effective_value())
-            )))
-            .build();
-        diff.set_activatable(false);
-        group.add(&diff);
-    }
-
-    if let Some(issues) = &validation {
-        for issue in issues {
-            let row = adw::ActionRow::builder()
-                .title(escape_markup(issue.title()))
-                .subtitle(escape_markup(issue.message()))
-                .build();
-            row.set_activatable(false);
-            group.add(&row);
-        }
-    }
-
-    let controls = ui::BackendApplyControls::new();
-    controls.set_widget_name(APPLY_CONTROLS);
-    let controls_subtitle = if view.in_progress {
-        view.controls_progress()
-            .unwrap_or_else(|| gettextrs::gettext("Applying changes…"))
-    } else {
-        gettextrs::gettext("A single authorization applies all staged changes together.")
-    };
-    controls.set_subtitle(&escape_markup(&controls_subtitle));
-    if view.running {
-        let spinner = controls.progress_spinner();
-        spinner.set_visible(true);
-        spinner.start();
-    }
-
-    let button_box = controls.button_box();
-    let revert = controls.revert_button();
-    revert.set_sensitive(!page.dirty_keys().is_empty() && !view.in_progress);
-    revert.connect_clicked({
-        let controller = Rc::downgrade(&ui.controller);
-        let snap = page.identity().snap_name().to_owned();
-        let ui = Rc::downgrade(ui);
-        move |_| {
-            if let Some(controller) = controller.upgrade() {
-                controller.revert_all_edits(&snap);
-            }
-            if let Some(ui) = ui.upgrade() {
-                ui.clear_apply_feedback(&snap);
-                ui.rebuild_backend_page(&snap);
-            }
-        }
-    });
-    let apply = controls.apply_button();
-    let another_operation_active = ui.operation_coordinator.active().is_some() && !view.in_progress;
-    apply.set_sensitive(
-        !page.dirty_keys().is_empty()
-            && !view.in_progress
-            && !another_operation_active
-            && validation.is_none(),
-    );
-    apply.connect_clicked({
-        let ui = Rc::downgrade(ui);
-        let snap = page.identity().snap_name().to_owned();
-        move |_| {
-            if let Some(ui) = ui.upgrade() {
-                ui.begin_apply(&snap);
-            }
-        }
-    });
-    if view.cancellable {
-        let cancel = gtk::Button::with_label(&gettextrs::gettext("Cancel"));
-        cancel.connect_clicked({
-            let ui = Rc::downgrade(ui);
-            let snap = page.identity().snap_name().to_owned();
-            move |_| {
-                if let Some(ui) = ui.upgrade() {
-                    ui.cancel_apply(&snap);
-                }
-            }
-        });
-        button_box.append(&cancel);
-    }
-
-    group.add(&controls);
-    page_widget.add(&group);
 }
 
 fn group_title(group: crate::presentation::PresentationGroup) -> String {
@@ -2758,22 +2404,28 @@ fn group_description(group: crate::presentation::PresentationGroup) -> String {
     }
 }
 
-fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) -> gtk::Widget {
-    let controller = &ui.controller;
+fn build_row_widget(
+    row: &BackendRow,
+    ui: &Rc<BackendUi>,
+    page: &BackendPage,
+    applying: Option<&ApplyingView>,
+) -> gtk::Widget {
     let snap = page.identity().snap_name().to_owned();
     let key = row.presentation().key().to_owned();
     let metadata = row.presentation().metadata();
     let title = metadata.title();
     let description = metadata.explanation();
-    let apply = ui.apply_state_view(page.identity().snap_name());
-    let editable = !apply.in_progress;
-    // A changed row says what its apply is doing, where the user changed it.
-    let applying = row.dirty().then(|| apply.row_progress()).flatten();
+    let editable = applying.is_none();
+    // The row being changed shows the value it is changing to and what the
+    // change is doing.
+    let changing = applying.filter(|applying| applying.key == key);
+    let value = changing.map_or(row.presentation().value(), |changing| &changing.value);
+    let progress = changing.map(|changing| changing.progress.as_str());
     if metadata.diagnostics_only() {
         let value = if metadata.sensitivity() == Sensitivity::Sensitive {
             gettextrs::gettext("Sensitive value (redacted)")
         } else {
-            diagnostics::redact_text(&config_value_display(row.effective_value()))
+            diagnostics::redact_text(&config_value_display(value))
         };
         let action = adw::ActionRow::builder()
             .title(title)
@@ -2786,35 +2438,28 @@ fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) ->
             .update_property(&[gtk::accessible::Property::Description(description)]);
         return action.upcast();
     }
+    let changed = {
+        let ui = Rc::downgrade(ui);
+        move |value: ConfigValue| {
+            if let Some(ui) = ui.upgrade() {
+                ui.request_change(&snap, &key, value);
+            }
+        }
+    };
     match metadata.control() {
         ControlType::Toggle => {
             let switch = adw::SwitchRow::builder()
                 .title(title)
                 .subtitle(description)
-                .active(matches!(row.effective_value(), ConfigValue::Boolean(true)))
+                .active(matches!(value, ConfigValue::Boolean(true)))
                 .build();
-            switch.set_widget_name(&setting_widget_name(&key));
+            switch.set_widget_name(&setting_widget_name(row.presentation().key()));
             switch
                 .upcast_ref::<gtk::Widget>()
                 .update_property(&[gtk::accessible::Property::Description(description)]);
             switch.set_sensitive(editable);
-            show_row_progress(switch.upcast_ref(), applying.as_deref());
-            let controller_weak = Rc::downgrade(controller);
-            let updating = Rc::new(std::cell::Cell::new(false));
-            switch.connect_active_notify({
-                let controller_weak = controller_weak.clone();
-                let snap = snap.clone();
-                let key = key.clone();
-                let updating = updating.clone();
-                move |row| {
-                    if updating.get() {
-                        return;
-                    }
-                    if let Some(controller) = controller_weak.upgrade() {
-                        controller.stage_edit(&snap, &key, ConfigValue::Boolean(row.is_active()));
-                    }
-                }
-            });
+            show_row_progress(switch.upcast_ref(), progress);
+            switch.connect_active_notify(move |row| changed(ConfigValue::Boolean(row.is_active())));
             switch.upcast()
         }
         ControlType::Choice => {
@@ -2826,29 +2471,21 @@ fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) ->
                 .subtitle(description)
                 .model(&model)
                 .build();
-            combo.set_widget_name(&setting_widget_name(&key));
+            combo.set_widget_name(&setting_widget_name(row.presentation().key()));
             combo
                 .upcast_ref::<gtk::Widget>()
                 .update_property(&[gtk::accessible::Property::Description(description)]);
             combo.set_sensitive(editable);
-            show_row_progress(combo.upcast_ref(), applying.as_deref());
-            if let ConfigValue::Text(current) = row.effective_value() {
+            show_row_progress(combo.upcast_ref(), progress);
+            if let ConfigValue::Text(current) = value {
                 if let Some(index) = choices.iter().position(|choice| choice == current) {
                     combo.set_selected(index as u32);
                 }
             }
-            let controller_weak = Rc::downgrade(controller);
-            let choices_owned = choices.to_vec();
-            combo.connect_selected_notify({
-                let controller_weak = controller_weak.clone();
-                let snap = snap.clone();
-                let key = key.clone();
-                move |row| {
-                    if let Some(controller) = controller_weak.upgrade() {
-                        if let Some(choice) = choices_owned.get(row.selected() as usize) {
-                            controller.stage_edit(&snap, &key, ConfigValue::Text(choice.clone()));
-                        }
-                    }
+            let choices = choices.to_vec();
+            combo.connect_selected_notify(move |row| {
+                if let Some(choice) = choices.get(row.selected() as usize) {
+                    changed(ConfigValue::Text(choice.clone()));
                 }
             });
             combo.upcast()
@@ -2856,7 +2493,7 @@ fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) ->
         ControlType::ReadOnly => {
             let action = adw::ActionRow::builder()
                 .title(title)
-                .subtitle(escape_markup(&config_value_display(row.effective_value())))
+                .subtitle(escape_markup(&config_value_display(value)))
                 .build();
             action.set_activatable(false);
             action.set_sensitive(editable);
@@ -2865,45 +2502,39 @@ fn build_row_widget(row: &BackendRow, ui: &Rc<BackendUi>, page: &BackendPage) ->
                 .update_property(&[gtk::accessible::Property::Description(description)]);
             action.upcast()
         }
+        ControlType::Number | ControlType::Text if progress.is_some() => {
+            // An entry row has no subtitle for the progress line, so the
+            // value shows in a plain row until the change is done.
+            let action = adw::ActionRow::builder()
+                .title(title)
+                .subtitle(escape_markup(progress.unwrap_or_default()))
+                .build();
+            action.set_widget_name(&setting_widget_name(row.presentation().key()));
+            action.add_suffix(
+                &gtk::Label::builder()
+                    .label(config_value_display(value))
+                    .css_classes(["dim-label"])
+                    .build(),
+            );
+            show_row_progress(&action, progress);
+            action.upcast()
+        }
         ControlType::Number | ControlType::Text => {
             let entry = adw::EntryRow::builder()
                 .title(title)
-                .text(config_value_display(row.effective_value()))
+                .text(config_value_display(value))
                 .show_apply_button(true)
                 .build();
-            entry.set_widget_name(&setting_widget_name(&key));
+            entry.set_widget_name(&setting_widget_name(row.presentation().key()));
             entry.set_tooltip_text(Some(description));
             entry
                 .upcast_ref::<gtk::Widget>()
                 .update_property(&[gtk::accessible::Property::Description(description)]);
             entry.set_sensitive(editable);
-            let controller_weak = Rc::downgrade(controller);
             let control = metadata.control();
-            entry.connect_changed({
-                let controller_weak = controller_weak.clone();
-                let snap = snap.clone();
-                let key = key.clone();
-                move |row| {
-                    if let Some(controller) = controller_weak.upgrade() {
-                        controller.stage_edit(
-                            &snap,
-                            &key,
-                            parse_editable_value(control, row.text().as_str()),
-                        );
-                    }
-                }
-            });
-            entry.connect_apply({
-                let controller_weak = controller_weak.clone();
-                let snap = snap.clone();
-                let key = key.clone();
-                move |row| {
-                    if let Some(controller) = controller_weak.upgrade() {
-                        let raw = row.text().to_string();
-                        let value = parse_editable_value(control, &raw);
-                        controller.stage_edit(&snap, &key, value);
-                    }
-                }
+            // Applies on Enter or the apply button, never per keystroke.
+            entry.connect_apply(move |row| {
+                changed(parse_editable_value(control, row.text().as_str()));
             });
             entry.upcast()
         }
@@ -3038,9 +2669,9 @@ fn refresh_control_state(loading: bool, applying: bool) -> (bool, String) {
 
 fn apply_progress_message(restart_impact: crate::backend_apply::RestartImpact) -> String {
     if restart_impact.requires_readiness() {
-        gettextrs::gettext("Applying changes and waiting for the model to restart…")
+        gettextrs::gettext("Applying and restarting the model…")
     } else {
-        gettextrs::gettext("Applying changes…")
+        gettextrs::gettext("Applying…")
     }
 }
 
@@ -3207,13 +2838,6 @@ fn parse_editable_value(control: ControlType, raw: &str) -> ConfigValue {
     ConfigValue::Text(raw.to_owned())
 }
 
-/// Whether `staged` is the display form of the value `typed` stages, so a
-/// rebuilt entry showing `staged` may show `typed` instead. Half-typed numbers
-/// such as "0." stage as 0 and would otherwise lose their last keystroke.
-fn typed_text_stages_as(typed: &str, staged: &str) -> bool {
-    config_value_display(&parse_editable_value(ControlType::Number, typed)) == staged
-}
-
 fn config_value_display(value: &ConfigValue) -> String {
     match value {
         ConfigValue::Null => String::new(),
@@ -3273,15 +2897,6 @@ mod tests {
     }
 
     #[test]
-    fn typed_text_is_kept_only_when_the_rebuilt_text_is_its_staged_form() {
-        assert!(typed_text_stages_as("0.", "0"));
-        assert!(typed_text_stages_as("0.50", "0.5"));
-        assert!(typed_text_stages_as("free text", "free text"));
-        assert!(!typed_text_stages_as("0.2", "0.3"));
-        assert!(!typed_text_stages_as("0.", "0.5"));
-    }
-
-    #[test]
     fn refresh_control_is_pending_and_disabled_while_loading() {
         assert_eq!(
             refresh_control_state(true, false),
@@ -3318,6 +2933,20 @@ mod tests {
         myna_selector: Option<ui::MynaPage>,
         spoken_language: Option<adw::PreferencesGroup>,
     ) -> TestUi {
+        test_ui_ports(
+            controller,
+            myna_selector,
+            spoken_language,
+            Rc::new(PkexecSystemConfigurator::new(Arc::new(GioCommandRunner))),
+        )
+    }
+
+    fn test_ui_ports(
+        controller: Rc<BackendController>,
+        myna_selector: Option<ui::MynaPage>,
+        spoken_language: Option<adw::PreferencesGroup>,
+        configurator: Rc<dyn SystemConfigurator>,
+    ) -> TestUi {
         let view_stack = adw::ViewStack::new();
         let backend_nav = adw::NavigationView::new();
         let diagnostics_nav = adw::NavigationView::new();
@@ -3338,7 +2967,7 @@ mod tests {
             marking_models: std::cell::Cell::new(false),
             preferred_languages: RefCell::new(None),
             controller,
-            configurator: Rc::new(PkexecSystemConfigurator::new(Arc::new(GioCommandRunner))),
+            configurator,
             view_stack: view_stack.clone(),
             backend_nav,
             diagnostics_nav,
@@ -4267,83 +3896,6 @@ mod tests {
         });
     }
 
-    /// A connected parakeet backend whose only setting is the pause-length
-    /// number, shown on screen with the entry row focused as a user typing
-    /// into it would have it.
-    fn focused_pause_length_entry() -> (Rc<BackendUi>, gtk::Window) {
-        let controller = BackendController::detached();
-        let request = controller.begin_discovery();
-        let connections = crate::domain::parse_connections(PARAKEET_CONNECTED, PARAKEET_SLOT)
-            .expect("connections parse");
-        controller.complete_discovery(request, Ok(connections));
-        let request = controller.begin_snapshot("myna-parakeet").unwrap();
-        let mut snapshot = crate::domain::BackendSnapshot::empty(BackendIdentity::new(
-            "myna-parakeet",
-            "provider",
-        ));
-        snapshot.set_modelctl_config(
-            crate::domain::parse_modelctl_config("stream-silence-cut-seconds: 0.5\n")
-                .expect("modelctl parse"),
-        );
-        controller.complete_snapshot(request, snapshot);
-
-        let TestUi { ui, view_stack } = test_ui(controller);
-        ui.controller.observe({
-            let ui = Rc::downgrade(&ui);
-            move |event| {
-                if let Some(ui) = ui.upgrade() {
-                    ui.on_controller_event(event);
-                }
-            }
-        });
-        let window = gtk::Window::builder().child(&view_stack).build();
-        ui.sync_active_backend();
-        pause_length_entry(&ui).grab_focus();
-        (ui, window)
-    }
-
-    fn pause_length_entry(ui: &BackendUi) -> adw::EntryRow {
-        let page = ui.backend_nav.visible_page().expect("backend page shown");
-        find_named_descendant(page.upcast_ref(), "myna-setting-stream-silence-cut-seconds")
-            .expect("pause length entry")
-            .downcast()
-            .expect("entry row")
-    }
-
-    fn staged_pause_length(ui: &BackendUi) -> Option<ConfigValue> {
-        let page = ui.controller.page("myna-parakeet")?;
-        page.rows()
-            .iter()
-            .find(|row| row.presentation().key() == "stream-silence-cut-seconds")
-            .filter(|row| row.dirty())
-            .map(|row| row.effective_value().clone())
-    }
-
-    #[test]
-    fn typing_a_fraction_into_a_number_entry_keeps_every_keystroke() {
-        on_gtk_thread(|| {
-            let (ui, _window) = focused_pause_length_entry();
-
-            // Typing "0.2" over the default: the first two keystrokes are not
-            // yet a valid setting, and the rebuild each one triggers must not
-            // rewrite the text the user is still typing.
-            for (typed, staged) in [
-                ("0", ConfigValue::Integer(0)),
-                ("0.", ConfigValue::Number(0.0)),
-                ("0.2", ConfigValue::Number(0.2)),
-            ] {
-                let entry = pause_length_entry(&ui);
-                entry.set_text(typed);
-                assert_eq!(
-                    staged_pause_length(&ui),
-                    Some(staged),
-                    "staged after {typed:?}"
-                );
-                assert_eq!(pause_length_entry(&ui).text().as_str(), typed);
-            }
-        });
-    }
-
     #[test]
     fn a_surface_failure_becomes_one_sentence_with_no_command_line() {
         let error = crate::domain::BackendSurfaceError::new(
@@ -4455,6 +4007,18 @@ mod tests {
         assert!(!details.contains("snap run"));
     }
 
+    fn pending(operation_token: u64, cancellation: &CancellationToken) -> PendingChange {
+        PendingChange {
+            key: "streaming".to_owned(),
+            value: ConfigValue::Boolean(true),
+            operation_token,
+            cancellation: cancellation.clone(),
+            progress_message: "Applying…".to_owned(),
+            progress_detail: None,
+            focus: None,
+        }
+    }
+
     #[test]
     fn disappearing_backend_signals_apply_but_retains_gate_until_completion() {
         let coordinator = OperationCoordinator::new();
@@ -4462,48 +4026,44 @@ mod tests {
         let token = operation.cancellation();
         let mut state = BTreeMap::from([(
             "myna-parakeet".to_owned(),
-            BackendApplyState {
-                confirmation_pending: false,
-                operation_token: Some(operation.token()),
-                operation_cancellation: Some(token.clone()),
-                progress_message: Some("Applying…".to_owned()),
-                progress_detail: None,
-                cancellation: Some(token.clone()),
-                feedback: None,
-            },
+            pending(operation.token(), &token),
         )]);
 
-        remove_apply_state(&mut state, &coordinator, "myna-parakeet");
+        cancel_apply_state(&mut state, &coordinator, "myna-parakeet");
+        cancel_apply_state(&mut state, &coordinator, "myna-whisper");
 
         assert!(token.is_cancelled());
-        assert_eq!(
-            state
-                .get("myna-parakeet")
-                .and_then(|entry| entry.operation_token),
-            Some(operation.token())
-        );
+        assert!(state.contains_key("myna-parakeet"));
         assert!(coordinator.begin(OperationKind::BackendSwitch).is_err());
         assert!(coordinator.complete(operation.token()));
         assert!(coordinator.begin(OperationKind::BackendSwitch).is_ok());
     }
 
     #[test]
-    fn a_refused_cancellation_keeps_the_apply_running_without_cancel() {
+    fn final_teardown_abandons_the_running_apply() {
+        let coordinator = OperationCoordinator::new();
+        let operation = coordinator.begin(OperationKind::BackendApply).unwrap();
+        let token = operation.cancellation();
+        let mut state = BTreeMap::from([(
+            "myna-parakeet".to_owned(),
+            pending(operation.token(), &token),
+        )]);
+
+        abandon_all_apply_state(&mut state, &coordinator);
+
+        assert!(token.is_cancelled());
+        assert!(state.is_empty());
+        assert_eq!(coordinator.active(), None);
+    }
+
+    #[test]
+    fn snapds_step_replaces_the_apply_state_on_the_row() {
         let token = CancellationToken::new();
-        let state = BackendApplyState {
-            progress_message: Some("Applying…".to_owned()),
-            cancellation: Some(token.clone()),
-            ..BackendApplyState::default()
-        };
-        assert!(state.view().cancellable);
+        let mut change = pending(1, &token);
+        assert_eq!(change.progress(), "Applying…");
 
-        token.cancel();
-        token.refuse();
-
-        let view = state.view();
-        assert!(view.in_progress);
-        assert!(view.running, "the spinner keeps turning");
-        assert!(!view.cancellable);
+        change.progress_detail = Some("Downloading".to_owned());
+        assert_eq!(change.progress(), "Downloading");
     }
 
     #[test]
@@ -4521,123 +4081,58 @@ mod tests {
         );
     }
 
-    #[test]
-    fn snapds_step_leads_and_the_apply_state_follows() {
-        let mut view = BackendApplyView {
-            in_progress: true,
-            progress_message: Some("Applying…".to_owned()),
-            ..BackendApplyView::default()
-        };
-        assert_eq!(view.row_progress().as_deref(), Some("Applying…"));
-        assert_eq!(view.controls_progress().as_deref(), Some("Applying…"));
+    fn parakeet_snapshot() -> crate::domain::BackendSnapshot {
+        crate::domain::BackendSnapshot::empty(BackendIdentity::new("myna-parakeet", "provider"))
+    }
 
-        view.progress_detail = Some("Downloading".to_owned());
-        assert_eq!(view.row_progress().as_deref(), Some("Downloading"));
+    #[test]
+    fn only_a_change_that_did_not_take_is_reported() {
+        let (snapshot, notice) = apply_report(Err(ApplyFailure::CancelledExecution));
+        assert!(snapshot.is_none() && notice.is_none(), "a dismissed prompt");
+
+        let (snapshot, notice) = apply_report(Err(ApplyFailure::RestartReadiness {
+            snapshot: Box::new(parakeet_snapshot()),
+            message: "The model did not restart: server (failed)".to_owned(),
+        }));
+        let notice = notice.expect("reported");
+        assert!(snapshot.is_some());
+        assert!(notice.failed);
         assert_eq!(
-            view.controls_progress().as_deref(),
-            Some("Downloading\nApplying…")
+            notice.summary,
+            "The setting was saved, but the model did not start again."
         );
+        assert!(notice.details.contains("server (failed)"));
 
-        view.in_progress = false;
-        assert_eq!(view.row_progress(), None);
-        assert_eq!(view.controls_progress(), None);
-    }
+        let (snapshot, notice) = apply_report(Err(ApplyFailure::ReadBackUnavailable {
+            snapshot: Box::new(parakeet_snapshot()),
+            errors: vec![crate::domain::BackendSurfaceError::new(
+                crate::domain::BackendSurface::ModelctlConfig,
+                "modelctl get failed",
+                "",
+            )],
+        }));
+        let notice = notice.expect("reported");
+        assert!(snapshot.is_some());
+        assert!(!notice.failed, "not confirmed either way");
+        assert_eq!(notice.details, "Model settings: modelctl get failed");
 
-    #[test]
-    fn a_running_apply_shows_its_progress_on_the_changed_row_and_the_controls() {
-        on_gtk_thread(|| {
-            let controller = discovered(PARAKEET_CONNECTED);
-            let request = controller.begin_snapshot("myna-parakeet").unwrap();
-            let mut snapshot = crate::domain::BackendSnapshot::empty(BackendIdentity::new(
-                "myna-parakeet",
-                "provider",
-            ));
-            snapshot.set_modelctl_config(
-                crate::domain::parse_modelctl_config("streaming: false\n").unwrap(),
-            );
-            controller.complete_snapshot(request, snapshot);
-            controller.stage_edit("myna-parakeet", "streaming", ConfigValue::Boolean(true));
-            let TestUi { ui, .. } = test_ui(controller);
-            ui.set_apply_progress(
-                "myna-parakeet",
-                "Applying…".to_owned(),
-                CancellationToken::new(),
-            );
-            ui.rebuild_backend_page("myna-parakeet");
+        let (snapshot, notice) = apply_report(Err(ApplyFailure::VerificationCancelled {
+            commands: Vec::new(),
+            snapshot: Box::new(parakeet_snapshot()),
+        }));
+        assert!(snapshot.is_some());
+        assert!(notice.is_some_and(|notice| !notice.failed));
 
-            ui.show_apply_progress(
-                "myna-parakeet",
-                Some("Downloading model-small: 1 MB of 2 MB".to_owned()),
-            );
-
-            let page = ui.backend_pages.borrow()["myna-parakeet"].clone();
-            let subtitle = |name: &str| {
-                find_named_descendant(page.upcast_ref(), name)
-                    .and_then(|row| row.downcast::<adw::ActionRow>().ok())
-                    .and_then(|row| row.subtitle())
-                    .map(|subtitle| subtitle.to_string())
-            };
-            assert_eq!(
-                subtitle(&setting_widget_name("streaming")).as_deref(),
-                Some("Downloading model-small: 1 MB of 2 MB")
-            );
-            assert_eq!(
-                subtitle(APPLY_CONTROLS).as_deref(),
-                Some("Downloading model-small: 1 MB of 2 MB\nApplying…")
-            );
-
-            ui.rebuild_backend_page("myna-parakeet");
-            let page = ui.backend_pages.borrow()["myna-parakeet"].clone();
-            let row = find_named_descendant(page.upcast_ref(), &setting_widget_name("streaming"))
-                .and_then(|row| row.downcast::<adw::ActionRow>().ok())
-                .unwrap();
-            assert_eq!(
-                row.subtitle().as_deref(),
-                Some("Downloading model-small: 1 MB of 2 MB"),
-                "a rebuild keeps the last progress"
-            );
-        });
-    }
-
-    #[test]
-    fn final_teardown_abandons_active_apply_and_clears_progress() {
-        let coordinator = OperationCoordinator::new();
-        let operation = coordinator.begin(OperationKind::BackendApply).unwrap();
-        let first = CancellationToken::new();
-        let second = CancellationToken::new();
-        let mut state = BTreeMap::from([
-            (
-                "myna-parakeet".to_owned(),
-                BackendApplyState {
-                    confirmation_pending: false,
-                    operation_token: Some(operation.token()),
-                    operation_cancellation: None,
-                    progress_message: Some("Applying…".to_owned()),
-                    progress_detail: None,
-                    cancellation: Some(first.clone()),
-                    feedback: None,
-                },
-            ),
-            (
-                "myna-whisper".to_owned(),
-                BackendApplyState {
-                    confirmation_pending: false,
-                    operation_token: None,
-                    operation_cancellation: None,
-                    progress_message: Some("Applying…".to_owned()),
-                    progress_detail: None,
-                    cancellation: Some(second.clone()),
-                    feedback: None,
-                },
-            ),
-        ]);
-
-        abandon_all_apply_state(&mut state, &coordinator);
-
-        assert!(first.is_cancelled());
-        assert!(second.is_cancelled());
-        assert!(state.values().all(|entry| entry.cancellation.is_none()));
-        assert_eq!(coordinator.active(), None);
+        let (snapshot, notice) = apply_report(Err(ApplyFailure::PartialExecution {
+            snapshot: Box::new(parakeet_snapshot()),
+            commands: Vec::new(),
+            failure: Box::new(crate::ports::SystemConfiguratorError::Cancelled),
+        }));
+        assert!(snapshot.is_some());
+        assert_eq!(
+            notice.expect("reported").summary,
+            "The change was interrupted after it started."
+        );
     }
 
     /// Answers every discovery with the machine as it stands, and counts the
@@ -4915,6 +4410,467 @@ mod tests {
             assert_eq!(repository.reads.get(), 1);
             assert_eq!(ui.backend_nav.visible_page(), shown, "the page was rebuilt");
             assert_eq!(ui.view_stack.visible_child_name().as_deref(), Some("model"));
+            window.destroy();
+        });
+    }
+
+    /// A Parakeet machine that applies what it is asked and reads it back
+    /// the way modelctl does, or refuses as told.
+    struct ApplyMachine {
+        configuration: RefCell<BTreeMap<String, String>>,
+        model: RefCell<String>,
+        refusal: RefCell<Option<crate::ports::SystemConfiguratorError>>,
+        held: std::cell::Cell<bool>,
+        plans: RefCell<Vec<Vec<Vec<String>>>>,
+    }
+
+    impl ApplyMachine {
+        fn new() -> Self {
+            Self {
+                configuration: RefCell::new(
+                    include_str!("../tests/fixtures/modelctl-get.txt")
+                        .lines()
+                        .filter_map(|line| line.split_once(": "))
+                        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+                        .collect(),
+                ),
+                model: RefCell::new("small".to_owned()),
+                refusal: RefCell::new(None),
+                held: std::cell::Cell::new(false),
+                plans: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn plans(&self) -> Vec<Vec<Vec<String>>> {
+            self.plans.borrow().clone()
+        }
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl BackendRepository for ApplyMachine {
+        async fn discover(
+            &self,
+            cancellation: CancellationToken,
+        ) -> Result<crate::domain::ConnectionSnapshot, crate::domain::BackendSurfaceError> {
+            self.refresh(cancellation).await
+        }
+
+        async fn read_snapshot(
+            &self,
+            backend: &BackendIdentity,
+            _cancellation: CancellationToken,
+        ) -> crate::domain::BackendSnapshot {
+            let mut snapshot = crate::domain::BackendSnapshot::empty(
+                backend.clone().with_modelctl_app("myna-parakeet.modelctl"),
+            );
+            let configuration: String = self
+                .configuration
+                .borrow()
+                .iter()
+                .map(|(key, value)| format!("{key}: {value}\n"))
+                .collect();
+            snapshot.set_modelctl_config(
+                crate::domain::parse_modelctl_config(&configuration).expect("modelctl parse"),
+            );
+            snapshot.set_status(
+                crate::domain::parse_status(include_str!("../tests/fixtures/modelctl-status.json"))
+                    .expect("status parse"),
+            );
+            snapshot.set_models(
+                crate::domain::parse_model_options(&format!(
+                    r#"{{"active-model":"{}","models":[{{"name":"small"}},{{"name":"base"}}]}}"#,
+                    self.model.borrow()
+                ))
+                .expect("models parse"),
+            );
+            snapshot
+        }
+
+        async fn refresh(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<crate::domain::ConnectionSnapshot, crate::domain::BackendSurfaceError> {
+            Ok(
+                crate::domain::parse_connections(PARAKEET_CONNECTED, PARAKEET_SLOT)
+                    .expect("connections parse"),
+            )
+        }
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl SystemConfigurator for ApplyMachine {
+        async fn execute_backend_switch(
+            &self,
+            _plan: &crate::active_backend::SwitchPlan,
+            _cancellation: CancellationToken,
+        ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure>
+        {
+            unreachable!("the Model tab never switches models")
+        }
+
+        async fn restart_myna(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<(), crate::ports::SystemConfiguratorError> {
+            unreachable!("the Model tab never restarts Myna")
+        }
+
+        async fn apply_backend_config(
+            &self,
+            preview: &ApplyPreview,
+            _cancellation: CancellationToken,
+        ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure>
+        {
+            self.plans.borrow_mut().push(
+                preview
+                    .operations()
+                    .iter()
+                    .map(|operation| operation.arguments().to_vec())
+                    .collect(),
+            );
+            while self.held.get() {
+                glib::timeout_future(std::time::Duration::from_millis(5)).await;
+            }
+            if let Some(error) = self.refusal.borrow_mut().take() {
+                return Err(crate::ports::SystemConfiguratorFailure::new(
+                    Vec::new(),
+                    error,
+                ));
+            }
+            let mut results = Vec::new();
+            for operation in preview.operations() {
+                let arguments = operation.arguments();
+                match arguments.get(2).map(String::as_str) {
+                    Some("set") => {
+                        for assignment in &arguments[3..] {
+                            if let Some((key, value)) = assignment.split_once('=') {
+                                self.configuration
+                                    .borrow_mut()
+                                    .insert(key.to_owned(), value.to_owned());
+                            }
+                        }
+                    }
+                    Some("use-model") => *self.model.borrow_mut() = arguments[3].clone(),
+                    _ => {}
+                }
+                results.push(crate::domain::CommandResult::new(
+                    operation.executable(),
+                    arguments.to_vec(),
+                    Some(0),
+                    "",
+                    "",
+                ));
+            }
+            Ok(results)
+        }
+    }
+
+    /// The Model tab over [`ApplyMachine`], on screen with its page read.
+    fn applying_ui() -> (Rc<BackendUi>, Rc<ApplyMachine>, adw::Window) {
+        ui::register_resources();
+        let machine = Rc::new(ApplyMachine::new());
+        let controller = BackendController::new(machine.clone());
+        let TestUi { ui, view_stack } = test_ui_ports(controller, None, None, machine.clone());
+        ui.controller.observe({
+            let ui = Rc::downgrade(&ui);
+            move |event| {
+                if let Some(ui) = ui.upgrade() {
+                    ui.on_controller_event(event);
+                }
+            }
+        });
+        ui.overlay.set_child(Some(&view_stack));
+        let window = adw::Window::builder()
+            .default_width(800)
+            .default_height(600)
+            .content(&ui.overlay)
+            .build();
+        window.present();
+        view_stack.set_visible_child_name("model");
+        let request = ui.controller.begin_discovery();
+        ui.controller.complete_discovery(
+            request,
+            Ok(
+                crate::domain::parse_connections(PARAKEET_CONNECTED, PARAKEET_SLOT)
+                    .expect("connections parse"),
+            ),
+        );
+        settle(|| setting::<adw::SwitchRow>(&ui, "streaming").is_some());
+        (ui, machine, window)
+    }
+
+    fn setting<T: IsA<gtk::Widget>>(ui: &BackendUi, key: &str) -> Option<T> {
+        let page = ui.backend_nav.visible_page()?;
+        find_named_descendant(page.upcast_ref(), &setting_widget_name(key))?
+            .downcast()
+            .ok()
+    }
+
+    fn applied(ui: &BackendUi) -> bool {
+        ui.apply_state.borrow().is_empty() && ui.operation_coordinator.active().is_none()
+    }
+
+    fn toasts(ui: &BackendUi) -> Vec<String> {
+        descendants(ui.overlay.upcast_ref())
+            .into_iter()
+            .filter(|widget| widget.type_().name() == "AdwToastWidget")
+            .flat_map(|toast| descendants(&toast))
+            .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+            .filter(|label| label.is_visible())
+            .map(|label| label.label().to_string())
+            .collect()
+    }
+
+    fn argv(plan: &[&[&str]]) -> Vec<Vec<String>> {
+        plan.iter()
+            .map(|operation| operation.iter().map(|&part| part.to_owned()).collect())
+            .collect()
+    }
+
+    const STREAMING_OFF: &[&[&str]] = &[
+        &[
+            "run",
+            "myna-parakeet.modelctl",
+            "set",
+            "streaming=false",
+            "--assume-yes",
+            "--no-restart",
+        ],
+        &["restart", "myna-parakeet"],
+    ];
+
+    #[test]
+    fn a_switch_applies_its_change_at_once_and_a_success_says_nothing() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            let switch = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            assert!(switch.is_active());
+
+            switch.set_active(false);
+            settle(|| !machine.plans().is_empty() && applied(&ui));
+
+            assert_eq!(machine.plans(), [argv(STREAMING_OFF)]);
+            let switch = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            assert!(!switch.is_active(), "the row shows the read-back value");
+            assert!(toasts(&ui).is_empty(), "{:?}", toasts(&ui));
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn while_a_change_applies_its_row_says_so_and_the_others_wait() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            machine.held.set(true);
+            setting::<adw::SwitchRow>(&ui, "streaming")
+                .expect("streaming row")
+                .set_active(false);
+            settle(|| !machine.plans().is_empty());
+
+            let row = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            assert!(!row.is_active(), "the row shows the value it changes to");
+            assert_eq!(
+                row.subtitle().as_deref(),
+                Some("Applying and restarting the model…")
+            );
+            assert!(descendants(row.upcast_ref())
+                .iter()
+                .any(|widget| widget.is::<gtk::Spinner>()));
+            let other = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            assert!(!other.is_sensitive(), "one change at a time");
+            assert_eq!(
+                ui.operation_coordinator.active(),
+                Some(OperationKind::BackendApply)
+            );
+
+            ui.show_apply_progress(
+                "myna-parakeet",
+                Some("Downloading model-small: 1 MB of 2 MB".to_owned()),
+            );
+            let row = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            assert_eq!(
+                row.subtitle().as_deref(),
+                Some("Downloading model-small: 1 MB of 2 MB")
+            );
+            ui.rebuild_backend_page("myna-parakeet");
+            let row = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            assert_eq!(
+                row.subtitle().as_deref(),
+                Some("Downloading model-small: 1 MB of 2 MB"),
+                "a rebuild keeps the last progress"
+            );
+
+            machine.held.set(false);
+            settle(|| applied(&ui));
+            let other = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            assert!(other.is_sensitive());
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn a_refused_change_puts_the_row_back_and_says_so() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            *machine.refusal.borrow_mut() =
+                Some(crate::ports::SystemConfiguratorError::authorization_denied(
+                    "pkexec",
+                    Vec::new(),
+                    Some(127),
+                    "Not authorized",
+                ));
+            setting::<adw::SwitchRow>(&ui, "streaming")
+                .expect("streaming row")
+                .set_active(false);
+            settle(|| !machine.plans().is_empty() && applied(&ui) && !toasts(&ui).is_empty());
+
+            let row = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            assert!(row.is_active(), "the row shows what the model still has");
+            assert_eq!(
+                toasts(&ui),
+                ["Changing “Streaming output” failed", "Details"]
+            );
+            let details = descendants(ui.overlay.upcast_ref())
+                .into_iter()
+                .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+                .find(|button| button.label().as_deref() == Some("Details"))
+                .expect("details button");
+            details.emit_clicked();
+            let report = || {
+                window
+                    .visible_dialog()
+                    .and_then(|dialog| dialog.downcast::<ui::OperationErrorDialog>().ok())
+            };
+            settle(|| report().is_some());
+            let report = report().expect("the report opened");
+            assert_eq!(
+                report.heading().as_deref(),
+                Some("Changing “Streaming output” failed")
+            );
+            assert!(report.details_text().contains("Not authorized"));
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn a_dismissed_prompt_puts_the_row_back_silently() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            *machine.refusal.borrow_mut() = Some(crate::ports::SystemConfiguratorError::Cancelled);
+            setting::<adw::SwitchRow>(&ui, "streaming")
+                .expect("streaming row")
+                .set_active(false);
+            settle(|| !machine.plans().is_empty() && applied(&ui));
+
+            let row = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            assert!(row.is_active());
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+            assert!(toasts(&ui).is_empty(), "{:?}", toasts(&ui));
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn an_entry_applies_on_enter_never_per_keystroke() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            let entry = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            assert_eq!(entry.text().as_str(), "300");
+            for typed in ["6", "60"] {
+                entry.set_text(typed);
+            }
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+            assert!(machine.plans().is_empty(), "typing applied");
+
+            entry.emit_by_name::<()>("apply", &[]);
+            settle(|| !machine.plans().is_empty() && applied(&ui));
+
+            assert_eq!(
+                machine.plans(),
+                [argv(&[&[
+                    "run",
+                    "myna-parakeet.modelctl",
+                    "set",
+                    "sleep-idle-seconds=60",
+                    "--assume-yes",
+                    "--no-restart",
+                ]])]
+            );
+            let entry = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            assert_eq!(entry.text().as_str(), "60");
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn an_invalid_entry_is_refused_before_any_prompt() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            let entry = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            entry.set_text("soon");
+            entry.emit_by_name::<()>("apply", &[]);
+            settle(|| !toasts(&ui).is_empty());
+
+            assert!(machine.plans().is_empty());
+            assert_eq!(
+                toasts(&ui),
+                ["Unload when idle: value must be a non-negative whole number"]
+            );
+            let entry = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            assert_eq!(entry.text().as_str(), "300", "the row is put back");
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn choosing_a_model_applies_it() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            let combo = setting::<adw::ComboRow>(&ui, "model").expect("model row");
+            assert_eq!(combo.selected(), 0);
+
+            combo.set_selected(1);
+            settle(|| !machine.plans().is_empty() && applied(&ui));
+
+            assert_eq!(
+                machine.plans()[0][0],
+                [
+                    "run",
+                    "myna-parakeet.modelctl",
+                    "use-model",
+                    "base",
+                    "--assume-yes",
+                    "--no-restart",
+                ]
+            );
+            let combo = setting::<adw::ComboRow>(&ui, "model").expect("model row");
+            assert_eq!(combo.selected(), 1);
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn the_changed_row_keeps_the_focus() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            let switch = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            switch.grab_focus();
+            switch.set_active(false);
+            settle(|| !machine.plans().is_empty() && applied(&ui));
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+
+            let switch = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            let focus = gtk::prelude::GtkWindowExt::focus(&window).expect("a focus widget");
+            assert!(
+                focus == switch.clone().upcast::<gtk::Widget>() || focus.is_ancestor(&switch),
+                "focus is on {focus:?}"
+            );
             window.destroy();
         });
     }

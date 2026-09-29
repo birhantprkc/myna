@@ -41,9 +41,8 @@ While a Model-tab apply runs, the page polls snapd once per
 `APPLY_PROGRESS_INTERVAL` (1 s) with `GET /v2/changes?select=in-progress` over
 `/run/snapd.socket`, as the user, on the blocking pool: no process, no prompt.
 It shows the running download's bytes ("Downloading model-small: 210.0 MB of
-484.0 MB") or else the change's summary, on the rows the user changed and on
-the apply controls, updating them in place so the page keeps its scroll and
-focus. The listing is filtered here by the tasks' `affected-snaps`, because
+484.0 MB") or else the change's summary on the row the user changed, updating
+it in place so the page keeps its scroll and focus. The listing is filtered here by the tasks' `affected-snaps`, because
 snapd's own `for=<snap>` returns nothing for the `snapctl-install` change a
 model download runs in. The poll stops when the apply does, and the privileged
 plan has no deadline: a 484 MB download took about five minutes on the Noble

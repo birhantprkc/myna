@@ -464,7 +464,15 @@ async fn execute_apply_plan(
             stdout,
             stderr,
         }) => {
-            if matches!(exit_status, Some(126 | 127)) {
+            // pkexec(1): 126 when the user dismissed the prompt, 127 when
+            // polkit refused or the prompt could not be shown.
+            if exit_status == Some(126) {
+                return Err(SystemConfiguratorFailure::new(
+                    Vec::new(),
+                    SystemConfiguratorError::Cancelled,
+                ));
+            }
+            if exit_status == Some(127) {
                 return Err(SystemConfiguratorFailure::new(
                     Vec::new(),
                     SystemConfiguratorError::authorization_denied(
@@ -651,38 +659,31 @@ mod tests {
         .unwrap()
     }
 
+    /// pkexec exits 126 only when the user dismissed its prompt, which the
+    /// Model tab treats like General's dismissed switch: nothing to report.
     #[test]
-    fn localized_pkexec_exit_126_and_127_map_to_authorization_denied() {
-        for exit_status in [126, 127] {
-            let runner = FakeCommandRunner::scripted([Err(CommandError::NonZero {
-                exit_status: Some(exit_status),
-                stdout: String::new(),
-                stderr: "Autorisierung abgelehnt".to_owned(),
-            })]);
-            let adapter = PkexecSystemConfigurator::new(Arc::new(runner));
+    fn a_dismissed_pkexec_prompt_is_a_cancellation() {
+        let runner = FakeCommandRunner::scripted([Err(CommandError::NonZero {
+            exit_status: Some(126),
+            stdout: String::new(),
+            stderr: "Error executing command as another user: Request dismissed".to_owned(),
+        })]);
+        let adapter = PkexecSystemConfigurator::new(Arc::new(runner));
 
-            let error =
-                block_on(adapter.apply_backend_config(&preview(), CancellationToken::new()))
-                    .unwrap_err();
+        let error = block_on(adapter.apply_backend_config(&preview(), CancellationToken::new()))
+            .unwrap_err();
 
-            assert!(matches!(
-                error.error(),
-                SystemConfiguratorError::AuthorizationDenied {
-                    exit_status: Some(actual),
-                    stderr,
-                    ..
-                } if *actual == exit_status && stderr == "Autorisierung abgelehnt"
-            ));
-        }
+        assert!(error.completed().is_empty());
+        assert_eq!(error.error(), &SystemConfiguratorError::Cancelled);
     }
 
     #[test]
-    fn empty_pkexec_exit_126_and_127_map_to_authorization_denied() {
-        for exit_status in [126, 127] {
+    fn pkexec_exit_127_maps_to_authorization_denied() {
+        for message in ["Autorisierung abgelehnt", ""] {
             let runner = FakeCommandRunner::scripted([Err(CommandError::NonZero {
-                exit_status: Some(exit_status),
+                exit_status: Some(127),
                 stdout: String::new(),
-                stderr: String::new(),
+                stderr: message.to_owned(),
             })]);
             let adapter = PkexecSystemConfigurator::new(Arc::new(runner));
 
@@ -693,10 +694,10 @@ mod tests {
             assert!(matches!(
                 error.error(),
                 SystemConfiguratorError::AuthorizationDenied {
-                    exit_status: Some(actual),
+                    exit_status: Some(127),
                     stderr,
                     ..
-                } if *actual == exit_status && stderr.is_empty()
+                } if stderr == message
             ));
         }
     }

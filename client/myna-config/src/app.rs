@@ -1923,6 +1923,8 @@ struct ProbeMachine {
     dismissing: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// snapd refuses every switch.
     denying: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// polkit refuses every privileged apply.
+    refusing_applies: std::sync::Arc<std::sync::atomic::AtomicBool>,
     switches_attempted: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -1946,6 +1948,7 @@ impl ProbeMachine {
             connected: std::sync::Arc::new(std::sync::Mutex::new(vec!["myna-parakeet".to_owned()])),
             dismissing: std::sync::Arc::default(),
             denying: std::sync::Arc::default(),
+            refusing_applies: std::sync::Arc::default(),
             switches_attempted: std::sync::Arc::default(),
         }
     }
@@ -1953,6 +1956,11 @@ impl ProbeMachine {
     fn dismiss_authorization(&self, dismissing: bool) {
         self.dismissing
             .store(dismissing, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn refuse_applies(&self, refusing: bool) {
+        self.refusing_applies
+            .store(refusing, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn deny_switches(&self, denying: bool) {
@@ -2160,6 +2168,20 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
         preview: &crate::backend_apply::ApplyPreview,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure> {
+        if self
+            .refusing_applies
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(crate::ports::SystemConfiguratorFailure::new(
+                Vec::new(),
+                crate::ports::SystemConfiguratorError::authorization_denied(
+                    "pkexec",
+                    Vec::new(),
+                    Some(127),
+                    "Not authorized",
+                ),
+            ));
+        }
         Ok(self.record(preview.operations()))
     }
 }
@@ -2207,7 +2229,7 @@ impl ProbeMachine {
 
 /// Drive the backend pages through the real repository adapter against a
 /// fixture machine: discovery lists the backends, the active one's page reads its
-/// snapshot, an edit stages, and a confirmed apply is written and read back.
+/// snapshot, and a change applies on its own and is read back, or is refused.
 fn backends_probe() -> glib::ExitCode {
     ui::register_resources();
     if let Err(error) = gtk::init() {
@@ -2712,64 +2734,48 @@ fn backends_probe() -> glib::ExitCode {
     }
     println!("backend-snapshot: read");
 
-    idle_entry().expect("idle entry").set_text("600");
-    let apply_button = || {
-        content()
-            .and_then(|page| {
-                find_descendant(&page, &|widget| widget.is::<ui::BackendApplyControls>())
-            })
-            .and_then(|widget| widget.downcast::<ui::BackendApplyControls>().ok())
-            .map(|controls| controls.apply_button())
+    // A change applies on its own, with no question but polkit's.
+    let apply_idle = |text: &str| {
+        let entry = idle_entry().expect("idle entry");
+        entry.set_text(text);
+        entry.emit_by_name::<()>("apply", &[]);
     };
-    if !settles(&|| apply_button().is_some_and(|button| button.is_sensitive())) {
-        eprintln!("staging an edit never offered to apply it");
-        return glib::ExitCode::FAILURE;
-    }
-    println!("backend-edit: staged");
-
-    apply_button().expect("apply button").emit_clicked();
-    let dialog = || {
-        window
-            .visible_dialog()
-            .and_then(|dialog| dialog.downcast::<adw::AlertDialog>().ok())
-    };
-    if !settles(&|| dialog().is_some()) {
-        eprintln!("apply never asked for confirmation");
-        return glib::ExitCode::FAILURE;
-    }
-    dialog()
-        .expect("confirmation dialog")
-        .emit_by_name::<()>("response", &[&"apply"]);
-    let confirmed = || {
-        content().is_some_and(|page| {
-            find_descendant(&page, &|widget| {
-                widget
-                    .downcast_ref::<adw::PreferencesRow>()
-                    .is_some_and(|row| row.title() == "Changes applied")
-            })
-            .is_some()
+    let wrote = |value: &str| {
+        machine.applied().iter().any(|operation| {
+            operation
+                .iter()
+                .any(|argument| argument == &format!("sleep-idle-seconds={value}"))
         })
     };
-    if !settles(&confirmed) {
+    apply_idle("600");
+    if !settles(&|| wrote("600") && idle_entry().is_some_and(|entry| entry.text() == "600"))
+        || window.visible_dialog().is_some()
+    {
         eprintln!(
-            "the apply was never confirmed by read-back; the machine ran {:?}",
-            machine.applied()
-        );
-        return glib::ExitCode::FAILURE;
-    }
-    let wrote = machine.applied().iter().any(|operation| {
-        operation
-            .iter()
-            .any(|argument| argument == "sleep-idle-seconds=600")
-    });
-    if !wrote || !idle_entry().is_some_and(|entry| entry.text() == "600") {
-        eprintln!(
-            "the apply did not write and show the staged value; the machine ran {:?}",
+            "the change was not applied and read back on its own; the machine ran {:?}",
             machine.applied()
         );
         return glib::ExitCode::FAILURE;
     }
     println!("backend-apply: read back");
+
+    let refused_title = gettextrs::gettext("Changing “{setting}” failed")
+        .replace("{setting}", &gettextrs::gettext("Unload when idle"));
+    machine.refuse_applies(true);
+    apply_idle("900");
+    if !settles(&|| {
+        toast_texts() == [refused_title.clone(), details_label.clone()]
+            && idle_entry().is_some_and(|entry| entry.text() == "600")
+    }) {
+        eprintln!(
+            "a refused change left {:?} with toasts {:?}",
+            idle_entry().map(|entry| entry.text()),
+            toast_texts()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    machine.refuse_applies(false);
+    println!("backend-apply: a refused change reverts with a toast");
 
     view_stack.set_visible_child_name("diagnostics");
     let report = || {

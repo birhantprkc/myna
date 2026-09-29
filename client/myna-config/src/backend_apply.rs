@@ -278,40 +278,39 @@ impl ApplySuccess {
     }
 }
 
-pub fn prepare_backend_apply(page: &BackendPage) -> Result<ApplyPreview, PrepareApplyError> {
-    let mut changes = Vec::new();
-    let mut issues = Vec::new();
-    let mut restart_behaviors = Vec::new();
-
-    for row in page.rows().iter().filter(|row| row.dirty()) {
-        let metadata = row.presentation().metadata();
-        if let Err(message) = metadata.validation().validate(row.effective_value()) {
-            issues.push(ValidationIssue::new(metadata.title(), message));
-            continue;
-        }
-
-        restart_behaviors.push(metadata.restart_behavior());
-        match StagedChange::new(
-            row.presentation().key(),
-            row.presentation().value().clone(),
-            row.effective_value().clone(),
-        ) {
-            Ok(change) => changes.push(change),
-            Err(error) => issues.push(ValidationIssue::new(metadata.title(), error.message())),
-        }
+/// The plan for the one change the user just made on the Model tab: `key`
+/// becomes `value`, replacing what the page last read.
+pub fn prepare_change(
+    page: &BackendPage,
+    key: &str,
+    value: ConfigValue,
+) -> Result<ApplyPreview, PrepareApplyError> {
+    let Some(row) = page
+        .rows()
+        .iter()
+        .find(|row| row.presentation().key() == key)
+    else {
+        return Err(PrepareApplyError::NoChanges);
+    };
+    let presentation = row.presentation();
+    if presentation.value() == &value {
+        return Err(PrepareApplyError::NoChanges);
     }
-
-    if !issues.is_empty() {
-        return Err(PrepareApplyError::Invalid(issues));
-    }
+    let metadata = presentation.metadata();
+    let invalid = |message: String| {
+        PrepareApplyError::Invalid(vec![ValidationIssue::new(metadata.title(), message)])
+    };
+    metadata.validation().validate(&value).map_err(invalid)?;
+    let change = StagedChange::new(key, presentation.value().clone(), value)
+        .map_err(|error| invalid(error.message().to_owned()))?;
     let identity = page
         .snapshot()
         .map(|snapshot| snapshot.identity().clone())
         .unwrap_or_else(|| page.identity().clone());
     ApplyPreview::new(
         identity,
-        changes,
-        restart_impact_from_behaviors(&restart_behaviors),
+        vec![change],
+        restart_impact_from_behaviors(&[metadata.restart_behavior()]),
     )
 }
 
@@ -920,9 +919,31 @@ mod tests {
             "sleep-idle-seconds: 30\nverbose: false\n",
         ));
 
-        let error = prepare_backend_apply(&page).unwrap_err();
+        for (key, value) in [
+            ("sleep-idle-seconds", ConfigValue::Integer(30)),
+            ("no-such-setting", ConfigValue::Integer(1)),
+        ] {
+            let error = prepare_change(&page, key, value).unwrap_err();
+            assert!(matches!(error, PrepareApplyError::NoChanges), "{key}");
+        }
+    }
 
-        assert!(matches!(error, PrepareApplyError::NoChanges));
+    #[test]
+    fn a_setting_that_needs_no_restart_plans_one_set() {
+        let page = page_with_snapshot(snapshot_with_configuration("sleep-idle-seconds: 30\n"));
+
+        let preview =
+            prepare_change(&page, "sleep-idle-seconds", ConfigValue::Integer(60)).unwrap();
+
+        assert_eq!(preview.restart_impact(), RestartImpact::None);
+        assert_eq!(preview.changes().len(), 1);
+        let argv: Vec<&str> = preview.operations()[0]
+            .arguments()
+            .iter()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(preview.operations().len(), 1);
+        assert_eq!(argv, modelctl_set(&["sleep-idle-seconds=60"]));
     }
 
     #[test]
@@ -1142,9 +1163,12 @@ mod tests {
         );
         let request = controller.begin_snapshot("myna-parakeet").unwrap();
         controller.complete_snapshot(request, snapshot);
-        controller.stage_edit("myna-parakeet", "model", ConfigValue::Text("new".into()));
-
-        let preview = prepare_backend_apply(&controller.page("myna-parakeet").unwrap()).unwrap();
+        let preview = prepare_change(
+            &controller.page("myna-parakeet").unwrap(),
+            "model",
+            ConfigValue::Text("new".into()),
+        )
+        .unwrap();
 
         assert_eq!(
             preview.operations()[0].arguments(),
@@ -1196,17 +1220,21 @@ mod tests {
             request,
             snapshot_with_configuration("sleep-idle-seconds: 30\nverbose: false\n"),
         );
-        controller.stage_edit(
-            "myna-parakeet",
+        let error = prepare_change(
+            &controller.page("myna-parakeet").unwrap(),
             "sleep-idle-seconds",
             ConfigValue::Text("not-a-number".into()),
-        );
-
-        let error = prepare_backend_apply(&controller.page("myna-parakeet").unwrap()).unwrap_err();
+        )
+        .unwrap_err();
 
         match error {
             PrepareApplyError::Invalid(issues) => {
                 assert_eq!(issues.len(), 1);
+                assert_eq!(issues[0].title(), "Unload when idle");
+                assert_eq!(
+                    issues[0].message(),
+                    "value must be a non-negative whole number"
+                );
             }
             other => panic!("expected validation error, got {other:?}"),
         }
@@ -1229,13 +1257,12 @@ mod tests {
             request,
             snapshot_with_configuration("future-setting: old\n"),
         );
-        controller.stage_edit(
-            "myna-parakeet",
+        let preview = prepare_change(
+            &controller.page("myna-parakeet").unwrap(),
             "future-setting",
             ConfigValue::Text("new".into()),
-        );
-
-        let preview = prepare_backend_apply(&controller.page("myna-parakeet").unwrap()).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(preview.restart_impact(), RestartImpact::Unknown);
         assert!(preview.restart_impact().requires_readiness());
@@ -1660,33 +1687,15 @@ mod tests {
     }
 
     #[test]
-    fn partial_readback_mismatch_retains_only_unconfirmed_dirty_values() {
-        let controller = BackendController::detached();
-        let request = controller.begin_discovery();
-        controller.complete_discovery(
-            request,
-            Ok(parse_connections(
-                "Interface Plug Slot Notes\ncontent[inference-provider] myna:backend myna-parakeet:provider manual\n",
-                "name: content\nslots:\n  - myna-parakeet:provider:\n      content: inference-provider\n",
-            )
-            .unwrap()),
-        );
-        let request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(
-            request,
-            snapshot_with_configuration("sleep-idle-seconds: 30\nverbose: false\n"),
-        );
-        controller.stage_edit("myna-parakeet", "verbose", ConfigValue::Boolean(true));
-        controller.stage_edit(
-            "myna-parakeet",
-            "sleep-idle-seconds",
-            ConfigValue::Integer(60),
-        );
-        let preview = prepare_backend_apply(&controller.page("myna-parakeet").unwrap()).unwrap();
+    fn a_value_the_model_did_not_keep_is_a_mismatch() {
+        let page = page_with_snapshot(snapshot_with_configuration("sleep-idle-seconds: 30\n"));
+        let preview =
+            prepare_change(&page, "sleep-idle-seconds", ConfigValue::Integer(60)).unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
-        let readback = snapshot_with_configuration("sleep-idle-seconds: 30\nverbose: true\n");
         let repository = FakeRepository {
-            snapshots: Rc::new(RefCell::new(VecDeque::from([readback.clone()]))),
+            snapshots: Rc::new(RefCell::new(VecDeque::from([snapshot_with_configuration(
+                "sleep-idle-seconds: 30\n",
+            )]))),
         };
 
         let result = block_on(execute_backend_apply(
@@ -1697,41 +1706,24 @@ mod tests {
             CancellationToken::new(),
         ));
 
-        let ApplyFailure::ReadBackMismatch {
-            snapshot,
-            mismatches,
-        } = result.unwrap_err()
-        else {
+        let ApplyFailure::ReadBackMismatch { mismatches, .. } = result.unwrap_err() else {
             panic!("expected mismatch");
         };
-        controller.apply_readback("myna-parakeet", *snapshot);
-        let page = controller.page("myna-parakeet").unwrap();
         assert_eq!(mismatches.len(), 1);
         assert_eq!(mismatches[0].key(), "sleep-idle-seconds");
-        assert_eq!(page.dirty_keys(), &["sleep-idle-seconds".to_owned()]);
+        assert_eq!(mismatches[0].actual(), Some(&ConfigValue::Integer(30)));
         assert_eq!(configurator.call_count(), 1);
     }
 
     #[test]
-    fn successful_single_batch_apply_reads_back_and_clears_dirty_values() {
-        let controller = BackendController::detached();
-        let request = controller.begin_discovery();
-        controller.complete_discovery(
-            request,
-            Ok(parse_connections(
-                "Interface Plug Slot Notes\ncontent[inference-provider] myna:backend myna-parakeet:provider manual\n",
-                "name: content\nslots:\n  - myna-parakeet:provider:\n      content: inference-provider\n",
-            )
-            .unwrap()),
-        );
-        let request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(request, snapshot_with_configuration("verbose: false\n"));
-        controller.stage_edit("myna-parakeet", "verbose", ConfigValue::Boolean(true));
-        let preview = prepare_backend_apply(&controller.page("myna-parakeet").unwrap()).unwrap();
+    fn a_change_is_applied_in_one_authorization_and_read_back() {
+        let page = page_with_snapshot(snapshot_with_configuration("verbose: false\n"));
+        let preview = prepare_change(&page, "verbose", ConfigValue::Boolean(true)).unwrap();
         let configurator = FakeConfigurator::scripted([Ok(successful_results(&preview))]);
-        let readback = snapshot_with_configuration("verbose: true\n");
         let repository = FakeRepository {
-            snapshots: Rc::new(RefCell::new(VecDeque::from([readback]))),
+            snapshots: Rc::new(RefCell::new(VecDeque::from([snapshot_with_configuration(
+                "verbose: true\n",
+            )]))),
         };
 
         let result = block_on(execute_backend_apply(
@@ -1743,12 +1735,10 @@ mod tests {
         ))
         .unwrap();
 
-        controller.apply_readback("myna-parakeet", result.snapshot().clone());
-        assert!(controller
-            .page("myna-parakeet")
-            .unwrap()
-            .dirty_keys()
-            .is_empty());
+        assert_eq!(
+            result.snapshot().value("verbose"),
+            Some(ConfigValue::Boolean(true))
+        );
         assert_eq!(configurator.call_count(), 1);
     }
 
@@ -1786,20 +1776,8 @@ mod tests {
 
     #[test]
     fn later_operation_failure_preserves_success_and_reads_back_persisted_state() {
-        let controller = BackendController::detached();
-        let request = controller.begin_discovery();
-        controller.complete_discovery(
-            request,
-            Ok(parse_connections(
-                "Interface Plug Slot Notes\ncontent[inference-provider] myna:backend myna-parakeet:provider manual\n",
-                "name: content\nslots:\n  - myna-parakeet:provider:\n      content: inference-provider\n",
-            )
-            .unwrap()),
-        );
-        let request = controller.begin_snapshot("myna-parakeet").unwrap();
-        controller.complete_snapshot(request, snapshot_with_configuration("verbose: false\n"));
-        controller.stage_edit("myna-parakeet", "verbose", ConfigValue::Boolean(true));
-        let preview = prepare_backend_apply(&controller.page("myna-parakeet").unwrap()).unwrap();
+        let page = page_with_snapshot(snapshot_with_configuration("verbose: false\n"));
+        let preview = prepare_change(&page, "verbose", ConfigValue::Boolean(true)).unwrap();
         let runner = FakeCommandRunner::scripted([Err(CommandError::NonZero {
             exit_status: Some(1),
             stdout: plan_output(preview.operations(), Some((1, "restart failed"))),
@@ -1842,12 +1820,6 @@ mod tests {
             snapshot.configuration().get("verbose"),
             Some(&ConfigValue::Boolean(true))
         );
-        controller.apply_readback("myna-parakeet", *snapshot);
-        assert!(controller
-            .page("myna-parakeet")
-            .unwrap()
-            .dirty_keys()
-            .is_empty());
         assert_eq!(runner.calls().len(), 1);
     }
 
