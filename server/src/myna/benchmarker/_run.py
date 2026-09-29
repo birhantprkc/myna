@@ -1766,8 +1766,10 @@ def cmd_run(args: argparse.Namespace) -> None:
         print("\n===================== MATRIX =====================")
         from myna.benchmarker._summarize import cmd_summarize
 
+        # No intervals: they need numpy, which a test host may lack;
+        # `summarize` prints them afterwards.
         summarize_args = argparse.Namespace(
-            infile=str(cfg.out), by_category=True, sort="wer", corpus=None
+            infile=str(cfg.out), by_category=True, sort="wer", corpus=None, ci=False
         )
         try:
             cmd_summarize(summarize_args)

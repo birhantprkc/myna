@@ -5,7 +5,9 @@
 Reads the JSONL written by the sweep runner and produces the model x hardware
 comparison the specs need: one row per label (e.g. ``myna-whisper/cpu/tiny/batch``),
 with micro-averaged WER/CER (total edits / total reference, so long clips count
-proportionally) and finalize-latency percentiles.
+proportionally), RTFx and finalize-latency percentiles, then 95% bootstrap
+intervals over clips (``--no-ci`` skips them). ``compare A B`` is the paired
+version for two rows on the same clips.
 
 Records are deduplicated by (label, clip, repeat, phase), keeping the most
 recent - so re-running a label replaces its old rows rather than
@@ -15,12 +17,21 @@ double-counting. Warmup rows are read past: they record what ran, not a score.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 from pathlib import Path
 from typing import Any, TypedDict
 
 from myna.benchmarker._pace import REALTIME
 from myna.benchmarker._schedule import COLD, MEASURED, WARMUP
+from myna.benchmarker._stats import (
+    ClipSample,
+    latency_percentile,
+    percentile,
+    repeat_cv,
+    rtfx,
+    sample_floor,
+)
 
 Record = dict[str, Any]
 
@@ -45,8 +56,12 @@ class SummaryRow(TypedDict):
     wer: float | None
     cer: float | None
     rtf: float | None
+    rtfx: float | None
     median_final: float | None
     p95_final: float | None
+    p99_final: float | None
+    timed_clips: int
+    repeat_cv: float | None
     cold_ready: float | None
     warm_ready: float | None
     audio: float
@@ -171,11 +186,52 @@ def one_normalizer_version(records: list[Record]) -> None:
         )
 
 
-def _pct(values: list[float], q: float) -> float | None:
-    if not values:
+def _latency(record: Record) -> float | None:
+    """A warm row's finalize latency, if it measured one a user would see.
+
+    A realtime feed that fell behind delivered a burst no microphone would.
+    """
+    if record.get("pace_starved"):
         return None
-    s = sorted(values)
-    return s[min(len(s) - 1, int(q * len(s)))]
+    return record.get("finalize_latency")
+
+
+def _throughput(record: Record) -> tuple[float, float] | None:
+    """(audio, processing) seconds of a row that measured throughput.
+
+    A realtime feed's decode time is set by the pace, not the model.
+    """
+    if record.get("rtf") is None or record.get("pace") == REALTIME:
+        return None
+    return record["audio_seconds"], record["rtf"] * record["audio_seconds"]
+
+
+def clip_samples(records: list[Record]) -> dict[str, ClipSample]:
+    """One cell's warm rows folded per clip, every repeat into its clip."""
+    folded: dict[str, ClipSample] = {}
+    for r in records:
+        if r.get("cold"):
+            continue
+        prior = folded.get(r["clip"], ClipSample())
+        latency = _latency(r)
+        timed = _throughput(r) or (0.0, 0.0)
+        folded[r["clip"]] = ClipSample(
+            wer_edits=prior.wer_edits + r["wer_edits"],
+            ref_words=prior.ref_words + r["ref_words"],
+            cer_edits=prior.cer_edits + r["cer_edits"],
+            ref_chars=prior.ref_chars + r["ref_chars"],
+            audio_seconds=prior.audio_seconds + timed[0],
+            processing_seconds=prior.processing_seconds + timed[1],
+            latencies=prior.latencies + ((latency,) if latency is not None else ()),
+        )
+    return folded
+
+
+def _groups(records: list[Record]) -> dict[RowKey, list[Record]]:
+    groups: dict[RowKey, list[Record]] = {}
+    for rec in records:
+        groups.setdefault(row_key(rec), []).append(rec)
+    return groups
 
 
 def _summarize(records: list[Record]) -> dict[RowKey, SummaryRow]:
@@ -184,28 +240,19 @@ def _summarize(records: list[Record]) -> dict[RowKey, SummaryRow]:
     Accuracy and warm latency come from the warm rows; cold-load latency is
     reported separately from the cold samples (``--cold`` bench runs).
     """
-    groups: dict[RowKey, list[Record]] = {}
-    for rec in records:
-        groups.setdefault(row_key(rec), []).append(rec)
-
     summary: dict[RowKey, SummaryRow] = {}
-    for key, recs in groups.items():
+    for key, recs in _groups(records).items():
         machine, label = key
         warm = [r for r in recs if not r.get("cold", False)]
         cold = [r for r in recs if r.get("cold", False)]
         # A realtime feed that fell behind measured no live latency; its
         # transcript still scores.
         starved = [r for r in warm if r.get("pace_starved")]
-        finals = [
-            r["finalize_latency"]
-            for r in warm
-            if r.get("finalize_latency") is not None and not r.get("pace_starved")
-        ]
+        clips = list(clip_samples(warm).values())
         # Pure model-load wait (session open -> ready), independent of decode.
         cold_readys = [r["time_to_ready"] for r in cold if r.get("time_to_ready") is not None]
         warm_readys = [r["time_to_ready"] for r in warm if r.get("time_to_ready") is not None]
-        # A realtime feed's RTF is set by the pace (about 1), not throughput.
-        rtfs = [r["rtf"] for r in warm if r.get("rtf") is not None and r.get("pace") != REALTIME]
+        rtfs = [r["rtf"] for r in warm if _throughput(r) is not None]
         wer_edits = sum(r["wer_edits"] for r in warm)
         ref_words = sum(r["ref_words"] for r in warm)
         cer_edits = sum(r["cer_edits"] for r in warm)
@@ -219,13 +266,18 @@ def _summarize(records: list[Record]) -> dict[RowKey, SummaryRow]:
             # would both print as flawless and rank first.
             "wer": wer_edits / ref_words if ref_words else None,
             "cer": cer_edits / ref_chars if ref_chars else None,
-            "rtf": _pct(rtfs, 0.5),
-            "median_final": _pct(finals, 0.5),
-            "p95_final": _pct(finals, 0.95),
+            "rtf": percentile(rtfs, 0.5),
+            "rtfx": rtfx(clips),
+            "median_final": latency_percentile(clips, 0.5),
+            # None below the sample floor; timed_clips says why.
+            "p95_final": latency_percentile(clips, 0.95),
+            "p99_final": latency_percentile(clips, 0.99),
+            "timed_clips": sum(1 for c in clips if c.latencies),
+            "repeat_cv": repeat_cv([c.latencies for c in clips]),
             # cold-load = model residency wait only (time_to_ready), from --cold
             # samples; the warm reload should be ~0.
             "cold_ready": max(cold_readys) if cold_readys else None,
-            "warm_ready": _pct(warm_readys, 0.5),
+            "warm_ready": percentile(warm_readys, 0.5),
             "audio": sum(r["audio_seconds"] for r in warm),
             "peak_rss_mb": None,
             "peak_vram_mb": None,
@@ -257,6 +309,23 @@ def resources_path_for(out: Path) -> Path:
 
 def _f(x: object, spec: str = "6.2f") -> str:
     return format(x, spec) if isinstance(x, (int, float)) else "    --"
+
+
+TOO_FEW = "n too small"
+
+
+def _too_few(samples: int, q: float) -> bool:
+    """Whether a ``q`` percentile is missing for want of samples, not of data."""
+    return 0 < samples < sample_floor(q)
+
+
+def _tail(value: float | None, samples: int, q: float, width: int) -> str:
+    """A tail latency cell: the value, or why there is none."""
+    return f"{TOO_FEW:>{width}}" if _too_few(samples, q) else _f(value, f"{width}.3f")
+
+
+def _rtfx(value: object) -> str:
+    return f"{value:.1f}" if isinstance(value, (int, float)) else "--"
 
 
 def _scaled(rate: object) -> float | None:
@@ -337,12 +406,14 @@ def _print_overall(
     mw = max([len("machine"), *(len(key[0]) for key in summary)]) if show_machine else 0
     mh = f"{'machine':{mw}} " if show_machine else ""
     rh = f"{'RSS MB':>9} {'VRAM MB':>9}" if show_res else ""
-    print(
+    header = (
         f"{'#':>3} {'label':{lw}} {'status':>13} {mh}{'clips':>5} "
-        f"{'WER%':>7} {'CER%':>7} {'speed':>6} "
-        f"{'med final':>10} {'p95 final':>10} {'cold load':>10} {rh}"
+        f"{'WER%':>7} {'CER%':>7} {'speed':>6} {'RTFx':>7} "
+        f"{'med final':>11} {'p95 final':>11} {'p99 final':>11} {'rep CV%':>7} "
+        f"{'cold load':>10} {rh}"
     )
-    print("-" * (lw + 86 + (mw + 1 if show_machine else 0) + (20 if show_res else 0)))
+    print(header)
+    print("-" * len(header.rstrip()))
     for rank, key in enumerate(order, start=1):
         s = summary[key]
         status, reason = statuses.get(key, ("--", ""))
@@ -358,14 +429,22 @@ def _print_overall(
         print(
             f"{rank:>3} {key[1]:{lw}} {status_col:>13} {mc}{s['clips']:>5} "
             f"{_f(_scaled(s['wer']), '7.2f')} {_f(_scaled(s['cer']), '7.2f')} "
-            f"{_speed(s['rtf']):>6} "
-            f"{_f(s['median_final'], '10.3f')} {_f(s['p95_final'], '10.3f')} "
+            f"{_speed(s['rtf']):>6} {_rtfx(s['rtfx']):>7} "
+            f"{_f(s['median_final'], '11.3f')} "
+            f"{_tail(s['p95_final'], s['timed_clips'], 0.95, 11)} "
+            f"{_tail(s['p99_final'], s['timed_clips'], 0.99, 11)} "
+            f"{_f(_scaled(s['repeat_cv']), '7.1f')} "
             f"{_f(s['cold_ready'], '10.3f')} {rc}"
         )
     print(
-        "\nmed/p95 final are seconds (end-of-audio -> committed text); "
-        "speed = audio/decode (higher is faster)."
+        "\nmed/p95/p99 final are seconds (end-of-audio -> committed text); a p95 needs"
+        " 60 timed clips and a p99 300 (repeats pool, but do not count), or it reads 'n too small'."
     )
+    print(
+        "speed = 1 / median per-clip RTF; RTFx = total audio / total processing"
+        " (Open ASR Leaderboard), batch size 1; higher is faster for both."
+    )
+    print("rep CV% = median within-clip spread of finalize latency across repeats (noise).")
     print("cold load = model residency wait (session open -> ready), from --cold runs.")
     print(
         "status: OK = clean full sweep; USABILITY_FAIL = ran out of budget mid-sweep (metrics"
@@ -415,12 +494,82 @@ def _print_by_category(
         print(f"{name:{lw}} " + " ".join(cells) + marker)
 
 
-def cmd_summarize(args: argparse.Namespace) -> None:
-    infile = Path(args.infile)
-    records, statuses = _load_latest(infile)
-    records, corpus = one_corpus(records, getattr(args, "corpus", None))
+def _bootstrap() -> Any:
+    """The interval module, or a way forward where numpy is missing."""
+    try:
+        return importlib.import_module("myna.benchmarker._bootstrap")
+    except ImportError as exc:
+        raise SystemExit(
+            f"confidence intervals need numpy ({exc}): install it "
+            "(sudo apt install python3-numpy), or pass --no-ci"
+        ) from None
+
+
+def _interval(interval: Any, scale: float = 1.0, spec: str = ".2f") -> str:
+    if interval.estimate is None:
+        return "--"
+    point = format(interval.estimate * scale, spec)
+    if interval.low is None:
+        return point
+    return f"{point} [{interval.low * scale:{spec}}, {interval.high * scale:{spec}}]"
+
+
+def print_intervals(
+    summary: dict[RowKey, SummaryRow],
+    records: list[Record],
+    order: list[RowKey],
+    resamples: int | None = None,
+) -> None:
+    """95% intervals per row, clips resampled with their repeats."""
+    boot = _bootstrap()
+    resamples = resamples or boot.RESAMPLES
+    groups = _groups(records)
+    show_machine = len({key[0] for key in order}) > 1
+    rows = [("label", "WER%", "CER%", "RTFx", "med final", "p95 final")]
+    for key in order:
+        cells = boot.cell_intervals(list(clip_samples(groups[key]).values()), resamples=resamples)
+        rows.append(
+            (
+                f"{key[1]} @ {key[0]}" if show_machine else key[1],
+                _interval(cells["wer"], 100),
+                _interval(cells["cer"], 100),
+                _interval(cells["rtfx"], spec=".1f"),
+                _interval(cells["p50_final"], spec=".3f"),
+                TOO_FEW
+                if _too_few(summary[key]["timed_clips"], 0.95)
+                else _interval(cells["p95_final"], spec=".3f"),
+            )
+        )
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    lines = [
+        f"{row[0]:{widths[0]}}  "
+        + "  ".join(f"{cell:>{w}}" for cell, w in zip(row[1:], widths[1:], strict=True))
+        for row in rows
+    ]
+    print(
+        f"\n95% CI: percentile bootstrap over clips ({resamples} resamples, "
+        f"seed {boot.SEED}); a clip's repeats are drawn together"
+    )
+    print("\n".join([lines[0], "-" * len(lines[0]), *lines[1:]]))
+
+
+def _load_comparable(
+    args: argparse.Namespace,
+) -> tuple[list[Record], str, dict[RowKey, tuple[str, str]]]:
+    """(records, corpus, statuses) of a results file, refused unless its rows
+    share one corpus, one normalizer version and one CPU per machine name."""
+    records, statuses = _load_latest(Path(args.infile))
+    records, corpus = one_corpus(records, args.corpus)
     one_machine_per_name(records)
     one_normalizer_version(records)
+    return records, corpus, statuses
+
+
+def cmd_summarize(args: argparse.Namespace) -> None:
+    infile = Path(args.infile)
+    if args.ci:
+        _bootstrap()  # before the table, not after it
+    records, corpus, statuses = _load_comparable(args)
     summary = _summarize(records)
     for key, peaks in _load_resources(resources_path_for(infile)).items():
         if key in summary:
@@ -434,8 +583,58 @@ def cmd_summarize(args: argparse.Namespace) -> None:
     print(f"corpus {corpus}\n")
     order = ranked_labels(summary, getattr(args, "sort", "wer") or "wer", statuses)
     _print_overall(summary, order, statuses)
+    if args.ci:
+        print_intervals(summary, records, order)
     if getattr(args, "by_category", False):
         _print_by_category(records, order, statuses)
+
+
+def _resolve(name: str, keys: set[RowKey]) -> RowKey:
+    """A ``label`` or ``label@machine`` argument as the row it names."""
+    label, machine = name.rsplit("@", 1) if "@" in name else (name, "")
+    matches = sorted(k for k in keys if k[1] == label and (not machine or k[0] == machine))
+    if not matches:
+        raise SystemExit(f"no rows labelled {name!r}")
+    if len(matches) > 1:
+        options = ", ".join(f"{k[1]}@{k[0]}" for k in matches)
+        raise SystemExit(f"{name!r} ran on more than one machine; name one of {options}")
+    return matches[0]
+
+
+def _delta(delta: Any, scale: float, spec: str) -> str:
+    if delta.estimate is None:
+        return "--"
+    return (
+        f"{delta.estimate * scale:+{spec}} "
+        f"[{delta.low * scale:+{spec}}, {delta.high * scale:+{spec}}]  p={delta.p_value:.4f}"
+    )
+
+
+def cmd_compare(args: argparse.Namespace) -> None:
+    """Paired bootstrap of two rows over the clips both measured.
+
+    One corpus and one normalizer version, as for the table: a difference
+    across either compares the scoring, not the systems.
+    """
+    records, corpus, _ = _load_comparable(args)
+    groups = _groups(records)
+    first, second = (_resolve(n, set(groups)) for n in (args.first, args.second))
+    boot = _bootstrap()
+    try:
+        deltas = boot.paired(clip_samples(groups[first]), clip_samples(groups[second]))
+    except ValueError as exc:
+        raise SystemExit(f"{args.first} vs {args.second}: {exc}") from None
+    clips = deltas["wer"].clips
+    print(f"{args.first} - {args.second} over {clips} paired clip(s), corpus {corpus}")
+    print(f"WER%          {_delta(deltas['wer'], 100, '.2f')}")
+    print(f"CER%          {_delta(deltas['cer'], 100, '.2f')}")
+    latency = deltas["p50_final"]
+    timed = f"  ({latency.clips} timed on both)" if latency.clips != clips else ""
+    print(f"med final s   {_delta(latency, 1, '.3f')}{timed}")
+    print(
+        f"\n95% CI and two-sided p: paired bootstrap over clips ({boot.RESAMPLES} resamples,"
+        f" seed {boot.SEED}); negative means {args.first} is lower."
+    )
 
 
 # ---------------------------------------------------------------------------

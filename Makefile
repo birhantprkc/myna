@@ -356,6 +356,9 @@ BENCH_LABEL_ARGS = $(if $(BENCH_LABEL_SUFFIX),--label-suffix $(BENCH_LABEL_SUFFI
 # It also takes the venv out of the sudo path. `sudo .venv/bin/python` left
 # root-owned __pycache__ dirs behind that broke every later `uv run`; the zipapp
 # is self-contained (websockets, psutil, pyyaml vendored) and writes nothing here.
+# Its `summarize` intervals need the host's python3-numpy: bench-aggregate and
+# bench-merge stop with that hint without it (BENCH_CI=--no-ci skips them).
+BENCH_CI ?=
 BENCH_PYZ = myna-bench.pyz
 BENCH = python3 $(BENCH_PYZ)
 BENCH_ROOT = sudo python3 $(BENCH_PYZ)
@@ -386,14 +389,14 @@ bench-run-%: build-bench bench-corpus ## Sweep scoped to one snap (bench-run-<sn
 
 .PHONY: bench-aggregate
 bench-aggregate: build-bench ## Re-print the comparison table from the last sweep
-	$(BENCH) summarize --by-category --in results/bench.jsonl
+	$(BENCH) summarize --by-category --in results/bench.jsonl $(BENCH_CI)
 
 # Fold a submission back in. The leaderboard is one tracked file; re-running a
 # machine replaces that machine's rows rather than doubling them.
 .PHONY: bench-merge
 bench-merge: build-bench ## Merge submissions into the leaderboard (make bench-merge SUBMISSIONS="a.jsonl b.jsonl")
 	$(BENCH) merge $(SUBMISSIONS) --leaderboard results/leaderboard.jsonl
-	$(BENCH) summarize --in results/leaderboard.jsonl
+	$(BENCH) summarize --in results/leaderboard.jsonl $(BENCH_CI)
 
 # A whole LibriSpeech chapter concatenated in reading order (real speech, not
 # synthetic), category "long-form": the per-utterance tiers are all a few

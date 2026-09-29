@@ -34,6 +34,7 @@ def dispatched(monkeypatch):
         ("myna.benchmarker.corpus_chinese", "cmd_download_zh", "download-corpus-zh"),
         ("myna.benchmarker._corpus", "cmd_make", "make-corpus"),
         ("myna.benchmarker._summarize", "cmd_summarize", "summarize"),
+        ("myna.benchmarker._summarize", "cmd_compare", "compare"),
         ("myna.benchmarker.guard", "cmd_check", "check"),
     ]:
         monkeypatch.setattr(f"{module}.{attr}", capture(name))
@@ -262,6 +263,28 @@ def test_summarize_defaults_to_ranking_by_wer_across_one_corpus(monkeypatch, dis
 def test_summarize_rejects_a_sort_key_with_no_column(monkeypatch, dispatched):
     with pytest.raises(SystemExit):
         run_cli(monkeypatch, "summarize", "--sort", "vibes")
+
+
+def test_summarize_prints_intervals_unless_told_not_to(monkeypatch, dispatched):
+    run_cli(monkeypatch, "summarize")
+    assert dispatched["args"].ci is True
+    run_cli(monkeypatch, "summarize", "--no-ci")
+    assert dispatched["args"].ci is False
+
+
+# ─── compare ─────────────────────────────────────────────────────────────────
+
+
+def test_compare_takes_two_labels_and_a_results_file(monkeypatch, dispatched):
+    run_cli(monkeypatch, "compare", "--in", "r.jsonl", "--corpus", "v1:x", "a", "b@m1")
+    args = dispatched["args"]
+    assert dispatched["command"] == "compare"
+    assert (args.infile, args.corpus, args.first, args.second) == ("r.jsonl", "v1:x", "a", "b@m1")
+
+
+def test_compare_needs_two_labels(monkeypatch, dispatched):
+    with pytest.raises(SystemExit):
+        run_cli(monkeypatch, "compare", "a")
 
 
 # ─── bench ───────────────────────────────────────────────────────────────────

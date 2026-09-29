@@ -34,6 +34,32 @@ Read the top-level `.kb/agents.md` file before continuing below.
   40-clip FLEURS subset's bootstrap CI half-width is ~2-4 WER points, so a
   point estimate on it is not comparable to a published number; use the full
   test set for that comparison.
+- Those 2026-09-17 intervals were computed outside the tool, and the per-clip
+  rows behind them were not kept, so they cannot be re-derived; treat them as
+  indicative until a full FLEURS run is summarized with `--ci`.
+- `summarize` prints 95% percentile-bootstrap intervals (10000 resamples,
+  seed 0) for WER, CER, RTFx and median/p95 finalize latency. The clip is the
+  resampling unit: a clip's repeats are drawn together, because they share
+  audio and are not independent. Intervals need numpy on the host
+  (`python3-numpy`); `--no-ci` skips them, and nothing else in the pyz needs it.
+- RTFx is total audio over total processing seconds (Open ASR Leaderboard,
+  batch size 1); `speed` is 1 / median per-clip RTF. Realtime-paced rows are
+  left out of both, since their decode time is the pace.
+- A p95 from fewer than 60 timed clips and a p99 from fewer than 300 print
+  `n too small`, never a number. The floor counts clips, not rows: every
+  repeat's latency is pooled into the percentile, but repeats of the same
+  audio are correlated, so 20 clips x 3 repeats would still rest a p95 on the
+  slowest one or two clips. The bootstrap applies the same floor per draw.
+- `rep CV%` is the median within-clip coefficient of variation of finalize
+  latency across repeats: a high value means the machine, not the model, is
+  setting the timing.
+- `compare A B` (`label` or `label@machine`) is a paired bootstrap over the
+  clips both rows measured, same corpus and normalizer version: delta WER,
+  CER and median finalize latency (A minus B), 95% interval, and a two-sided
+  p-value from the re-centred replicates. The latency delta uses only clips
+  timed on both sides (a starved realtime row or failed finalize drops a
+  clip), so both medians of a draw pool the same clips. Compare two systems this way, not
+  by eyeballing two table rows whose intervals overlap.
 
 # Architecture
 

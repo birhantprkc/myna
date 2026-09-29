@@ -260,7 +260,13 @@ def test_a_pre_manifest_submission_merges_and_summarizes_beside_a_current_one(tm
     board = tmp_path / "leaderboard.jsonl"
 
     cmd_merge(MergeArgs(board, old, new))
-    cmd_summarize(type("A", (), {"infile": str(board), "by_category": True, "sort": "wer"})())
+    cmd_summarize(
+        type(
+            "A",
+            (),
+            {"infile": str(board), "by_category": True, "sort": "wer", "ci": True, "corpus": None},
+        )()
+    )
 
     assert {machine_of(r) for r in read_jsonl(board)} == {"framework", "zephyrus"}
     assert "2 row(s) on 2 machine(s)" in capsys.readouterr().out

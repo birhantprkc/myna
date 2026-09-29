@@ -20,6 +20,8 @@
 # in-tree `make bench-run` measure the same thing by construction. It stays
 # light because the package leans only on myna.core (websockets), myna.testbed
 # (stdlib) and myna.server.lifecycle (stdlib): no torch, no onnxruntime.
+# The one exception is summarize's confidence intervals, which import the
+# host's numpy (python3-numpy) and are skipped with --no-ci.
 #
 # Run with sudo for the ``run`` subcommand (snap install/remove). Everything
 # else (plan, bench, download-corpus, make-corpus, summarize, check) is
@@ -58,3 +60,4 @@ echo "  python3 myna-bench.pyz download-corpus --out ./corpus"
 echo "  python3 myna-bench.pyz plan --config bench.yaml"
 echo "  sudo python3 myna-bench.pyz run --config bench.yaml"
 echo "  python3 myna-bench.pyz summarize --in results.jsonl --by-category"
+echo "    (intervals need python3-numpy; --no-ci skips them)"

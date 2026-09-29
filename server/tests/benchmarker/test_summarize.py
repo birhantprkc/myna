@@ -9,22 +9,28 @@ that keeps a partially-failed sweep readable instead of crashing the report.
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 from _records import record
 
+from myna.benchmarker._bootstrap import Interval, cell_intervals
 from myna.benchmarker._summarize import (
     _f,
+    _interval,
     _load_latest,
     _load_resources,
-    _pct,
     _print_by_category,
     _print_overall,
+    _rtfx,
     _speed,
     _summarize,
+    clip_samples,
+    cmd_compare,
     cmd_summarize,
     one_corpus,
     one_normalizer_version,
+    print_intervals,
     ranked_labels,
 )
 
@@ -146,21 +152,6 @@ def test_load_latest_on_a_missing_file_exits_with_the_path(tmp_path):
         _load_latest(tmp_path / "absent.jsonl")
 
 
-# ─── _pct ────────────────────────────────────────────────────────────────────
-
-
-def test_pct_of_nothing_is_none():
-    assert _pct([], 0.5) is None
-
-
-@pytest.mark.parametrize(
-    ("q", "expected"),
-    [(0.0, 1.0), (0.5, 3.0), (0.95, 5.0), (1.0, 5.0)],
-)
-def test_pct_indexes_the_sorted_values_and_clamps_at_the_top(q, expected):
-    assert _pct([5.0, 1.0, 4.0, 2.0, 3.0], q) == expected
-
-
 # ─── _summarize ──────────────────────────────────────────────────────────────
 
 
@@ -266,7 +257,8 @@ def test_a_starved_realtime_rows_latency_is_kept_out_but_its_accuracy_counts():
         ]
     )
     stats = summary[UNKNOWN]
-    assert (stats["median_final"], stats["p95_final"]) == (0.4, 0.4)
+    assert stats["median_final"] == 0.4
+    assert stats["timed_clips"] == 1
     assert stats["clips"] == 2
     assert stats["starved"] == 1
 
@@ -442,11 +434,12 @@ def test_a_label_missing_a_category_renders_as_a_hole_not_a_zero(capsys):
 
 
 class Args:
-    def __init__(self, infile, by_category=False, sort="wer", corpus=None):
+    def __init__(self, infile, by_category=False, sort="wer", corpus=None, ci=False):
         self.infile = str(infile)
         self.by_category = by_category
         self.sort = sort
         self.corpus = corpus
+        self.ci = ci
 
 
 def test_cmd_summarize_prints_the_record_count_and_the_table(tmp_path, capsys):
@@ -609,3 +602,394 @@ def test_cmd_summarize_flags_a_failed_label_in_the_table(tmp_path, capsys):
     )
     cmd_summarize(Args(path))
     assert "USABILITY_FAIL" in capsys.readouterr().out
+
+
+# ─── RTFx, sample floors, repeat noise ──────────────────────────────────────
+
+
+def test_rtfx_is_total_audio_over_total_processing():
+    summary = _summarize(
+        [
+            record(clip="c1", audio_seconds=10.0, rtf=0.1),  # 1 s of processing
+            record(clip="c2", audio_seconds=2.0, rtf=0.5),  # 1 s of processing
+        ]
+    )
+    assert summary[UNKNOWN]["rtfx"] == pytest.approx(6.0)
+
+
+def test_a_realtime_rows_processing_is_left_out_of_rtfx():
+    summary = _summarize(
+        [
+            record(clip="c1", audio_seconds=4.0, rtf=0.25, pace="max"),
+            record(clip="c2", audio_seconds=4.0, rtf=1.02, pace="realtime"),
+        ]
+    )
+    assert summary[UNKNOWN]["rtfx"] == pytest.approx(4.0)
+
+
+def overall_row(rows: list, capsys) -> str:
+    print_overall(_summarize(rows))
+    return next(ln for ln in capsys.readouterr().out.splitlines() if UNKNOWN[1] in ln)
+
+
+def latencies(n: int) -> list:
+    """n clips with latencies 0.00, 0.01, ... so each percentile is distinct."""
+    return [record(clip=f"c{i}", finalize_latency=i / 100) for i in range(n)]
+
+
+def test_a_p95_from_fewer_than_60_latencies_is_refused(capsys):
+    assert _summarize(latencies(59))[UNKNOWN]["p95_final"] is None
+    assert overall_row(latencies(59), capsys).count("n too small") == 2  # p95 and p99
+
+
+def test_a_p95_from_60_latencies_is_reported(capsys):
+    summary = _summarize(latencies(60))
+    assert summary[UNKNOWN]["p95_final"] == 0.57
+    assert summary[UNKNOWN]["p99_final"] is None
+    row = overall_row(latencies(60), capsys)
+    assert "0.570" in row
+    assert row.count("n too small") == 1
+
+
+def test_a_single_latency_is_too_few_for_a_tail(capsys):
+    assert overall_row(latencies(1), capsys).count("n too small") == 2
+
+
+def test_no_latencies_is_a_dash_not_too_few(capsys):
+    row = overall_row([record(finalize_latency=None)], capsys)
+    assert "n too small" not in row
+
+
+def test_an_unmeasured_rtfx_is_a_dash():
+    assert _rtfx(None) == "--"
+
+
+def test_the_table_prints_rtfx(capsys):
+    assert " 6.0 " in overall_row([record(audio_seconds=3.0, rtf=1 / 6)], capsys)
+
+
+def test_a_p99_needs_300_latencies():
+    summary = _summarize([record(clip=f"c{i}", finalize_latency=0.3) for i in range(300)])
+    assert summary[UNKNOWN]["p99_final"] == 0.3
+
+
+def test_repeats_do_not_count_toward_the_latency_floor():
+    """60 latencies from 20 clips still put the p95 on the slowest clip or two."""
+    rows = [
+        record(clip=f"c{i}", repeat=r, finalize_latency=0.3) for i in range(20) for r in range(3)
+    ]
+    assert _summarize(rows)[UNKNOWN]["p95_final"] is None
+
+
+def test_repeats_of_enough_timed_clips_pool_into_the_tail():
+    rows = [
+        record(clip=f"c{i}", repeat=r, finalize_latency=0.01 * (3 * i + r))
+        for i in range(60)
+        for r in range(3)
+    ]
+    stats = _summarize(rows)[UNKNOWN]
+    assert stats["timed_clips"] == 60
+    # Nearest rank 171 of the 180 pooled latencies.
+    assert stats["p95_final"] == pytest.approx(1.71)
+
+
+def test_repeat_cv_is_the_spread_of_a_clips_repeated_latencies():
+    rows = [
+        record(clip="c1", repeat=0, finalize_latency=0.9),
+        record(clip="c1", repeat=1, finalize_latency=1.1),
+        record(clip="c1", repeat=2, finalize_latency=1.0),
+    ]
+    assert _summarize(rows)[UNKNOWN]["repeat_cv"] == pytest.approx(0.1)
+
+
+def test_a_single_pass_has_no_repeat_cv():
+    assert _summarize([record()])[UNKNOWN]["repeat_cv"] is None
+
+
+def test_the_table_states_rtfx_is_at_batch_size_one(capsys):
+    print_overall(_summarize([record()]))
+    out = capsys.readouterr().out
+    assert "RTFx" in out and "batch size 1" in out
+
+
+# ─── clip samples ───────────────────────────────────────────────────────────
+
+
+def test_clip_samples_fold_every_repeat_into_its_clip():
+    rows = [
+        record(clip="c1", repeat=0, wer_edits=1, ref_words=5, finalize_latency=0.2),
+        record(clip="c1", repeat=1, wer_edits=2, ref_words=5, finalize_latency=0.4),
+        record(clip="c2", repeat=0, wer_edits=0, ref_words=3, finalize_latency=None),
+    ]
+    samples = clip_samples(rows)
+    assert samples["c1"].wer_edits == 3 and samples["c1"].ref_words == 10
+    assert samples["c1"].latencies == (0.2, 0.4)
+    assert samples["c2"].latencies == ()
+
+
+def test_clip_samples_leave_starved_latency_and_realtime_throughput_out():
+    rows = [
+        record(clip="c1", pace="realtime", pace_starved=True, finalize_latency=9.0, rtf=1.0),
+    ]
+    sample = clip_samples(rows)["c1"]
+    assert sample.latencies == ()
+    assert sample.processing_seconds == 0.0
+    assert sample.ref_words == 2
+
+
+def test_clip_samples_skip_cold_rows():
+    assert list(clip_samples([record(clip="c0", cold=True), record(clip="c1")])) == ["c1"]
+
+
+def test_clip_samples_sum_the_character_counts_too():
+    rows = [record(repeat=r, cer_edits=2, ref_chars=11) for r in range(2)]
+    sample = clip_samples(rows)[record()["clip"]]
+    assert (sample.cer_edits, sample.ref_chars) == (4, 22)
+
+
+def test_clip_samples_read_a_row_without_a_cold_flag_as_warm():
+    row = record()
+    del row["cold"]
+    assert list(clip_samples([row])) == [row["clip"]]
+
+
+# ─── --ci ───────────────────────────────────────────────────────────────────
+
+
+def test_cmd_summarize_prints_intervals_when_asked(tmp_path, capsys):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, [record(clip=f"c{i}", wer_edits=i % 2) for i in range(10)])
+    cmd_summarize(Args(path, ci=True))
+    out = capsys.readouterr().out
+    assert "95% CI" in out
+    assert "10000 resamples" in out
+
+
+def test_cmd_summarize_without_ci_prints_no_intervals(tmp_path, capsys):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, [record()])
+    cmd_summarize(Args(path, ci=False))
+    assert "95% CI" not in capsys.readouterr().out
+
+
+def test_the_interval_table_brackets_each_estimate(capsys):
+    """Identical clips: every resample equals the estimate, so the table is exact."""
+    rows = [
+        record(
+            clip=f"c{i}",
+            wer_edits=1,
+            ref_words=10,
+            cer_edits=1,
+            ref_chars=20,
+            audio_seconds=2.0,
+            rtf=0.25,
+            finalize_latency=0.3,
+        )
+        for i in range(60)
+    ]
+    print_intervals(_summarize(rows), rows, [UNKNOWN], resamples=200)
+    assert capsys.readouterr().out.splitlines()[2:] == [
+        "label                                   WER%               CER%"
+        "            RTFx             med final             p95 final",
+        "-" * 123,
+        "whisper/cpu/tiny/batch  10.00 [10.00, 10.00]  5.00 [5.00, 5.00]"
+        "  4.0 [4.0, 4.0]  0.300 [0.300, 0.300]  0.300 [0.300, 0.300]",
+    ]
+
+
+def test_the_interval_table_resamples_as_often_as_it_says(capsys):
+    rows = [record(clip=f"c{i}", wer_edits=i % 3, ref_words=10) for i in range(30)]
+    print_intervals(_summarize(rows), rows, [UNKNOWN], resamples=50)
+    wer = cell_intervals(list(clip_samples(rows).values()), resamples=50)["wer"]
+    line = capsys.readouterr().out.splitlines()[-1]
+    assert f"[{wer.low * 100:.2f}, {wer.high * 100:.2f}]" in line
+
+
+def test_the_interval_table_names_the_machine_once_there_are_two(capsys):
+    rows = [
+        record(label="a", provenance={"machine": "m1"}, finalize_latency=None),
+        record(label="a", provenance={"machine": "m2"}, finalize_latency=0.3),
+    ]
+    summary = _summarize(rows)
+    print_intervals(summary, rows, sorted(summary), resamples=50)
+    out = capsys.readouterr().out.splitlines()
+    assert out[1].startswith("95% CI: percentile bootstrap over clips (50 resamples, seed 0)")
+    assert [ln.split()[:3] for ln in out[4:]] == [["a", "@", "m1"], ["a", "@", "m2"]]
+    assert out[4].split()[-2:] == ["--", "--"]  # no latency: neither a value nor too few
+    assert out[5].endswith("n too small")
+
+
+def test_without_numpy_the_intervals_say_how_to_get_them(tmp_path, monkeypatch, capsys):
+    monkeypatch.setitem(sys.modules, "numpy", None)
+    monkeypatch.delitem(sys.modules, "myna.benchmarker._bootstrap", raising=False)
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, [record()])
+    with pytest.raises(SystemExit, match=r"python3-numpy\), or pass --no-ci$"):
+        cmd_summarize(Args(path, ci=True))
+    assert capsys.readouterr().out == ""  # refused before the table, not after it
+    cmd_summarize(Args(path, ci=False))
+    assert record()["label"] in capsys.readouterr().out
+
+
+# ─── compare ────────────────────────────────────────────────────────────────
+
+
+class CompareArgs:
+    def __init__(self, infile, first, second, corpus=None):
+        self.infile = str(infile)
+        self.first = first
+        self.second = second
+        self.corpus = corpus
+
+
+def _pair(path, *, extra_edits):
+    rows = []
+    for i in range(40):
+        rows.append(record(label="a", clip=f"c{i}", wer_edits=1, ref_words=10))
+        rows.append(
+            record(label="b", clip=f"c{i}", wer_edits=1 + extra_edits * (i % 2), ref_words=10)
+        )
+    write_jsonl(path, rows)
+
+
+def test_compare_reports_the_delta_its_interval_and_p(tmp_path, capsys):
+    path = tmp_path / "results.jsonl"
+    _pair(path, extra_edits=2)
+    cmd_compare(CompareArgs(path, "b", "a"))
+    out = capsys.readouterr().out
+    assert "b - a over 40 paired clip(s)" in out
+    wer = next(ln for ln in out.splitlines() if ln.startswith("WER%"))
+    assert "+10.00" in wer and "p=" in wer
+
+
+def test_compare_prints_every_delta_exactly(tmp_path, capsys):
+    """B is worse by one word, one character and 0.25 s on every clip, so
+    every resample sees the same difference."""
+    rows = []
+    for i in range(10):
+        rows.append(record(label="a", clip=f"c{i}", finalize_latency=0.5))
+        rows.append(
+            record(
+                label="b",
+                clip=f"c{i}",
+                wer_edits=1,
+                cer_edits=1,
+                ref_chars=10,
+                finalize_latency=0.75,
+            )
+        )
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, rows)
+    cmd_compare(CompareArgs(path, "b", "a"))
+    assert capsys.readouterr().out.splitlines() == [
+        "b - a over 10 paired clip(s), corpus v1:testcorpus",
+        "WER%          +50.00 [+50.00, +50.00]  p=0.0001",
+        "CER%          +10.00 [+10.00, +10.00]  p=0.0001",
+        "med final s   +0.250 [+0.250, +0.250]  p=0.0001",
+        "",
+        "95% CI and two-sided p: paired bootstrap over clips (10000 resamples, seed 0);"
+        " negative means b is lower.",
+    ]
+
+
+def test_compare_reads_a_label_that_itself_holds_an_at(tmp_path, capsys):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(
+        path,
+        [
+            record(label="a@x", provenance={"machine": "m1"}),
+            record(label="b", provenance={"machine": "m1"}),
+        ],
+    )
+    cmd_compare(CompareArgs(path, "a@x@m1", "b"))
+    assert "over 1 paired clip(s)" in capsys.readouterr().out
+
+
+def test_compare_marks_a_delta_it_cannot_measure(tmp_path, capsys):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(
+        path,
+        [record(label="a", finalize_latency=None), record(label="b", finalize_latency=0.3)],
+    )
+    cmd_compare(CompareArgs(path, "a", "b"))
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("med final"))
+    assert line == "med final s   --  (0 timed on both)"
+
+
+def test_compare_says_how_many_clips_the_latency_delta_used(tmp_path, capsys):
+    rows = [record(label="a", clip=f"c{i}", finalize_latency=0.5) for i in range(3)]
+    rows += [record(label="b", clip=f"c{i}", finalize_latency=0.5) for i in range(2)]
+    rows.append(record(label="b", clip="c2", finalize_latency=None))
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, rows)
+    cmd_compare(CompareArgs(path, "a", "b"))
+    out = capsys.readouterr().out
+    assert "over 3 paired clip(s)" in out
+    assert "(2 timed on both)" in out
+
+
+def test_an_interval_without_bounds_prints_its_estimate_alone():
+    assert _interval(Interval(0.25, None, None), 100) == "25.00"
+
+
+def test_compare_refuses_a_label_not_in_the_file(tmp_path):
+    path = tmp_path / "results.jsonl"
+    _pair(path, extra_edits=0)
+    with pytest.raises(SystemExit, match="no rows labelled 'c'"):
+        cmd_compare(CompareArgs(path, "a", "c"))
+
+
+def test_compare_needs_a_machine_when_a_label_ran_on_two(tmp_path):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(
+        path,
+        [
+            record(label="a", provenance={"machine": "m1"}),
+            record(label="a", provenance={"machine": "m2"}),
+        ],
+    )
+    with pytest.raises(SystemExit, match="a@m1, a@m2"):
+        cmd_compare(CompareArgs(path, "a", "a@m1"))
+
+
+def test_compare_takes_label_at_machine(tmp_path, capsys):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(
+        path,
+        [
+            record(label="a", provenance={"machine": "m1"}, wer_edits=1),
+            record(label="a", provenance={"machine": "m2"}, wer_edits=0),
+        ],
+    )
+    cmd_compare(CompareArgs(path, "a@m1", "a@m2"))
+    out = capsys.readouterr().out
+    assert "a@m1 - a@m2 over 1 paired clip(s)" in out
+    assert "WER%          +50.00" in out  # m1's row minus m2's, not the other way round
+
+
+def test_compare_refuses_labels_with_no_clip_in_common(tmp_path):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, [record(label="a", clip="c1"), record(label="b", clip="c2")])
+    with pytest.raises(SystemExit, match="no clip"):
+        cmd_compare(CompareArgs(path, "a", "b"))
+
+
+def test_compare_picks_one_corpus_out_of_two(tmp_path, capsys):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(
+        path,
+        [
+            record(label="a", corpus_id="v1:x"),
+            record(label="b", corpus_id="v1:x"),
+            record(label="b", clip="c2", corpus_id="v1:y"),
+        ],
+    )
+    cmd_compare(CompareArgs(path, "a", "b", corpus="v1:x"))
+    assert "corpus v1:x" in capsys.readouterr().out
+
+
+def test_compare_refuses_two_corpora(tmp_path):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, [record(label="a", corpus_id="v1:x"), record(label="b", corpus_id="v1:y")])
+    with pytest.raises(SystemExit, match="compares nothing"):
+        cmd_compare(CompareArgs(path, "a", "b"))

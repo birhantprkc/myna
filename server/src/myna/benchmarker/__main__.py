@@ -273,6 +273,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_sum.add_argument(
         "--corpus", help="corpus id to report on; required when the file holds more than one"
     )
+    p_sum.add_argument(
+        "--ci",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="print 95%% clip-bootstrap intervals (default: on; needs numpy)",
+    )
+
+    # -- compare -----------------------------------------------------------
+    p_cmp = sub.add_parser(
+        "compare",
+        help="paired bootstrap of two rows on the same clips",
+        description=(
+            "Compare two rows of a results file clip by clip: the WER, CER and median "
+            "finalize-latency difference (first minus second), its 95%% interval and a "
+            "two-sided p-value. A label that ran on several machines is named label@machine."
+        ),
+    )
+    p_cmp.add_argument("first", help="label, or label@machine")
+    p_cmp.add_argument("second", help="label, or label@machine")
+    p_cmp.add_argument("--in", dest="infile", default="results.jsonl", help="results JSONL to read")
+    p_cmp.add_argument(
+        "--corpus", help="corpus id to compare on; required when the file holds more than one"
+    )
 
     # -- merge -------------------------------------------------------------
     p_merge = sub.add_parser(
@@ -357,6 +380,10 @@ def main() -> None:
         from myna.benchmarker._summarize import cmd_summarize
 
         cmd_summarize(args)
+    elif args.command == "compare":
+        from myna.benchmarker._summarize import cmd_compare
+
+        cmd_compare(args)
     elif args.command == "merge":
         from myna.benchmarker._summarize import cmd_merge
 
