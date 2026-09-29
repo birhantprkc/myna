@@ -238,6 +238,34 @@ def test_status_rows_ride_along_with_their_clips(tmp_path):
     assert any("status" in r for r in rows)
 
 
+def test_a_pre_manifest_submission_merges_and_summarizes_beside_a_current_one(tmp_path, capsys):
+    """Schema 1 rows carry no schema_version, served_runtime or environment
+    manifest. Missing is unknown, never an error: old results stay usable."""
+    from myna.benchmarker._summarize import SCHEMA_VERSION, cmd_summarize
+
+    old = tmp_path / "old.jsonl"
+    new = tmp_path / "new.jsonl"
+    write_jsonl(old, [{"type": "machine", "hostname": "framework"}, *submission("framework")])
+    write_jsonl(
+        new,
+        [
+            {"type": "machine", "schema_version": SCHEMA_VERSION, "hostname": "zephyrus"},
+            *submission(
+                "zephyrus",
+                schema_version=SCHEMA_VERSION,
+                served_runtime={"onnxruntime": "1.23.0"},
+            ),
+        ],
+    )
+    board = tmp_path / "leaderboard.jsonl"
+
+    cmd_merge(MergeArgs(board, old, new))
+    cmd_summarize(type("A", (), {"infile": str(board), "by_category": True, "sort": "wer"})())
+
+    assert {machine_of(r) for r in read_jsonl(board)} == {"framework", "zephyrus"}
+    assert "2 row(s) on 2 machine(s)" in capsys.readouterr().out
+
+
 def test_merging_nothing_is_an_error(tmp_path):
     board = tmp_path / "leaderboard.jsonl"
     empty = tmp_path / "empty.jsonl"

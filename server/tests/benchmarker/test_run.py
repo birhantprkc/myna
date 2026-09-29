@@ -22,6 +22,7 @@ import pytest
 from _records import record
 
 from myna.benchmarker import _bench, _run
+from myna.benchmarker._summarize import SCHEMA_VERSION
 
 _ARTEFACTS = Path(tempfile.mkdtemp(prefix="myna-bench-tests-"))
 for _name in ("myna-whisper.snap", "myna-parakeet.snap", "myna-funasr.snap"):
@@ -80,6 +81,60 @@ class FakeRun:
 
     def ran(self, *fragments) -> bool:
         return any(all(f in cmd for f in fragments) for cmd in self.calls)
+
+
+# A synthetic header: cmd_run must never snapshot the host (snap, nvidia-smi),
+# and a test that decides on the GPU must not pass or fail by the host's. The
+# default is CPU-only; GPU_MACHINE carries one.
+_HARNESS = {"version": "0.4.0+git7", "pyz": "myna-bench.pyz", "pyz_sha256": "ab" * 32}
+_OS_STATE = {
+    "kernel_release": "6.17.0-5-generic",
+    "kernel_cmdline": "BOOT_IMAGE=/vmlinuz quiet",
+    "cpu_microcode": "0xb4",
+    "cpu_governor": "performance",
+    "cpu_boost": False,
+    "smt": {"control": "on", "active": True},
+    "snapd": "2.72",
+}
+_GPUS = [
+    {
+        "index": 0,
+        "name": "NVIDIA GeForce RTX 4070",
+        "driver_version": "580.82",
+        "cuda_driver_version": "13.0",
+        "persistence_mode": "Enabled",
+        "sm_clock_mhz": 210,
+        "sm_clock_max_mhz": 3105,
+        "mem_clock_mhz": 405,
+        "mem_clock_max_mhz": 10501,
+        "ecc_mode": None,
+        "memory_total_mib": 8188,
+    }
+]
+MACHINE = {
+    "type": "machine",
+    "schema_version": SCHEMA_VERSION,
+    "hostname": "benchbox",
+    "cpu": "Synthetic CPU",
+    "cpu_cores": 8,
+    "ram_gb": 32.0,
+    "gpu": None,
+    "gpu_vram_gb": None,
+    "ubuntu": "26.04",
+    "kernel": "6.17.0-5-generic",
+    "os": _OS_STATE,
+    "gpus": [],
+    "harness": _HARNESS,
+    "collected_at": "2026-09-29T00:00:00+00:00",
+}
+GPU_MACHINE = {**MACHINE, "gpu": "NVIDIA GeForce RTX 4070", "gpu_vram_gb": 8.0, "gpus": _GPUS}
+
+
+@pytest.fixture(autouse=True)
+def synthetic_machine(monkeypatch):
+    from myna.benchmarker import machine
+
+    monkeypatch.setattr(machine, "collect", lambda: MACHINE)
 
 
 @pytest.fixture
@@ -542,6 +597,91 @@ def test_start_installs_and_connects_but_selects_nothing(fake_run, monkeypatch):
     assert target.engine is None
 
 
+SNAP_LIST = """\
+Name          Version               Rev  Tracking  Publisher  Notes
+myna-whisper  0.1.0+git40.a8521e61  x3   -         -          components[1/2]
+"""
+
+SNAP_INFO = """\
+name:      myna-whisper
+components:
+  +model-small:  0.1.0+git40.a8521e61 2026-09-29 (x3) 480MB --
+  +gpu-nvidia:   --                   --         --   --    not installed
+refresh-date: today at 17:30 BST
+"""
+
+
+def installed_target(tmp_path):
+    snap = tmp_path / "myna-whisper_0.1.0_amd64.snap"
+    comp = tmp_path / "myna-whisper+model-small.comp"
+    snap.write_bytes(b"snap bytes")
+    comp.write_bytes(b"component bytes")
+    return SnapTarget({"snap": "myna-whisper", "files": [str(snap), str(comp)]}, ROOT)
+
+
+def test_every_sideloaded_file_is_named_hashed_and_sized(tmp_path, fake_run):
+    """sha3-384 because that is the digest snapd itself identifies a blob by."""
+    import hashlib
+
+    target = installed_target(tmp_path)
+    installed = target.installed(target.hash_files())
+
+    assert installed["files"] == [
+        {
+            "file": "myna-whisper_0.1.0_amd64.snap",
+            "sha3_384": hashlib.sha3_384(b"snap bytes").hexdigest(),
+            "size": len(b"snap bytes"),
+        },
+        {
+            "file": "myna-whisper+model-small.comp",
+            "sha3_384": hashlib.sha3_384(b"component bytes").hexdigest(),
+            "size": len(b"component bytes"),
+        },
+    ]
+
+
+def test_installed_reads_the_version_and_revision_snapd_reports(tmp_path, fake_run):
+    fake_run.reply("snap list", stdout=SNAP_LIST)
+    fake_run.reply("snap info", stdout=SNAP_INFO)
+
+    installed = installed_target(tmp_path).installed([])
+
+    assert (installed["snap"], installed["version"], installed["revision"]) == (
+        "myna-whisper",
+        "0.1.0+git40.a8521e61",
+        "x3",
+    )
+    # Only what is installed: an available component did not serve anything.
+    assert installed["components"] == {
+        "model-small": {"version": "0.1.0+git40.a8521e61", "revision": "x3"}
+    }
+
+
+def test_installed_is_unknown_field_by_field_when_snapd_will_not_answer(tmp_path, fake_run):
+    fake_run.reply("snap list", rc=1)
+    fake_run.reply("snap info", rc=1)
+
+    target = installed_target(tmp_path)
+    installed = target.installed(target.hash_files())
+
+    assert (installed["version"], installed["revision"], installed["components"]) == (
+        None,
+        None,
+        None,
+    )
+    assert len(installed["files"]) == 2
+
+
+def test_a_file_that_vanished_is_recorded_without_a_hash(tmp_path, fake_run):
+    target = installed_target(tmp_path)
+    Path(target.files[1]).unlink()
+    assert target.hash_files()[1] == {
+        "file": "myna-whisper+model-small.comp",
+        "sha3_384": None,
+        "size": None,
+    }
+
+
 def test_selecting_an_engine_starts_the_service_and_reads_back_what_took(
     fake_run, monkeypatch, capsys
 ):
@@ -843,6 +983,7 @@ def test_resource_peaks_are_written_to_the_sidecar_when_sampling(tmp_path, monke
     assert peak["snap"] == "myna-whisper"
     assert peak["peak_rss_mb"] > 0
     assert peak["peak_vram_mb"] is None
+    assert peak["schema_version"] == SCHEMA_VERSION
 
 
 def test_peaks_are_written_even_when_the_target_crashed(tmp_path, monkeypatch):
@@ -1013,6 +1154,7 @@ def test_a_cell_that_overran_is_stamped_usability_fail_in_the_file(
     ]
     assert statuses[0]["status"] == "usability_fail"
     assert "budget" in statuses[0]["reason"]
+    assert statuses[0]["schema_version"] == SCHEMA_VERSION
 
 
 def test_the_default_sweep_budget_applies_when_the_config_omits_one():
@@ -1081,9 +1223,15 @@ def stub_target(monkeypatch):
     class Stub(SnapTarget):
         started = 0
         stopped = 0
+        events: list[str] = []
+
+        def hash_files(self):
+            type(self).events.append("hash")
+            return []
 
         def start(self):
             type(self).started += 1
+            type(self).events.append("start")
 
         def select_engine(self, name=None):
             self.engine, self.model = name or "cpu", "tiny"
@@ -1105,7 +1253,11 @@ def stub_target(monkeypatch):
         def use_model(self, model):
             self.model = model
 
+        def installed(self, files):
+            return {"snap": self.snap, "version": "1.0", "revision": "x1", "files": files}
+
     Stub.started = Stub.stopped = 0
+    Stub.events = []
     monkeypatch.setattr(_run, "SnapTarget", Stub)
     return Stub
 
@@ -1134,6 +1286,47 @@ def test_a_sweep_writes_the_machine_header_then_one_record_per_target(
     assert lines[1]["label"] == "myna-whisper/cpu/tiny/batch"
     assert stub_target.started == 1 and stub_target.stopped == 1
     assert "MATRIX" in capsys.readouterr().out
+
+
+def test_every_row_carries_the_environment_manifest(tmp_path, corpus, stub_target, monkeypatch):
+    """merge keeps rows and drops the header, so what produced a number has
+    to travel on the row: the engine read back, the installed build, the
+    harness, the OS state and the GPUs."""
+    from myna.benchmarker import machine
+
+    monkeypatch.setattr(_run.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(machine, "collect", lambda: GPU_MACHINE)
+    seen = []
+    monkeypatch.setattr(_run, "_sweep_one", lambda **kw: seen.append(kw["provenance"]))
+    out = tmp_path / "results.jsonl"
+    config = write_config(tmp_path / "bench.yaml", manifest=str(corpus), out=str(out))
+
+    cmd_run(RunArgs(config, out=out))
+
+    provenance = seen[0]
+    assert provenance["engine"] == "cpu"
+    assert provenance["artifacts"] == {
+        "snap": "myna-whisper",
+        "version": "1.0",
+        "revision": "x1",
+        "files": [],
+    }
+    assert provenance["machine"] == "benchbox"
+    assert provenance["harness"] == _HARNESS
+    assert provenance["os"] == _OS_STATE
+    assert provenance["gpus"] == _GPUS
+
+
+def test_files_are_hashed_before_the_install_not_ahead_of_the_cold_load(
+    tmp_path, corpus, stub_sweep, stub_target, monkeypatch
+):
+    monkeypatch.setattr(_run.os, "geteuid", lambda: 0)
+    out = tmp_path / "results.jsonl"
+    config = write_config(tmp_path / "bench.yaml", manifest=str(corpus), out=str(out))
+
+    cmd_run(RunArgs(config, out=out))
+
+    assert stub_target.events == ["hash", "start"]
 
 
 def test_the_cold_clip_is_held_out_of_the_warm_sweep(

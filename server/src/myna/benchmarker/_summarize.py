@@ -20,6 +20,13 @@ from typing import Any, TypedDict
 
 Record = dict[str, Any]
 
+# Version of the results schema, stamped on the machine header and every row.
+# Readers treat a missing field as unknown, never as an error, so a file from
+# before a bump still summarizes and merges. 1 is the unstamped schema; 2 adds
+# the environment manifest (os, gpus, harness, installed artifacts, served
+# runtime).
+SCHEMA_VERSION = 2
+
 # A row's identity in a results file. The machine is half of it: a leaderboard
 # holds the same <snap>/<engine>/<model>/<mode> measured on many machines, and
 # that is the whole point of collecting them. Keyed on label alone, merging two

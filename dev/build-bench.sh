@@ -37,9 +37,15 @@ trap 'rm -rf "$WORK"' EXIT
 python3 -m venv "$WORK/venv"
 "$WORK/venv/bin/pip" install --quiet shiv websockets psutil pyyaml
 
-echo "building $OUT …"
+# A copy of the sources with the build's version baked in, so every results
+# file says which harness produced it (myna.benchmarker.machine reads it back).
+cp -r "$REPO_ROOT/server/src" "$WORK/src"
+find "$WORK/src" -name __pycache__ -prune -exec rm -rf {} +
+"$REPO_ROOT/dev/version.sh" server/src >"$WORK/src/myna/benchmarker/VERSION"
+
+echo "building $OUT ($(cat "$WORK/src/myna/benchmarker/VERSION")) …"
 "$WORK/venv/bin/shiv" \
-    --site-packages "$REPO_ROOT/server/src" \
+    --site-packages "$WORK/src" \
     --entry-point "myna.benchmarker.__main__:main" \
     --python "/usr/bin/env python3" \
     --output-file "$OUT" \

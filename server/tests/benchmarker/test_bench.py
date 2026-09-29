@@ -21,7 +21,7 @@ from myna.benchmarker._bench import (
     session_error,
     to_line,
 )
-from myna.benchmarker._summarize import _summarize
+from myna.benchmarker._summarize import SCHEMA_VERSION, _summarize
 from myna.core import TranscriptionError, TranscriptionFinal, serve_unix
 from myna.testbed import NORMALIZER_VERSION, FakeAdapter, ScriptStep
 from myna.testbed.corpus import Clip, sha256_file
@@ -151,6 +151,7 @@ async def test_a_record_row_is_json_serialisable_and_carries_provenance(tmp_path
     assert line["reference"] == "hello world"
     assert line["cold"] is True
     assert line["normalizer_version"] == NORMALIZER_VERSION
+    assert line["schema_version"] == SCHEMA_VERSION
 
 
 async def test_provenance_is_omitted_entirely_when_not_supplied(tmp_path, socket):
@@ -227,6 +228,114 @@ async def test_the_served_models_are_read_from_the_socket_capabilities(tmp_path,
         out_fp=out,
     )
     assert out.records[0]["served_models"]
+
+
+async def test_the_served_runtime_is_read_from_the_socket_capabilities(tmp_path):
+    """Only the server knows which inference stack it loaded."""
+    from dataclasses import replace
+
+    adapter = transcribing("hello world")
+    caps = replace(adapter.capabilities(), runtime={"onnxruntime": "1.23.0"})
+    adapter.capabilities = lambda: caps
+    path = tmp_path / "runtime.sock"
+    out = Collector()
+    async with serve_unix(adapter, path):
+        await run_clips(
+            socket=path,
+            clips=[make_clip(tmp_path)],
+            label="fake/batch",
+            cold=False,
+            streaming=False,
+            provenance=None,
+            budget_seconds=None,
+            out_fp=out,
+        )
+    assert out.records[0]["served_runtime"] == {"onnxruntime": "1.23.0"}
+
+
+async def test_the_served_runtime_is_read_again_after_the_model_has_loaded(tmp_path):
+    """A server reports library versions only once a session has loaded them."""
+    from dataclasses import replace
+
+    adapter = transcribing("hello world")
+    base = adapter.capabilities()
+    loaded = False
+    run_session = adapter.run_session
+
+    async def loading(*args, **kwargs):
+        nonlocal loaded
+        loaded = True
+        await run_session(*args, **kwargs)
+
+    adapter.run_session = loading
+    adapter.capabilities = lambda: replace(
+        base, runtime={"onnxruntime": "1.23.0"} if loaded else {"device": "cpu"}
+    )
+    path = tmp_path / "runtime.sock"
+    out = Collector()
+    async with serve_unix(adapter, path):
+        await run_clips(
+            socket=path,
+            clips=[make_clip(tmp_path)],
+            label="fake/batch",
+            cold=True,
+            streaming=False,
+            provenance=None,
+            budget_seconds=None,
+            out_fp=out,
+        )
+    assert out.records[0]["served_runtime"] == {"onnxruntime": "1.23.0"}
+
+
+async def test_a_failed_runtime_re_read_keeps_the_first_answer(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from myna.benchmarker import _bench
+
+    adapter = transcribing("hello world")
+    caps = replace(adapter.capabilities(), runtime={"device": "cpu"})
+    adapter.capabilities = lambda: caps
+    real = _bench.WsUnixClient.capabilities
+    calls = 0
+
+    async def once(self):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise ConnectionResetError("server went away")
+        return await real(self)
+
+    monkeypatch.setattr(_bench.WsUnixClient, "capabilities", once)
+    path = tmp_path / "runtime.sock"
+    out = Collector()
+    async with serve_unix(adapter, path):
+        await run_clips(
+            socket=path,
+            clips=[make_clip(tmp_path)],
+            label="fake/batch",
+            cold=False,
+            streaming=False,
+            provenance=None,
+            budget_seconds=None,
+            out_fp=out,
+        )
+    assert calls == 2
+    assert out.records[0]["served_runtime"] == {"device": "cpu"}
+
+
+async def test_a_server_that_does_not_name_its_runtime_leaves_it_unknown(tmp_path, socket):
+    out = Collector()
+    await run_clips(
+        socket=socket,
+        clips=[make_clip(tmp_path)],
+        label="fake/batch",
+        cold=False,
+        streaming=False,
+        provenance=None,
+        budget_seconds=None,
+        out_fp=out,
+    )
+    assert out.records[0]["served_runtime"] is None
 
 
 async def test_a_sweep_against_a_dead_socket_still_records_the_failures(tmp_path):

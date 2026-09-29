@@ -101,6 +101,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import glob
+import hashlib
 import json
 import os
 import pwd
@@ -115,6 +116,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, TypedDict
 
 import yaml
+
+from myna.benchmarker._summarize import SCHEMA_VERSION
 
 if TYPE_CHECKING:
     import psutil
@@ -314,6 +317,69 @@ class EngineInfo(TypedDict):
     models: list[str]
     configurations: dict[str, Any]
     devices: dict[str, Any]
+
+
+class ArtifactFile(TypedDict):
+    file: str
+    sha3_384: str | None
+    size: int | None
+
+
+class InstalledComponent(TypedDict):
+    version: str
+    revision: str
+
+
+class Installed(TypedDict):
+    snap: str
+    version: str | None
+    revision: str | None
+    components: dict[str, InstalledComponent] | None
+    files: list[ArtifactFile]
+
+
+def _artifact_file(path: Path) -> ArtifactFile:
+    """Name, size and sha3-384 of one sideloaded file: the digest snapd uses."""
+    digest = hashlib.sha3_384()
+    try:
+        with path.open("rb") as fp:
+            while chunk := fp.read(1 << 20):
+                digest.update(chunk)
+        return {"file": path.name, "sha3_384": digest.hexdigest(), "size": path.stat().st_size}
+    except OSError:
+        return {"file": path.name, "sha3_384": None, "size": None}
+
+
+def _snap_list_row(listing: str, snap: str) -> tuple[str | None, str | None]:
+    """(version, revision) from ``snap list <snap>``."""
+    for line in listing.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 3 and parts[0] == snap:
+            return parts[1], parts[2]
+    return None, None
+
+
+def _installed_components(info: str) -> dict[str, InstalledComponent]:
+    """Installed components from ``snap info``'s ``components:`` block.
+
+    Rows read ``+<name>: <version> <date> (<revision>) <size> <notes>``; one
+    that is only available has ``--`` for all of them and is left out.
+    """
+    found: dict[str, InstalledComponent] = {}
+    in_block = False
+    for line in info.splitlines():
+        if line.startswith("components:"):
+            in_block = True
+            continue
+        if in_block and not line.startswith(" "):
+            break
+        if not in_block:
+            continue
+        name, _, rest = line.strip().partition(":")
+        parts = rest.split()
+        if len(parts) >= 3 and parts[2].startswith("("):
+            found[name.lstrip("+")] = {"version": parts[0], "revision": parts[2].strip("()")}
+    return found
 
 
 class SnapMetadata(TypedDict, total=False):
@@ -684,6 +750,34 @@ class SnapTarget:
         _run(["snap", "install", "--dangerous", *self.files])
         self._connect_plugs()
 
+    def hash_files(self) -> list[ArtifactFile]:
+        """Name, size and sha3-384 of each file to sideload.
+
+        Called before ``start``: hashing a multi-GB component is seconds of
+        full-core work, which must not land just ahead of the cold load.
+        """
+        return [_artifact_file(Path(f)) for f in self.files]
+
+    def installed(self, files: list[ArtifactFile]) -> Installed:
+        """What is installed: the ``files`` sideloaded, and what snapd made of them.
+
+        The hashes pin the exact build; the version and revisions are how
+        snapd names it, which is what a reader compares against ``snap list``.
+        Anything snapd will not say is None, never a guess.
+        """
+        listing = _capture(["snap", "list", "--unicode=never", self.snap])
+        version, revision = (
+            _snap_list_row(listing.stdout, self.snap) if listing.returncode == 0 else (None, None)
+        )
+        info = _capture(["snap", "info", "--unicode=never", self.snap])
+        return {
+            "snap": self.snap,
+            "version": version,
+            "revision": revision,
+            "components": _installed_components(info.stdout) if info.returncode == 0 else None,
+            "files": files,
+        }
+
     def select_engine(self, name: str | None = None) -> None:
         """Activate an engine and bring the socket up on it.
 
@@ -1009,7 +1103,15 @@ class _JsonlWriter:
         leaderboard, where a status keyed on the label alone would attach one
         host's failure to every other host's row.
         """
-        self.write({"machine": self._machine, "label": label, "status": status, "reason": reason})
+        self.write(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "machine": self._machine,
+                "label": label,
+                "status": status,
+                "reason": reason,
+            }
+        )
 
     def close(self) -> None:
         self._fp.close()
@@ -1144,6 +1246,7 @@ def _sweep_one(
                 fp.write(
                     json.dumps(
                         {
+                            "schema_version": SCHEMA_VERSION,
                             "machine": machine,
                             "label": label,
                             "snap": target.snap,
@@ -1433,6 +1536,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         f"\nmachine: {machine['hostname']}  cpu: {machine['cpu']}  ram: {machine['ram_gb']} GB"
         + (f"  gpu: {machine['gpu']} {machine['gpu_vram_gb']} GB" if machine["gpu"] else "")
     )
+    print(f"harness: myna-bench {machine['harness']['version'] or '(unversioned source tree)'}")
     print(f"manifest: {cfg.manifest.name}  cold={len(clips_cold)} warm={len(clips_warm)} clips")
     print(f"warm-sweep budget: {cfg.budget:.0f}s per target")
     print(f"output: {cfg.out}\n")
@@ -1459,7 +1563,9 @@ def cmd_run(args: argparse.Namespace) -> None:
                 continue
             print(f"\n=== {target.snap} ===")
             try:
+                files = target.hash_files()
                 target.start()
+                installed = target.installed(files)
                 for engine in target.engines_to_sweep():
                     # One install, every engine the config asks for. `use-engine`
                     # restarts the snap, so each engine comes up clean; the
@@ -1480,6 +1586,13 @@ def cmd_run(args: argparse.Namespace) -> None:
                         "gpu_vram_gb": machine["gpu_vram_gb"],
                         "provision": "snap",
                         "hardware": detected,
+                        # Rows outlive the header (merge drops it), so each
+                        # one says what produced it.
+                        "engine": target.engine,
+                        "artifacts": installed,
+                        "harness": machine["harness"],
+                        "os": machine["os"],
+                        "gpus": machine["gpus"],
                     }
                     models = target.models()
                     togglable = target.supports_streaming()

@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
-from myna.benchmarker._summarize import Record
+from myna.benchmarker._summarize import SCHEMA_VERSION, Record
 from myna.core import SessionConfig, WsUnixClient
 from myna.testbed import (
     NORMALIZER_VERSION,
@@ -99,11 +99,13 @@ def to_line(
     clips_requested: int,
     provenance: dict[str, object] | None,
     corpus: dict[str, str] | None = None,
+    served_runtime: dict[str, str] | None = None,
 ) -> Record:
     """Serialise a single-clip result to the JSONL record schema."""
     m = record.metrics
     error = session_error(record)
     line: Record = {
+        "schema_version": SCHEMA_VERSION,
         "error": error,
         "label": label,
         "cold": cold,
@@ -143,6 +145,7 @@ def to_line(
         "started_at": record.started_at,
         "run_started": run_started,
         "served_models": served_models,
+        "served_runtime": served_runtime,
         **(corpus or {}),
         # Stamped on every row of a truncated sweep: coverage travels with the
         # data, so a partial WER can never be read as a full one.
@@ -179,12 +182,14 @@ async def run_clips(
     produced a transcript.
     """
     served_models: list[str] = []
+    served_runtime: dict[str, str] | None = None
     try:
         # Ask the server what model it actually serves, so the *weight version*
         # travels with the data instead of only the human label: adapters report
         # a versioned id in capabilities (e.g. whisper-base@<commit>).
         caps = await WsUnixClient(socket).capabilities()
         served_models = list(caps.models)
+        served_runtime = caps.runtime
     except Exception as exc:  # noqa: BLE001 - discovery is advisory
         print(f"(capabilities query failed: {type(exc).__name__}: {exc})")
 
@@ -240,6 +245,7 @@ async def run_clips(
             clips_requested=len(clips),
             provenance=provenance,
             corpus=corpus,
+            served_runtime=served_runtime,
         )
         lines.append(line)
 
@@ -266,11 +272,18 @@ async def run_clips(
             f"{_fmt(line['finalize_latency'], '8.3f')}"
         )
 
+    # The library versions are only reported once the server has loaded them,
+    # so the runtime is read again now that the clips have run a session.
+    try:
+        served_runtime = (await WsUnixClient(socket).capabilities()).runtime
+    except Exception as exc:  # noqa: BLE001 - discovery is advisory
+        print(f"(runtime re-query failed: {type(exc).__name__}: {exc})")
     scored = len(lines) - len(failed)
     # Back-patch usability_fail and clips_scored now that we know the final values.
     for line in lines:
         line["usability_fail"] = overran
         line["clips_scored"] = scored
+        line["served_runtime"] = served_runtime
 
     for line in lines:
         out_fp.write(line)
