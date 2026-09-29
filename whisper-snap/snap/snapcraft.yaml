@@ -5,8 +5,7 @@
 #   - model weights ship as per-model snap components (T15): run
 #     ./dev/download-models.sh before packing. No runtime download / `network`.
 #   - cpu engine venv is baked into the base snap (server-app part); the
-#     nvidia-gpu CUDA stack ships as the gpu-nvidia component
-#     (scaffolded in T15, build-verify on a CUDA box before relying on it).
+#     nvidia-gpu CUDA stack ships as the gpu-nvidia component.
 name: myna-whisper
 base: core24
 adopt-info: version
@@ -177,7 +176,7 @@ parts:
   # CUDA runtime as a component: myna[whisper] + ctranslate2 + NVIDIA cuBLAS/
   # cuDNN pip libs under site-packages/. Exposed via PYTHONPATH + LD_LIBRARY_PATH
   # (see runtimes/faster-whisper-cuda/runtime.yaml), run by the base python3.
-  # amd64-only; UNVERIFIED — scaffolded in T15, build-verify on a CUDA box.
+  # amd64-only.
   faster-whisper-cuda:
     plugin: nil
     # Persistent pip cache: the build VM is thrown away each run, but the

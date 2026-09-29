@@ -1,8 +1,8 @@
 #!/bin/bash -eu
 
-# UNVERIFIED on hardware — scaffolded in T15. The gpu-nvidia component
-# provides myna + CUDA CTranslate2 on PYTHONPATH and the cuBLAS/cuDNN
-# libraries on LD_LIBRARY_PATH (see runtimes/faster-whisper-cuda/runtime.yaml);
+# The gpu-nvidia component provides myna + CUDA CTranslate2 on PYTHONPATH and
+# the cuBLAS/cuDNN libraries on LD_LIBRARY_PATH (see
+# runtimes/faster-whisper-cuda/runtime.yaml);
 # we run the same server module the cpu engine does, on the GPU.
 
 socket_path="$(modelctl get ws.unix-socket)"

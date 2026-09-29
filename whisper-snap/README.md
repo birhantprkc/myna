@@ -10,8 +10,8 @@ PCM frames.
 
 **Status:** model weights ship as per-model snap components (T15) — the
 service needs no network and downloads nothing at runtime. A `cpu` engine
-(baked-in venv) is verified; the `nvidia-gpu` engine + `gpu-nvidia`
-runtime component are scaffolded and need build verification on a CUDA box.
+(baked-in venv) and the `nvidia-gpu` engine with its `gpu-nvidia` runtime
+component are both verified, the GPU one on an RTX 4080 Laptop GPU.
 Confined clients reach the socket via the `inference-provider` content share
 (T14c, below); identity-based access control remains T17.
 
