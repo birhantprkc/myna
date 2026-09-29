@@ -5,7 +5,7 @@
 #   - model weights ship as per-model snap components (T15): run
 #     ./dev/download-models.sh before packing. No runtime download / `network`.
 #   - cpu engine venv is baked into the base snap (server-app part); the
-#     nvidia-gpu CUDA stack ships as the faster-whisper-cuda component
+#     nvidia-gpu CUDA stack ships as the gpu-nvidia component
 #     (scaffolded in T15, build-verify on a CUDA box before relying on it).
 name: myna-whisper
 base: core24
@@ -219,7 +219,7 @@ parts:
       rm -rf "$nvidia"/*/include
       craftctl default
     organize:
-      "*": (component/faster-whisper-cuda)
+      "*": (component/gpu-nvidia)
     prime:
       - -*
 
@@ -236,9 +236,9 @@ components:
     type: standard
     summary: Whisper small CTranslate2 weights
     description: faster-whisper (CTranslate2) conversion of Whisper small (MIT).
-  faster-whisper-cuda:
+  gpu-nvidia:
     type: standard
-    summary: faster-whisper CUDA runtime (CTranslate2 + cuBLAS/cuDNN)
+    summary: NVIDIA GPU runtime (faster-whisper on CUDA CTranslate2 + cuBLAS)
     description: |
       GPU inference stack for the nvidia-gpu engine: myna + CUDA CTranslate2
       and the NVIDIA cuBLAS/cuDNN libraries. amd64 only.

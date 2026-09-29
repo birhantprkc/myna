@@ -234,7 +234,7 @@ parts:
       done
       craftctl default
     organize:
-      "*": (component/onnxruntime-cuda)
+      "*": (component/gpu-nvidia)
     prime:
       - -*
 
@@ -253,9 +253,9 @@ components:
     description: |
       NVIDIA Parakeet TDT 0.6B v3 (CC-BY-4.0) exported to ONNX by NeMo's own
       exporter from NVIDIA's checkpoint, with the nemo128 preprocessor and vocab.
-  onnxruntime-cuda:
+  gpu-nvidia:
     type: standard
-    summary: onnxruntime CUDA runtime (onnxruntime-gpu, CUDA 13, cuDNN 9)
+    summary: NVIDIA GPU runtime (onnxruntime-gpu, CUDA 13, cuDNN 9)
     description: |
       GPU inference stack for the nvidia-gpu engine: myna + onnxruntime-gpu
       and the NVIDIA CUDA 13 and cuDNN 9 libraries. amd64 only.

@@ -66,13 +66,13 @@ sweep_budget_seconds: 600
 # Each is installed, configured and swept in turn, and the engine appears in
 # every label. A named engine that will not activate fails that pass rather
 # than quietly falling back to another one. The GPU engine also needs its
-# runtime component in files: (myna-whisper+faster-whisper-cuda.comp).
+# runtime component in files: (myna-whisper+gpu-nvidia.comp).
 targets:
   - snap: myna-whisper
     files:
       - ./snaps/myna-whisper_*.snap
       # Every component you downloaded. A model component you leave out is a
-      # model that is not swept; the faster-whisper-cuda one is what the
+      # model that is not swept; the gpu-nvidia one is what the
       # nvidia-gpu engine needs, and is dead weight without a GPU.
       - ./snaps/myna-whisper+*.comp
     # Uncomment to measure both engines on a machine that has a GPU. Without

@@ -10,7 +10,7 @@ PCM frames.
 
 **Status:** model weights ship as per-model snap components (T15) — the
 service needs no network and downloads nothing at runtime. A `cpu` engine
-(baked-in venv) is verified; the `nvidia-gpu` engine + `faster-whisper-cuda`
+(baked-in venv) is verified; the `nvidia-gpu` engine + `gpu-nvidia`
 runtime component are scaffolded and need build verification on a CUDA box.
 Confined clients reach the socket via the `inference-provider` content share
 (T14c, below); identity-based access control remains T17.
@@ -36,7 +36,7 @@ sudo snap install --dangerous \
     ./myna-whisper+model-tiny.comp \
     ./myna-whisper+model-base.comp \
     ./myna-whisper+model-small.comp
-# (./myna-whisper+faster-whisper-cuda.comp is the GPU stack — only on a CUDA box.)
+# (./myna-whisper+gpu-nvidia.comp is the GPU stack — only on a CUDA box.)
 
 sudo snap connect myna-whisper:hardware-observe
 sudo snap connect myna-whisper:opengl   # if not auto-connected

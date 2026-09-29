@@ -15,7 +15,7 @@ changes the storage format only.
 Runtime components
 ------------------
 
-faster-whisper-cuda: the faster-whisper and CTranslate2 wheels (MIT) and the
+gpu-nvidia: the faster-whisper and CTranslate2 wheels (MIT) and the
 NVIDIA cuBLAS and cuDNN redistributable wheels, which ship under the NVIDIA
 Software License Agreement carried inside each wheel. Every wheel's own
 license file is installed alongside it.

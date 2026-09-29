@@ -70,7 +70,7 @@ exclude:
     - whisper-snap/wheels
     - whisper-snap/myna-whisper+model-base.comp
     - whisper-snap/myna-whisper+model-small.comp
-    - whisper-snap/myna-whisper+faster-whisper-cuda.comp
+    - whisper-snap/myna-whisper+gpu-nvidia.comp
     - parakeet-snap
     - funasr-snap
     - fake-snap/stage

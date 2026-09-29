@@ -1,4 +1,4 @@
-# The onnxruntime-cuda component's GPU stack, pinned to the set verified on an
+# The gpu-nvidia component's GPU stack, pinned to the set verified on an
 # RTX 4080 Laptop GPU (driver 595) on 2026-09-16. Named directly rather than
 # through onnxruntime-gpu[cuda,cudnn]: 1.27's extras name nvidia-*-cu13
 # packages that exist on PyPI only as empty 0.0.1 placeholders.

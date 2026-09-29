@@ -33,7 +33,7 @@ Runtimes
 onnxruntime is Apache License, Version 2.0; each wheel's own license file is
 installed alongside it.
 
-onnxruntime-cuda: the onnxruntime-gpu wheel (Apache License, Version 2.0) and
+gpu-nvidia: the onnxruntime-gpu wheel (Apache License, Version 2.0) and
 the NVIDIA CUDA runtime, cuBLAS, cuFFT, cuRAND, NVRTC, nvJitLink and cuDNN
 redistributable wheels, which ship under the NVIDIA Software License Agreement
 carried inside each wheel. Every wheel's own license file is installed

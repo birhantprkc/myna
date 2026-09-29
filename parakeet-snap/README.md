@@ -48,7 +48,7 @@ sudo snap install --dangerous \
     ./myna-parakeet_*.snap \
     ./myna-parakeet+model-parakeet-int8.comp \
     ./myna-parakeet+model-parakeet-fp32.comp \
-    ./myna-parakeet+onnxruntime-cuda.comp
+    ./myna-parakeet+gpu-nvidia.comp
 sudo snap connect myna-parakeet:hardware-observe
 sudo snap connect myna-parakeet:opengl
 sudo myna-parakeet.parakeet use-engine --auto --assume-yes

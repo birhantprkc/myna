@@ -18,9 +18,9 @@ servers:
     base-path: /v1
 
 environment:
-  - PYTHONPATH=$SNAP_COMPONENTS/faster-whisper-cuda/site-packages
-  - LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$SNAP_COMPONENTS/faster-whisper-cuda/site-packages/nvidia/cublas/lib
-  - LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$SNAP_COMPONENTS/faster-whisper-cuda/site-packages/nvidia/cudnn/lib
+  - PYTHONPATH=$SNAP_COMPONENTS/gpu-nvidia/site-packages
+  - LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$SNAP_COMPONENTS/gpu-nvidia/site-packages/nvidia/cublas/lib
+  - LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$SNAP_COMPONENTS/gpu-nvidia/site-packages/nvidia/cudnn/lib
 
 components:
-  - faster-whisper-cuda
+  - gpu-nvidia

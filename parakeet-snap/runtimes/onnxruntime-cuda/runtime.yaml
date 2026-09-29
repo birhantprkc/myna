@@ -15,9 +15,9 @@ servers:
     base-path: /v1
 
 environment:
-  - PYTHONPATH=$SNAP_COMPONENTS/onnxruntime-cuda/site-packages
-  - LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$SNAP_COMPONENTS/onnxruntime-cuda/site-packages/nvidia/cu13/lib
-  - LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$SNAP_COMPONENTS/onnxruntime-cuda/site-packages/nvidia/cudnn/lib
+  - PYTHONPATH=$SNAP_COMPONENTS/gpu-nvidia/site-packages
+  - LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$SNAP_COMPONENTS/gpu-nvidia/site-packages/nvidia/cu13/lib
+  - LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$SNAP_COMPONENTS/gpu-nvidia/site-packages/nvidia/cudnn/lib
 
 components:
-  - onnxruntime-cuda
+  - gpu-nvidia

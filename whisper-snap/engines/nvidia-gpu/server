@@ -1,7 +1,7 @@
 #!/bin/bash -eu
 
-# UNVERIFIED on hardware — scaffolded in T15. The faster-whisper-cuda runtime
-# component provides myna + CUDA CTranslate2 on PYTHONPATH and the cuBLAS/cuDNN
+# UNVERIFIED on hardware — scaffolded in T15. The gpu-nvidia component
+# provides myna + CUDA CTranslate2 on PYTHONPATH and the cuBLAS/cuDNN
 # libraries on LD_LIBRARY_PATH (see runtimes/faster-whisper-cuda/runtime.yaml);
 # we run the same server module the cpu engine does, on the GPU.
 
