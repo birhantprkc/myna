@@ -449,4 +449,16 @@ mod tests {
             r#"<annotate key="org.freedesktop.policykit.exec.argv1">{APPLY_PLAN_FLAG}</annotate>"#
         )));
     }
+
+    #[test]
+    fn only_the_active_session_keeps_its_authorization() {
+        let policy = include_str!("../data/com.canonical.Myna.Config.policy");
+        for default in [
+            "<allow_any>auth_admin</allow_any>",
+            "<allow_inactive>auth_admin</allow_inactive>",
+            "<allow_active>auth_admin_keep</allow_active>",
+        ] {
+            assert!(policy.contains(default), "{default} missing");
+        }
+    }
 }
