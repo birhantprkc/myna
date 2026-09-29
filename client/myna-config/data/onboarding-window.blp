@@ -19,11 +19,29 @@ template $OnboardingWindow: Adw.ApplicationWindow {
         margin-top: 12;
         margin-bottom: 24;
 
-        Gtk.Spinner setup_spinner {
-          visible: false;
+        Gtk.Box {
+          spacing: 12;
 
-          accessibility {
-            label: _("Setting up dictation");
+          Gtk.Spinner setup_spinner {
+            visible: false;
+
+            accessibility {
+              label: _("Setting up dictation");
+            }
+          }
+
+          // What setting up is doing, or why the step cannot read the
+          // machine.
+          Gtk.Label setup_status {
+            visible: false;
+            wrap: true;
+            natural-wrap-mode: word;
+            justify: right;
+            xalign: 1;
+
+            styles [
+              "dim-label",
+            ]
           }
         }
 

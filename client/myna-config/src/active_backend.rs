@@ -11,6 +11,7 @@ use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::ports::{
     BackendRepository, SystemConfigurator, SystemConfiguratorError, SystemConfiguratorFailure,
 };
+use crate::snap_changes::ApplyProgress;
 
 /// Myna's user service. Restarting it through the user's own systemd needs
 /// no authorization, where `snap restart` costs a second polkit prompt.
@@ -246,23 +247,41 @@ pub async fn execute_switch(
 }
 
 /// How setting up waits for snapd to finish a change to Myna or a backend:
-/// how often it looks, for how long, and what it sleeps on in between.
+/// how often it looks, for how long, what it sleeps on in between, and what
+/// stops it.
 pub struct SnapdWait<'a> {
     pub interval: Duration,
     pub timeout: Duration,
     pub sleep: &'a dyn Fn(Duration) -> Pin<Box<dyn Future<Output = ()>>>,
+    pub cancellation: CancellationToken,
+}
+
+/// What setting up is doing, as it starts doing it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SetupStage {
+    /// Reading the connections and what snapd is still doing.
+    Checking,
+    /// snapd is still changing Myna or a model, as its next read shows.
+    Waiting(ApplyProgress),
+    /// Connecting this backend snap to Myna, then restarting Myna.
+    Connecting(String),
+    /// Restarting Myna against the backend already connected.
+    Restarting,
 }
 
 /// Leave dictation running on a backend. With none connected, switch to
 /// `preferred`, or the first discovered backend without it; the switch
 /// restarts Myna. With one connected, only restart, because the daemon may
-/// have started before the backend was installed.
+/// have started before the backend was installed. `report` hears each stage
+/// as it starts; a wait cancelled before it ends changes nothing.
 pub async fn ensure_backend_active(
     repository: &dyn BackendRepository,
     configurator: &dyn SystemConfigurator,
     preferred: &str,
     wait: &SnapdWait<'_>,
+    report: &dyn Fn(SetupStage),
 ) -> Result<(), String> {
+    report(SetupStage::Checking);
     let mut snapshot = repository
         .refresh(CancellationToken::new())
         .await
@@ -275,13 +294,15 @@ pub async fn ensure_backend_active(
                 .map(|backend| backend.snap_name().to_owned()),
         )
         .collect::<Vec<_>>();
-    if wait_for_snapd(configurator, &snaps, wait).await? {
+    if wait_for_snapd(configurator, &snaps, wait, report).await? {
+        report(SetupStage::Checking);
         snapshot = repository
             .refresh(CancellationToken::new())
             .await
             .map_err(|error| error.message().to_owned())?;
     }
     if let ActiveBackendState::Connected(_) = snapshot.active_state() {
+        report(SetupStage::Restarting);
         return configurator
             .restart_myna(CancellationToken::new())
             .await
@@ -298,8 +319,9 @@ pub async fn ensure_backend_active(
             "No speech-to-text model appeared in snap connections.",
         ));
     };
-    let plan = SwitchPlan::new(&snapshot, selected)
+    let plan = SwitchPlan::new(&snapshot, selected.clone())
         .map_err(|_| gettextrs::gettext("The model is not available to switch to."))?;
+    report(SetupStage::Connecting(selected.snap_name().to_owned()));
     match execute_switch(&plan, configurator, repository, CancellationToken::new()).await {
         SwitchOutcome::Applied { .. } | SwitchOutcome::Noop { .. } => Ok(()),
         SwitchOutcome::Failed { error, .. } => Err(error.to_string()),
@@ -317,11 +339,16 @@ async fn wait_for_snapd(
     configurator: &dyn SystemConfigurator,
     snaps: &[String],
     wait: &SnapdWait<'_>,
+    report: &dyn Fn(SetupStage),
 ) -> Result<bool, String> {
+    let cancelled = || gettextrs::gettext("The change was cancelled.");
     let mut waited = Duration::ZERO;
     loop {
+        if wait.cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
         let changes = configurator
-            .changes_in_progress(CancellationToken::new())
+            .changes_in_progress(wait.cancellation.clone())
             .await?;
         let Some(change) = changes.iter().find(|change| change.concerns(snaps)) else {
             return Ok(waited > Duration::ZERO);
@@ -332,6 +359,7 @@ async fn wait_for_snapd(
             )
             .replace("{change}", change.summary()));
         }
+        report(SetupStage::Waiting(change.progress()));
         (wait.sleep)(wait.interval).await;
         waited += wait.interval;
     }

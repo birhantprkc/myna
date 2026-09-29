@@ -8,7 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use myna_config::active_backend::{
     ensure_backend_active, execute_switch, myna_restart_request, ActiveBackendController,
-    PrepareSwitchError, SnapdWait, SwitchNotice, SwitchOutcome, SwitchPlan,
+    PrepareSwitchError, SetupStage, SnapdWait, SwitchNotice, SwitchOutcome, SwitchPlan,
 };
 use myna_config::backend_apply::ApplyPreview;
 use myna_config::command::{CancellationToken, CommandRequest};
@@ -20,7 +20,7 @@ use myna_config::operation_gate::{OperationCoordinator, OperationKind};
 use myna_config::ports::{
     BackendRepository, SystemConfigurator, SystemConfiguratorError, SystemConfiguratorFailure,
 };
-use myna_config::snap_changes::{parse_changes, ChangeInProgress};
+use myna_config::snap_changes::{parse_changes, ApplyProgress, ChangeInProgress};
 
 fn connections(snaps: &[&str], connected: &[&str]) -> ConnectionSnapshot {
     let mut rows = String::from("Interface Plug Slot Notes\n");
@@ -323,8 +323,11 @@ fn no_wait() -> SnapdWait<'static> {
         interval: Duration::from_secs(2),
         timeout: Duration::from_secs(10),
         sleep: &no_sleep,
+        cancellation: CancellationToken::new(),
     }
 }
+
+fn unheard(_: SetupStage) {}
 
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     gtk4::glib::MainContext::new().block_on(future)
@@ -783,6 +786,7 @@ fn an_auto_connected_backend_is_only_restarted() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap();
 
@@ -803,6 +807,7 @@ fn a_failed_restart_is_reported() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap_err();
 
@@ -823,6 +828,7 @@ fn an_unconnected_machine_switches_to_the_preferred_backend() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap();
 
@@ -843,6 +849,7 @@ fn without_the_preferred_backend_the_first_discovered_one_is_used() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap();
 
@@ -860,6 +867,7 @@ fn no_backend_and_failed_discovery_are_errors_without_privilege() {
             &configurator,
             "myna-parakeet",
             &no_wait(),
+            &unheard,
         ))
         .is_err());
         assert!(configurator.calls().is_empty());
@@ -886,6 +894,7 @@ fn a_failed_or_contradicted_switch_is_reported() {
         &denied,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .is_err());
 
@@ -897,6 +906,7 @@ fn a_failed_or_contradicted_switch_is_reported() {
         &contradicted,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap_err();
     assert!(
@@ -916,6 +926,7 @@ fn a_switch_lost_to_discovery_or_cancellation_is_reported() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap_err();
     assert!(lost.contains("snapd went away"), "{lost}");
@@ -930,6 +941,7 @@ fn a_switch_lost_to_discovery_or_cancellation_is_reported() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap_err();
     assert!(cancelled.contains("cancelled"), "{cancelled}");
@@ -976,6 +988,7 @@ fn an_auto_connection_is_restarted_only_once_its_change_is_done() {
         &configurator,
         "myna-parakeet",
         &wait,
+        &unheard,
     ))
     .unwrap();
 
@@ -985,6 +998,106 @@ fn an_auto_connection_is_restarted_only_once_its_change_is_done() {
     );
     assert_eq!(*configurator.restarts.borrow(), 1);
     assert!(configurator.changes.borrow().is_empty());
+}
+
+/// A spinner alone read as a hang while snapd fetched the model for minutes.
+#[test]
+fn every_stage_is_reported_as_it_starts() {
+    let initial = connections(&["myna-parakeet"], &[]);
+    let connected = connections(&["myna-parakeet"], &["myna-parakeet"]);
+    let repository = FakeRepository::new([
+        Ok(initial.clone()),
+        Ok(initial.clone()),
+        Ok(initial.clone()),
+        Ok(connected),
+    ]);
+    let plan =
+        SwitchPlan::new(&initial, BackendIdentity::new("myna-parakeet", "provider")).unwrap();
+    let configurator = FakeConfigurator::returning(Ok(success(&plan))).with_changes([
+        installing(),
+        change("Connect myna:backend to myna-parakeet:provider"),
+    ]);
+    let stages = RefCell::new(Vec::new());
+
+    block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+        &no_wait(),
+        &|stage| stages.borrow_mut().push(stage),
+    ))
+    .unwrap();
+
+    assert_eq!(
+        *stages.borrow(),
+        [
+            SetupStage::Checking,
+            SetupStage::Waiting(ApplyProgress::Download {
+                name: "myna-parakeet".to_owned(),
+                done: 52_428_800,
+                total: 734_003_200,
+            }),
+            SetupStage::Waiting(ApplyProgress::Change {
+                summary: "Connect myna:backend to myna-parakeet:provider".to_owned(),
+            }),
+            SetupStage::Checking,
+            SetupStage::Connecting("myna-parakeet".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn a_connected_backend_is_reported_as_restarting() {
+    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))]);
+    let configurator = FakeConfigurator::returning(Ok(vec![]));
+    let stages = RefCell::new(Vec::new());
+
+    block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+        &no_wait(),
+        &|stage| stages.borrow_mut().push(stage),
+    ))
+    .unwrap();
+
+    assert_eq!(
+        *stages.borrow(),
+        [SetupStage::Checking, SetupStage::Restarting]
+    );
+}
+
+/// Closing the wizard mid-wait must not connect or restart anything behind
+/// it once snapd finishes.
+#[test]
+fn a_cancelled_wait_changes_nothing() {
+    let repository = FakeRepository::new([Ok(connections(&["myna-parakeet"], &["myna-parakeet"]))]);
+    let configurator =
+        FakeConfigurator::returning(Ok(vec![])).with_changes([installing(), installing()]);
+    let cancellation = CancellationToken::new();
+    let sleep = |_: Duration| -> Pin<Box<dyn Future<Output = ()>>> {
+        cancellation.cancel();
+        Box::pin(std::future::ready(()))
+    };
+    let wait = SnapdWait {
+        sleep: &sleep,
+        cancellation: cancellation.clone(),
+        ..no_wait()
+    };
+
+    let error = block_on(ensure_backend_active(
+        &repository,
+        &configurator,
+        "myna-parakeet",
+        &wait,
+        &unheard,
+    ))
+    .unwrap_err();
+
+    assert!(error.contains("cancelled"), "{error}");
+    assert_eq!(*configurator.restarts.borrow(), 0);
+    assert!(configurator.calls().is_empty());
+    assert_eq!(configurator.changes.borrow().len(), 1);
 }
 
 /// Before its install change auto-connects the backend, the wizard would
@@ -1002,6 +1115,7 @@ fn a_connection_its_change_makes_meanwhile_is_not_made_again() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap();
 
@@ -1027,6 +1141,7 @@ fn changes_to_other_snaps_are_not_waited_for() {
         &configurator,
         "myna-parakeet",
         &wait,
+        &unheard,
     ))
     .unwrap();
 
@@ -1044,6 +1159,7 @@ fn a_change_that_outlasts_the_wait_is_reported_without_a_restart() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap_err();
 
@@ -1064,6 +1180,7 @@ fn unreadable_changes_are_reported_without_a_restart() {
         &configurator,
         "myna-parakeet",
         &no_wait(),
+        &unheard,
     ))
     .unwrap_err();
 

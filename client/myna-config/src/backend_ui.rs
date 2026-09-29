@@ -2620,7 +2620,7 @@ fn hold_while_changing(row: &gtk::Widget) {
     row.update_state(&[gtk::accessible::State::Busy(true)]);
 }
 
-fn apply_progress_text(progress: &ApplyProgress) -> String {
+pub(crate) fn apply_progress_text(progress: &ApplyProgress) -> String {
     match progress {
         ApplyProgress::Download { name, done, total } => {
             // TRANSLATORS: {name} is the model part or snap being downloaded, such as "model-small"; {done} and {total} are sizes such as "210.0 MB".

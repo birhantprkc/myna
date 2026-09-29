@@ -93,6 +93,13 @@ With `hardware-observe` connected at install, the install hook's
 `use-engine --auto` can pick the GPU engine, and on an NVIDIA machine the
 install downloads the GPU components rather than the int8 model.
 
+A spinner alone read as a hang, so beside it a line says what setup is
+doing as it starts doing it (`active_backend::SetupStage`): checking, the
+download in bytes or snapd's summary of the change it waits on, connecting
+the model, with a reminder to authorize it since polkit's dialog can open
+behind the wizard, and starting dictation. Closing the wizard stops a setup
+still waiting on snapd, so nothing is connected or restarted behind it.
+
 ## The keyboard shortcut
 
 The daemon publishes `Activation` (`portal` or `control`) and, under the portal,

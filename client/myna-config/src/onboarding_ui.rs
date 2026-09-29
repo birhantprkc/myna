@@ -15,7 +15,7 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::active_backend::{ensure_backend_active, SnapdWait};
+use crate::active_backend::{ensure_backend_active, SetupStage, SnapdWait};
 use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
@@ -24,6 +24,7 @@ use crate::onboarding::{
     RECOMMENDED_BACKEND_SNAP,
 };
 use crate::ports::{BackendRepository, SystemConfigurator};
+use crate::snap_changes::ApplyProgress;
 use crate::ui;
 
 /// How often the component step re-reads the machine while something is
@@ -45,6 +46,8 @@ pub struct OnboardingUi {
     step: Cell<Step>,
     components: RefCell<Vec<Component>>,
     busy: Cell<bool>,
+    stage: RefCell<Option<SetupStage>>,
+    setup_cancellation: RefCell<Option<CancellationToken>>,
     assessing: Cell<bool>,
     poll_interval: Cell<Duration>,
     poll: RefCell<Option<glib::SourceId>>,
@@ -136,6 +139,8 @@ impl OnboardingUi {
             step: Cell::new(Step::first()),
             components: RefCell::new(initial),
             busy: Cell::new(false),
+            stage: RefCell::default(),
+            setup_cancellation: RefCell::default(),
             assessing: Cell::new(false),
             poll_interval: Cell::new(POLL_INTERVAL),
             poll: RefCell::new(None),
@@ -183,10 +188,16 @@ impl OnboardingUi {
         // strong reference living alongside it every button would upgrade a
         // dead weak reference and do nothing. The reference is dropped when
         // the window closes, which breaks the cycle it forms.
+        // Closing also stops a setup still waiting on snapd, so nothing is
+        // connected or restarted behind a closed wizard.
         window.connect_close_request({
             let held = RefCell::new(Some(ui.clone()));
             move |_| {
-                held.borrow_mut().take();
+                if let Some(ui) = held.borrow_mut().take() {
+                    if let Some(cancellation) = ui.setup_cancellation.take() {
+                        cancellation.cancel();
+                    }
+                }
                 glib::Propagation::Proceed
             }
         });
@@ -259,6 +270,8 @@ impl OnboardingUi {
         if self.busy.replace(true) {
             return;
         }
+        let cancellation = CancellationToken::new();
+        self.setup_cancellation.replace(Some(cancellation.clone()));
         self.render();
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
@@ -272,17 +285,30 @@ impl OnboardingUi {
                 interval,
                 timeout: SNAPD_TIMEOUT,
                 sleep: &sleep,
+                cancellation,
+            };
+            let report = {
+                let ui = ui.clone();
+                move |stage: SetupStage| {
+                    if let Some(ui) = ui.upgrade() {
+                        ui.stage.replace(Some(stage));
+                        ui.render();
+                    }
+                }
             };
             let outcome = ensure_backend_active(
                 repository.as_ref(),
                 configurator.as_ref(),
                 RECOMMENDED_BACKEND_SNAP,
                 &wait,
+                &report,
             )
             .await;
             let Some(ui) = ui.upgrade() else {
                 return;
             };
+            ui.setup_cancellation.take();
+            ui.stage.take();
             ui.busy.set(false);
             ui.render();
             if outcome.is_ok() {
@@ -359,6 +385,13 @@ impl OnboardingUi {
         let spinner = self.window.setup_spinner();
         spinner.set_visible(setting_up);
         spinner.set_spinning(setting_up);
+        let status = match &*self.stage.borrow() {
+            Some(stage) if setting_up => Some(stage_text(stage)),
+            _ => None,
+        };
+        let label = self.window.setup_status();
+        label.set_visible(status.is_some());
+        label.set_label(status.as_deref().unwrap_or_default());
         self.window
             .installed_status()
             .set_visible(step == Step::Components && !setting_up && !needs_onboarding(&components));
@@ -435,6 +468,27 @@ pub async fn assess_machine(repository: &dyn BackendRepository) -> Vec<Component
         .map(|snapshot| snapshot.backends().len())
         .unwrap_or_default();
     assess(Machine::new(&installed, backends))
+}
+
+/// A stage as the footer says it, beside the spinner.
+fn stage_text(stage: &SetupStage) -> String {
+    match stage {
+        SetupStage::Checking => gettextrs::gettext("Checking the installation…"),
+        SetupStage::Waiting(progress @ ApplyProgress::Download { .. }) => {
+            crate::backend_ui::apply_progress_text(progress)
+        }
+        SetupStage::Waiting(ApplyProgress::Change { summary }) => {
+            // TRANSLATORS: {change} is snapd's own summary of what it is doing, in English.
+            let frame = gettextrs::gettext("Waiting for snapd: {change}");
+            frame.replace("{change}", summary)
+        }
+        SetupStage::Connecting(snap) => {
+            // TRANSLATORS: {model} is a model family, such as "Parakeet".
+            let frame = gettextrs::gettext("Connecting {model}. Authorize it if asked.");
+            frame.replace("{model}", &crate::model_family::model_family(snap).name)
+        }
+        SetupStage::Restarting => gettextrs::gettext("Starting dictation…"),
+    }
 }
 
 fn step_name(step: Step) -> &'static str {

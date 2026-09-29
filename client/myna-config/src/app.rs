@@ -625,6 +625,20 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("setup restarted Myna while snapd was still installing the model");
         return glib::ExitCode::FAILURE;
     }
+    let status = window.setup_status();
+    if !status.is_mapped()
+        || !status.label().starts_with("Downloading myna-parakeet: ")
+        || !status
+            .label()
+            .ends_with(glib::format_size(734_003_200).as_str())
+    {
+        eprintln!(
+            "the footer did not say what setup waits on: {:?}",
+            status.label()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-status: the download shown");
     machine.hold_changes(false);
     println!("onboarding-snapd: waits for the install to finish");
     // Next is the manual path; it must not start a second setup.
@@ -671,6 +685,46 @@ fn onboarding_probe() -> glib::ExitCode {
     println!("onboarding-poll: stopped once found");
     window.close();
     settle_gtk();
+
+    // Closing the wizard while snapd still installs leaves the machine alone
+    // once it finishes.
+    let machine = ProbeMachine::bare();
+    let window = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine::default()),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    machine.hold_changes(true);
+    machine.install();
+    for _ in 0..100 {
+        if machine.change_reads() > 0 {
+            break;
+        }
+        settle_gtk();
+    }
+    window.close();
+    machine.hold_changes(false);
+    let reads = machine.change_reads();
+    for _ in 0..20 {
+        settle_gtk();
+    }
+    if reads == 0 || machine.change_reads() != reads || machine.restarts_attempted() != 0 {
+        eprintln!("setup went on after the wizard closed");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-close: setup stopped with the wizard");
 
     // Next while the status shows moves on at once, without setting up again.
     let machine = ProbeMachine::bare();
