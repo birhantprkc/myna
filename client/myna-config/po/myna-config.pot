@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-29 09:24+0100\n"
+"POT-Creation-Date: 2026-09-29 09:35+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -113,7 +113,8 @@ msgid "General"
 msgstr ""
 
 #: data/main-window.blp:39 data/myna-page.blp:38 src/app.rs:1154
-#: src/app.rs:2327 src/app.rs:2691 src/diagnostics.rs:535
+#: src/app.rs:2327 src/app.rs:2691 src/backend_apply.rs:460
+#: src/diagnostics.rs:535 src/presentation.rs:169
 msgid "Model"
 msgstr ""
 
@@ -853,6 +854,61 @@ msgstr ""
 msgid "The model may restart."
 msgstr ""
 
+#: src/backend_apply.rs:106
+msgid "selector value must be text"
+msgstr ""
+
+#: src/backend_apply.rs:120
+msgid "the model's settings command could not be found"
+msgstr ""
+
+#: src/backend_apply.rs:461
+msgid "the model's restart command could not be built"
+msgstr ""
+
+#: src/backend_apply.rs:560
+msgid "value must be a finite number"
+msgstr ""
+
+#. TRANSLATORS: {reason} is the error reading the model's status, in English.
+#: src/backend_apply.rs:664
+msgid "The model's restart could not be confirmed: {reason}"
+msgstr ""
+
+#: src/backend_apply.rs:671
+msgid ""
+"The model's restart could not be confirmed: no service health was reported."
+msgstr ""
+
+#. TRANSLATORS: {services} lists services and their states, such as "myna-whisper.server (failed)".
+#: src/backend_apply.rs:688
+msgid "The model did not restart: {services}"
+msgstr ""
+
+#: src/backend_apply.rs:693
+msgid "The model's restart could not be confirmed."
+msgstr ""
+
+#: src/backend_apply.rs:711
+msgctxt "service state"
+msgid "active"
+msgstr ""
+
+#: src/backend_apply.rs:712
+msgctxt "service state"
+msgid "inactive"
+msgstr ""
+
+#: src/backend_apply.rs:713
+msgctxt "service state"
+msgid "failed"
+msgstr ""
+
+#: src/backend_apply.rs:714
+msgctxt "service state"
+msgid "unknown"
+msgstr ""
+
 #: src/onboarding_ui.rs:295
 msgid "Could not set up dictation"
 msgstr ""
@@ -1135,7 +1191,7 @@ msgstr ""
 msgid "(none discovered)"
 msgstr ""
 
-#: src/diagnostics.rs:528
+#: src/diagnostics.rs:528 src/presentation.rs:176
 msgid "Engine"
 msgstr ""
 
@@ -1216,6 +1272,152 @@ msgstr ""
 
 #: src/model_family.rs:298
 msgid "A recommended model is available"
+msgstr ""
+
+#: src/presentation.rs:47
+msgid "value is invalid"
+msgstr ""
+
+#: src/presentation.rs:48
+msgid "value must be true or false"
+msgstr ""
+
+#: src/presentation.rs:49
+msgid "value must be a number"
+msgstr ""
+
+#: src/presentation.rs:50
+msgid "value must be text"
+msgstr ""
+
+#: src/presentation.rs:51
+msgid "value must be a positive number"
+msgstr ""
+
+#: src/presentation.rs:52
+msgid "value must be zero or a positive number"
+msgstr ""
+
+#: src/presentation.rs:53
+msgid "value must be a non-negative whole number"
+msgstr ""
+
+#. TRANSLATORS: {choices} lists the allowed values, such as "cpu, cuda".
+#: src/presentation.rs:56
+msgid "value must be one of {choices}"
+msgstr ""
+
+#: src/presentation.rs:59
+msgid "this value cannot be edited"
+msgstr ""
+
+#: src/presentation.rs:170
+msgid "Which version of this model to run."
+msgstr ""
+
+#: src/presentation.rs:177
+msgid "The inference engine this model runs on."
+msgstr ""
+
+#: src/presentation.rs:183
+msgid "Streaming output"
+msgstr ""
+
+#: src/presentation.rs:184
+msgid "Emit partial transcription results while speech is being processed."
+msgstr ""
+
+#: src/presentation.rs:190
+msgid "Unload when idle"
+msgstr ""
+
+#: src/presentation.rs:191
+msgid ""
+"Unload the inference service after this many idle seconds; zero disables the "
+"delay."
+msgstr ""
+
+#: src/presentation.rs:198
+msgid "Verbose logging"
+msgstr ""
+
+#: src/presentation.rs:199
+msgid "Write additional diagnostics to the system log."
+msgstr ""
+
+#: src/presentation.rs:205
+msgid "Socket path"
+msgstr ""
+
+#: src/presentation.rs:206
+msgid "Raw Unix socket path used by the transcription service."
+msgstr ""
+
+#: src/presentation.rs:212
+msgid "Minimum speech before pause commit"
+msgstr ""
+
+#: src/presentation.rs:213
+msgid "Speech required before a pause can commit a transcript chunk."
+msgstr ""
+
+#: src/presentation.rs:218
+msgid "Pause length for commit"
+msgstr ""
+
+#: src/presentation.rs:219
+msgid "Silence duration that commits the current transcript chunk."
+msgstr ""
+
+#: src/presentation.rs:224
+msgid "Maximum uncommitted audio"
+msgstr ""
+
+#: src/presentation.rs:225
+msgid ""
+"Maximum speech window retained before a transcript chunk is forced to commit."
+msgstr ""
+
+#: src/presentation.rs:230
+msgid "Partial result interval"
+msgstr ""
+
+#: src/presentation.rs:231
+msgid ""
+"Interval between unstable partial results; zero disables partial results."
+msgstr ""
+
+#: src/presentation.rs:236
+msgid "Partial result audio window"
+msgstr ""
+
+#: src/presentation.rs:237
+msgid ""
+"Recent uncommitted audio used for partial results; zero uses the whole "
+"window."
+msgstr ""
+
+#: src/presentation.rs:242
+msgid "Compute type"
+msgstr ""
+
+#: src/presentation.rs:243
+msgid ""
+"Runtime numeric format override. Leave the model's own value unchanged "
+"unless required."
+msgstr ""
+
+#: src/presentation.rs:249
+msgid "Attention context size"
+msgstr ""
+
+#: src/presentation.rs:250
+msgid ""
+"Model-specific latency and accuracy context. Empty uses the engine default."
+msgstr ""
+
+#: src/presentation.rs:328
+msgid "This model provides no description for this setting."
 msgstr ""
 
 #: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:30

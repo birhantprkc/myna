@@ -154,3 +154,64 @@ fn user_visible_strings_say_model_and_use_no_em_dash() {
         assert!(!text.contains('\u{2014}'), "{text}");
     }
 }
+
+/// The Model tab's rows are built from `presentation.rs`, and an apply
+/// reports in `backend_apply.rs`: both reach the template.
+#[test]
+fn the_model_tab_settings_and_apply_reports_are_translatable() {
+    use myna_config::domain::ConfigValue;
+    use myna_config::presentation::{metadata_for, Validation};
+
+    let msgids = template_msgids();
+    let mut expected = Vec::new();
+    for key in [
+        "model",
+        "engine",
+        "streaming",
+        "sleep-idle-seconds",
+        "verbose",
+        "ws.unix-socket",
+        "stream-arm-seconds",
+        "stream-silence-cut-seconds",
+        "stream-force-cut-seconds",
+        "stream-partial-cadence-seconds",
+        "stream-partial-tail-seconds",
+        "compute-type",
+        "att-context-size",
+    ] {
+        let metadata = metadata_for(key, &ConfigValue::Null);
+        expected.push(metadata.title().to_owned());
+        expected.push(metadata.explanation().to_owned());
+    }
+    let unknown = metadata_for("future-setting", &ConfigValue::Text(String::new()));
+    expected.push(unknown.explanation().to_owned());
+    for validation in [
+        Validation::Boolean,
+        Validation::Number,
+        Validation::Text,
+        Validation::PositiveNumber,
+        Validation::NonNegativeNumber,
+        Validation::NonNegativeInteger,
+        Validation::ReadOnly,
+    ] {
+        expected.push(validation.validate(&ConfigValue::Null).unwrap_err());
+    }
+    expected.extend(
+        [
+            "value is invalid",
+            "value must be one of {choices}",
+            "value must be a finite number",
+            "selector value must be text",
+            "the model's settings command could not be found",
+            "the model's restart command could not be built",
+            "The model's restart could not be confirmed: {reason}",
+            "The model's restart could not be confirmed: no service health was reported.",
+            "The model did not restart: {services}",
+            "The model's restart could not be confirmed.",
+        ]
+        .map(str::to_owned),
+    );
+    for text in expected {
+        assert!(msgids.contains(&text), "{text:?} is not in the template");
+    }
+}

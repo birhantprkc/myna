@@ -1,8 +1,8 @@
 //! GTK-independent metadata used to render backend configuration.
 
-use crate::domain::{BackendConfiguration, ConfigValue, EngineOptions, ModelOptions};
+use gettextrs::gettext;
 
-const METADATA_UNAVAILABLE: &str = "This model provides no description for this setting.";
+use crate::domain::{BackendConfiguration, ConfigValue, EngineOptions, ModelOptions};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlType {
@@ -44,15 +44,19 @@ impl Validation {
             Self::ReadOnly => false,
         };
         valid.then_some(()).ok_or_else(|| match self {
-            Self::Any => "value is invalid".to_owned(),
-            Self::Boolean => "value must be true or false".to_owned(),
-            Self::Number => "value must be a number".to_owned(),
-            Self::Text => "value must be text".to_owned(),
-            Self::PositiveNumber => "value must be a positive number".to_owned(),
-            Self::NonNegativeNumber => "value must be zero or a positive number".to_owned(),
-            Self::NonNegativeInteger => "value must be a non-negative whole number".to_owned(),
-            Self::Choices(choices) => format!("value must be one of {}", choices.join(", ")),
-            Self::ReadOnly => "this value cannot be edited".to_owned(),
+            Self::Any => gettext("value is invalid"),
+            Self::Boolean => gettext("value must be true or false"),
+            Self::Number => gettext("value must be a number"),
+            Self::Text => gettext("value must be text"),
+            Self::PositiveNumber => gettext("value must be a positive number"),
+            Self::NonNegativeNumber => gettext("value must be zero or a positive number"),
+            Self::NonNegativeInteger => gettext("value must be a non-negative whole number"),
+            Self::Choices(choices) => {
+                // TRANSLATORS: {choices} lists the allowed values, such as "cpu, cuda".
+                let frame = gettext("value must be one of {choices}");
+                frame.replace("{choices}", &choices.join(", "))
+            }
+            Self::ReadOnly => gettext("this value cannot be edited"),
         })
     }
 }
@@ -162,88 +166,88 @@ impl PresentationRow {
 pub fn metadata_for(key: &str, value: &ConfigValue) -> PresentationMetadata {
     match key {
         "model" => known(
-            "Model",
-            "Which version of this model to run.",
+            &gettext("Model"),
+            &gettext("Which version of this model to run."),
             ControlType::Choice,
             Validation::Any,
             (PresentationGroup::General, Sensitivity::UserFacing, 0),
         ),
         "engine" => known(
-            "Engine",
-            "The inference engine this model runs on.",
+            &gettext("Engine"),
+            &gettext("The inference engine this model runs on."),
             ControlType::Choice,
             Validation::Any,
             (PresentationGroup::General, Sensitivity::UserFacing, 1),
         ),
         "streaming" => known(
-            "Streaming output",
-            "Emit partial transcription results while speech is being processed.",
+            &gettext("Streaming output"),
+            &gettext("Emit partial transcription results while speech is being processed."),
             ControlType::Toggle,
             Validation::Boolean,
             (PresentationGroup::General, Sensitivity::UserFacing, 10),
         ),
         "sleep-idle-seconds" => known_with_restart(
-            "Unload when idle",
-            "Unload the inference service after this many idle seconds; zero disables the delay.",
+            &gettext("Unload when idle"),
+            &gettext("Unload the inference service after this many idle seconds; zero disables the delay."),
             ControlType::Number,
             Validation::NonNegativeInteger,
             (PresentationGroup::Runtime, Sensitivity::UserFacing, 20),
             RestartBehavior::NotRequired,
         ),
         "verbose" => known(
-            "Verbose logging",
-            "Write additional diagnostics to the system log.",
+            &gettext("Verbose logging"),
+            &gettext("Write additional diagnostics to the system log."),
             ControlType::Toggle,
             Validation::Boolean,
             (PresentationGroup::Advanced, Sensitivity::Internal, 100),
         ),
         "ws.unix-socket" => known(
-            "Socket path",
-            "Raw Unix socket path used by the transcription service.",
+            &gettext("Socket path"),
+            &gettext("Raw Unix socket path used by the transcription service."),
             ControlType::Text,
             Validation::Text,
             (PresentationGroup::Advanced, Sensitivity::Internal, 101),
         ),
         "stream-arm-seconds" => seconds(
-            "Minimum speech before pause commit",
-            "Speech required before a pause can commit a transcript chunk.",
+            &gettext("Minimum speech before pause commit"),
+            &gettext("Speech required before a pause can commit a transcript chunk."),
             Validation::PositiveNumber,
             110,
         ),
         "stream-silence-cut-seconds" => seconds(
-            "Pause length for commit",
-            "Silence duration that commits the current transcript chunk.",
+            &gettext("Pause length for commit"),
+            &gettext("Silence duration that commits the current transcript chunk."),
             Validation::PositiveNumber,
             111,
         ),
         "stream-force-cut-seconds" => seconds(
-            "Maximum uncommitted audio",
-            "Maximum speech window retained before a transcript chunk is forced to commit.",
+            &gettext("Maximum uncommitted audio"),
+            &gettext("Maximum speech window retained before a transcript chunk is forced to commit."),
             Validation::PositiveNumber,
             112,
         ),
         "stream-partial-cadence-seconds" => seconds(
-            "Partial result interval",
-            "Interval between unstable partial results; zero disables partial results.",
+            &gettext("Partial result interval"),
+            &gettext("Interval between unstable partial results; zero disables partial results."),
             Validation::NonNegativeNumber,
             113,
         ),
         "stream-partial-tail-seconds" => seconds(
-            "Partial result audio window",
-            "Recent uncommitted audio used for partial results; zero uses the whole window.",
+            &gettext("Partial result audio window"),
+            &gettext("Recent uncommitted audio used for partial results; zero uses the whole window."),
             Validation::NonNegativeNumber,
             114,
         ),
         "compute-type" => known(
-            "Compute type",
-            "Runtime numeric format override. Leave the model's own value unchanged unless required.",
+            &gettext("Compute type"),
+            &gettext("Runtime numeric format override. Leave the model's own value unchanged unless required."),
             ControlType::Text,
             Validation::Text,
             (PresentationGroup::Advanced, Sensitivity::UserFacing, 120),
         ),
         "att-context-size" => known(
-            "Attention context size",
-            "Model-specific latency and accuracy context. Empty uses the engine default.",
+            &gettext("Attention context size"),
+            &gettext("Model-specific latency and accuracy context. Empty uses the engine default."),
             ControlType::Text,
             Validation::Text,
             (PresentationGroup::Advanced, Sensitivity::UserFacing, 121),
@@ -321,7 +325,7 @@ fn fallback(key: &str, value: &ConfigValue) -> PresentationMetadata {
     }
     PresentationMetadata {
         title: key.to_owned(),
-        explanation: METADATA_UNAVAILABLE.to_owned(),
+        explanation: gettext("This model provides no description for this setting."),
         control,
         validation,
         group: if sensitive {

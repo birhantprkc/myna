@@ -103,7 +103,7 @@ impl ApplyPreview {
                     }
                     _ => issues.push(ValidationIssue::new(
                         change.key(),
-                        "selector value must be text",
+                        gettextrs::gettext("selector value must be text"),
                     )),
                 },
                 _ => match serialize_assignment(change.key(), change.proposed()) {
@@ -117,7 +117,7 @@ impl ApplyPreview {
             for change in &changes {
                 issues.push(ValidationIssue::new(
                     change.key(),
-                    "the model's settings command could not be found",
+                    gettextrs::gettext("the model's settings command could not be found"),
                 ));
             }
         }
@@ -457,8 +457,8 @@ fn validate_backend_identity(
 ) -> Vec<ValidationIssue> {
     if restart_impact.requires_readiness() && backend.snap_name().trim().is_empty() {
         vec![ValidationIssue::new(
-            "Model",
-            "the model's restart command could not be built",
+            gettextrs::gettext("Model"),
+            gettextrs::gettext("the model's restart command could not be built"),
         )]
     } else {
         Vec::new()
@@ -555,14 +555,9 @@ fn serialize_value(value: &ConfigValue) -> Result<String, String> {
         ConfigValue::Null => Ok("null".to_owned()),
         ConfigValue::Boolean(value) => Ok(value.to_string()),
         ConfigValue::Integer(value) => Ok(value.to_string()),
-        ConfigValue::Number(value) => {
-            if !value.is_finite() {
-                return Err("value must be a finite number".to_owned());
-            }
-            serde_json::Number::from_f64(*value)
-                .map(|number| number.to_string())
-                .ok_or_else(|| "value must be a finite number".to_owned())
-        }
+        ConfigValue::Number(value) => serde_json::Number::from_f64(*value)
+            .map(|number| number.to_string())
+            .ok_or_else(|| gettextrs::gettext("value must be a finite number")),
         ConfigValue::Text(value) => serde_json::to_string(value).map_err(|error| error.to_string()),
     }
 }
@@ -665,18 +660,16 @@ fn readiness_failure(snapshot: &BackendSnapshot, restart_impact: RestartImpact) 
     }
 
     if let Some(error) = snapshot.error(BackendSurface::Status) {
-        return Some(format!(
-            "The model's restart could not be confirmed: {}",
-            error.message()
-        ));
+        // TRANSLATORS: {reason} is the error reading the model's status, in English.
+        let frame = gettextrs::gettext("The model's restart could not be confirmed: {reason}");
+        return Some(frame.replace("{reason}", error.message()));
     }
 
     if let Some(status) = snapshot.status() {
         if status.services().is_empty() {
-            return Some(
-                "The model's restart could not be confirmed: no service health was reported."
-                    .to_owned(),
-            );
+            return Some(gettextrs::gettext(
+                "The model's restart could not be confirmed: no service health was reported.",
+            ));
         }
         let failing: Vec<String> = status
             .services()
@@ -691,10 +684,14 @@ fn readiness_failure(snapshot: &BackendSnapshot, restart_impact: RestartImpact) 
             })
             .collect();
         if !failing.is_empty() {
-            return Some(format!("The model did not restart: {}", failing.join(", ")));
+            // TRANSLATORS: {services} lists services and their states, such as "myna-whisper.server (failed)".
+            let frame = gettextrs::gettext("The model did not restart: {services}");
+            return Some(frame.replace("{services}", &failing.join(", ")));
         }
     } else {
-        return Some("The model's restart could not be confirmed.".to_owned());
+        return Some(gettextrs::gettext(
+            "The model's restart could not be confirmed.",
+        ));
     }
 
     None
@@ -709,12 +706,12 @@ fn readiness_failure_is_terminal(snapshot: &BackendSnapshot) -> bool {
     })
 }
 
-fn service_state_label(state: &ServiceState) -> &'static str {
+fn service_state_label(state: &ServiceState) -> String {
     match state {
-        ServiceState::Active => "active",
-        ServiceState::Inactive => "inactive",
-        ServiceState::Failed => "failed",
-        ServiceState::Unknown(_) => "unknown",
+        ServiceState::Active => gettextrs::pgettext("service state", "active"),
+        ServiceState::Inactive => gettextrs::pgettext("service state", "inactive"),
+        ServiceState::Failed => gettextrs::pgettext("service state", "failed"),
+        ServiceState::Unknown(_) => gettextrs::pgettext("service state", "unknown"),
     }
 }
 
