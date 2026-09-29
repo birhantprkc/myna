@@ -13,6 +13,7 @@ mod imp {
     pub struct BackendPage {
         #[template_child]
         pub preferences_page: gtk::TemplateChild<adw::PreferencesPage>,
+        pub groups: std::cell::RefCell<Vec<adw::PreferencesGroup>>,
     }
 
     #[glib::object_subclass]
@@ -54,6 +55,25 @@ impl BackendPage {
     pub fn set_display_title(&self, title: &str) {
         self.set_title(title);
         self.preferences_page().set_title(title);
+    }
+
+    /// Shows `groups` in place of the ones set before. The page itself stays,
+    /// and with it where the user scrolled: GTK lays out the new groups
+    /// before the scroll position is next clamped.
+    pub fn set_groups(&self, groups: Vec<adw::PreferencesGroup>) {
+        let page = self.preferences_page();
+        for group in self.imp().groups.take() {
+            let on_page = group
+                .ancestor(adw::PreferencesPage::static_type())
+                .is_some_and(|ancestor| ancestor == page);
+            if on_page {
+                page.remove(&group);
+            }
+        }
+        for group in &groups {
+            page.add(group);
+        }
+        self.imp().groups.replace(groups);
     }
 }
 impl Default for BackendPage {

@@ -317,7 +317,7 @@ pub struct BackendUi {
     operation_coordinator: OperationCoordinator,
     active_backend: ActiveBackendController,
     diagnostics_page: RefCell<Option<adw::NavigationPage>>,
-    backend_pages: RefCell<BTreeMap<String, adw::NavigationPage>>,
+    backend_pages: RefCell<BTreeMap<String, ui::BackendPage>>,
     apply_state: RefCell<BTreeMap<String, PendingChange>>,
     /// The active-backend state the Model tab last rendered.
     shown_state: RefCell<Option<ActiveBackendState>>,
@@ -1420,15 +1420,13 @@ impl BackendUi {
         self.backend_nav.replace(&[page]);
     }
 
-    /// Moves the spoken-language group onto `preferences`, the shown
-    /// backend's page, when `snap_name`'s family takes it.
-    fn place_spoken_language(&self, preferences: &adw::PreferencesPage, snap_name: &str) {
+    /// The spoken-language group, off any page, when `snap_name`'s family
+    /// takes it, for the shown backend's page to show.
+    fn spoken_language_for(&self, snap_name: &str) -> Option<adw::PreferencesGroup> {
         self.detach_spoken_language();
         let takes = myna_core::language::ModelFamily::from_snap_name(snap_name)
             .is_some_and(|family| family.takes_spoken_language());
-        if let (true, Some(group)) = (takes, &self.spoken_language) {
-            preferences.add(group);
-        }
+        takes.then(|| self.spoken_language.clone()).flatten()
     }
 
     fn detach_spoken_language(&self) {
@@ -1456,12 +1454,19 @@ impl BackendUi {
         let Some(page) = self.controller.page(snap_name) else {
             return;
         };
-        let widget = build_backend_page(&page, self);
-        self.backend_pages
+        // The page is kept and refilled, so it stays where it was scrolled.
+        let widget = self
+            .backend_pages
             .borrow_mut()
-            .insert(snap_name.to_owned(), widget.clone());
+            .entry(snap_name.to_owned())
+            .or_default()
+            .clone();
+        populate_backend_page(&widget, &page, self);
         if self.shown_backend().as_deref() == Some(snap_name) {
-            self.backend_nav.replace(&[widget]);
+            let widget = widget.upcast::<adw::NavigationPage>();
+            if self.backend_nav.visible_page().as_ref() != Some(&widget) {
+                self.backend_nav.replace(&[widget]);
+            }
             if let Some(focus) = focus {
                 self.restore_backend_focus(&focus);
             }
@@ -2204,9 +2209,9 @@ fn model_status_page(title: &str, description: &str, icon: &str) -> adw::Navigat
     page.upcast()
 }
 
-fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::NavigationPage {
-    let page_widget = ui::BackendPage::new();
-    let preferences = page_widget.preferences_page();
+/// Fills `page_widget` with `page`'s groups, replacing what it showed.
+fn populate_backend_page(page_widget: &ui::BackendPage, page: &BackendPage, ui: &Rc<BackendUi>) {
+    let mut groups = Vec::new();
     let title = display_title_for(page.identity().snap_name());
     page_widget.set_display_title(&title);
 
@@ -2270,9 +2275,9 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
             .build();
         overview.add(&service_row);
     }
-    preferences.add(&overview);
+    groups.push(overview);
     if ui.shown_backend().as_deref() == Some(page.identity().snap_name()) {
-        ui.place_spoken_language(&preferences, page.identity().snap_name());
+        groups.extend(ui.spoken_language_for(page.identity().snap_name()));
     }
 
     if page.loading() && page.snapshot().is_none() {
@@ -2280,7 +2285,7 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
             .title(gettextrs::gettext("Loading"))
             .description(gettextrs::gettext("Reading this model's settings…"))
             .build();
-        preferences.add(&loading);
+        groups.push(loading);
     } else if let Some(snapshot) = page.snapshot() {
         if snapshot.configuration().is_empty()
             && snapshot.models().is_none()
@@ -2292,9 +2297,9 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
                     "The model answered but reported no settings to change.",
                 ))
                 .build();
-            preferences.add(&empty);
+            groups.push(empty);
         }
-        add_configuration_groups(&preferences, page, ui);
+        groups.extend(configuration_groups(page, ui));
     }
 
     if page.partial() {
@@ -2304,7 +2309,7 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
                 "Raw failure details are recorded on the Diagnostics page.",
             ))
             .build();
-        preferences.add(&details);
+        groups.push(details);
     }
 
     let applying = ui.apply_state_view(page.identity().snap_name()).is_some();
@@ -2333,8 +2338,7 @@ fn build_backend_page(page: &BackendPage, ui: &Rc<BackendUi>) -> adw::Navigation
     actions.add_action(&refresh_action);
     page_widget.insert_action_group("backend", Some(&actions));
     refresh.set_action_name(Some("backend.refresh"));
-
-    page_widget.upcast()
+    page_widget.set_groups(groups);
 }
 
 fn overview_description(page: &BackendPage) -> String {
@@ -2350,11 +2354,7 @@ fn overview_description(page: &BackendPage) -> String {
     description
 }
 
-fn add_configuration_groups(
-    page_widget: &adw::PreferencesPage,
-    page: &BackendPage,
-    ui: &Rc<BackendUi>,
-) {
+fn configuration_groups(page: &BackendPage, ui: &Rc<BackendUi>) -> Vec<adw::PreferencesGroup> {
     let applying = ui.apply_state_view(page.identity().snap_name());
     let mut groups: BTreeMap<crate::presentation::PresentationGroup, adw::PreferencesGroup> =
         BTreeMap::new();
@@ -2371,9 +2371,7 @@ fn add_configuration_groups(
         });
         group.add(&build_row_widget(row, ui, page, applying.as_ref()));
     }
-    for (_, group) in groups {
-        page_widget.add(&group);
-    }
+    groups.into_values().collect()
 }
 
 fn group_title(group: crate::presentation::PresentationGroup) -> String {
@@ -2539,6 +2537,8 @@ fn build_row_widget(
     }
 }
 
+/// Shows the change `row` is making. The row stays sensitive but takes no
+/// input: insensitive, it would dim its progress line with the other rows.
 fn show_row_progress(row: &adw::ActionRow, progress: Option<&str>) {
     let Some(progress) = progress else {
         return;
@@ -2547,6 +2547,10 @@ fn show_row_progress(row: &adw::ActionRow, progress: Option<&str>) {
     let spinner = gtk::Spinner::new();
     spinner.start();
     row.add_prefix(&spinner);
+    row.set_sensitive(true);
+    row.set_can_target(false);
+    row.set_can_focus(false);
+    row.update_state(&[gtk::accessible::State::Busy(true)]);
 }
 
 fn apply_progress_text(progress: &ApplyProgress) -> String {
@@ -4565,6 +4569,10 @@ mod tests {
 
     /// The Model tab over [`ApplyMachine`], on screen with its page read.
     fn applying_ui() -> (Rc<BackendUi>, Rc<ApplyMachine>, adw::Window) {
+        applying_ui_of_height(600)
+    }
+
+    fn applying_ui_of_height(height: i32) -> (Rc<BackendUi>, Rc<ApplyMachine>, adw::Window) {
         ui::register_resources();
         let machine = Rc::new(ApplyMachine::new());
         let controller = BackendController::new(machine.clone());
@@ -4580,7 +4588,7 @@ mod tests {
         ui.overlay.set_child(Some(&view_stack));
         let window = adw::Window::builder()
             .default_width(800)
-            .default_height(600)
+            .default_height(height)
             .content(&ui.overlay)
             .build();
         window.present();
@@ -4869,6 +4877,93 @@ mod tests {
                 focus == switch.clone().upcast::<gtk::Widget>() || focus.is_ancestor(&switch),
                 "focus is on {focus:?}"
             );
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn the_changing_row_stays_legible_but_takes_no_input() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            machine.held.set(true);
+            setting::<adw::SwitchRow>(&ui, "streaming")
+                .expect("streaming row")
+                .set_active(false);
+            settle(|| !machine.plans().is_empty());
+
+            let row = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            // Insensitive would dim its progress line with the rest.
+            assert!(row.is_sensitive(), "the progress line is dimmed");
+            assert!(!row.can_target() && !row.can_focus(), "the row takes input");
+
+            let entry = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            assert!(!entry.is_sensitive());
+            machine.held.set(false);
+            settle(|| applied(&ui));
+            let row = setting::<adw::SwitchRow>(&ui, "streaming").expect("streaming row");
+            assert!(row.can_target() && row.can_focus());
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn a_changing_entry_shows_its_progress_in_a_plain_row() {
+        on_gtk_thread(|| {
+            let (ui, machine, window) = applying_ui();
+            machine.held.set(true);
+            let entry = setting::<adw::EntryRow>(&ui, "sleep-idle-seconds").expect("idle row");
+            entry.set_text("60");
+            entry.emit_by_name::<()>("apply", &[]);
+            settle(|| !machine.plans().is_empty());
+
+            let row = setting::<adw::ActionRow>(&ui, "sleep-idle-seconds").expect("plain row");
+            assert_eq!(row.subtitle().as_deref(), Some("Applying…"));
+            assert!(row.is_sensitive() && !row.can_focus());
+            assert!(descendants(row.upcast_ref()).iter().any(|widget| {
+                widget
+                    .downcast_ref::<gtk::Label>()
+                    .is_some_and(|label| label.label() == "60")
+            }));
+            machine.held.set(false);
+            settle(|| applied(&ui));
+            window.destroy();
+        });
+    }
+
+    /// The scrolled window of the shown page, not of a row inside it.
+    fn scrolled(ui: &BackendUi) -> gtk::ScrolledWindow {
+        let page = ui
+            .backend_nav
+            .visible_page()
+            .and_downcast::<ui::BackendPage>()
+            .expect("backend page shown");
+        descendants(page.preferences_page().upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+            .last()
+            .expect("the page scrolls")
+    }
+
+    #[test]
+    fn a_rebuild_keeps_the_page_where_the_user_scrolled_it() {
+        on_gtk_thread(|| {
+            let (ui, _machine, window) = applying_ui_of_height(240);
+            let adjustment = scrolled(&ui).vadjustment();
+            settle(|| adjustment.upper() > adjustment.page_size() + 100.0);
+            adjustment.set_value(100.0);
+            let shown = ui.backend_nav.visible_page();
+
+            ui.rebuild_backend_page("myna-parakeet");
+            for _ in 0..20 {
+                glib::MainContext::default().iteration(false);
+            }
+
+            assert_eq!(
+                ui.backend_nav.visible_page(),
+                shown,
+                "the page was replaced"
+            );
+            assert_eq!(scrolled(&ui).vadjustment().value(), 100.0);
             window.destroy();
         });
     }
