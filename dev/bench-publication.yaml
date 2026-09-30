@@ -1,0 +1,69 @@
+# Publication sweep: whole published test splits, repeated, at both paces.
+#
+#   python3 myna-bench.pyz download-corpus --preset librispeech-test-clean
+#   python3 myna-bench.pyz plan --config dev/bench-publication.yaml
+#   sudo python3 myna-bench.pyz run --config dev/bench-publication.yaml \
+#       --manifest corpus/publication/<preset>/manifest.json \
+#       --out results/publication-<preset>.jsonl
+#
+# One corpus per run: `--manifest` swaps the split in and `--out` keeps each
+# split's rows in their own file, since a results file is scored against one
+# corpus id. The presets (see `download-corpus --help`), measured 2026-09-30:
+#
+#   preset                    download   clips   audio   build
+#   librispeech-test-clean    347 MB     2620    5.40 h  67 s
+#   librispeech-test-other    329 MB     2939    5.34 h  76 s
+#   fleurs-test:fr_fr         349 MB      676    1.95 h  21 s
+#   fleurs-test:<other>       243-582 MB  428-945 1.3-3.2 h (ar_eg..de_de)
+#
+# `plan` prices each cell from the manifest. As a rule of thumb, every
+# streaming cell at `realtime` costs the corpus duration per repeat, so one
+# streaming model on test-clean is 3 x 5.4 h = 16 h before the `max` pass;
+# budget days, not hours, for the full matrix (`plan` put whisper's three CPU
+# models on test-clean at 48.6 h). Rows compare only within one corpus id: a
+# whole-split corpus built with `--select balanced` carries noise clips and is
+# not the preset's.
+#
+# Same format as dev/bench.yaml (schema in dev/bench.yaml.example); the
+# differences are the corpus, the schedule and the lack of knob sweeps.
+
+root: ..
+
+manifest: corpus/publication/librispeech-test-clean/manifest.json
+out: results/publication.jsonl
+
+# Three shuffled passes give each clip a variance estimate; three warmup
+# clips absorb one-off costs (GPU kernel setup, page cache) and are never
+# scored. The seed makes the shuffle reproducible.
+repeats: 3
+warmup_clips: 3
+seed: 0
+
+# `max` for accuracy and throughput, `realtime` for the latency a dictating
+# user sees; realtime applies to streaming cells only.
+pace: [max, realtime]
+
+# Per pass per cell. A realtime pass over test-clean alone is 5.4 h, so the
+# budget only catches a wedged backend here; it is not the usability verdict
+# dev/bench.yaml's budget is.
+sweep_budget_seconds: 43200
+
+# Shipped settings, no knob sweeps: a publication row is what a user runs.
+# Each target sweeps every model component its files install (whisper's
+# tiny, base and small are three rows each); add `models: [...]` to report
+# fewer. Add `engines: [cpu, nvidia-gpu]` on a GPU machine to report both.
+targets:
+  - snap: myna-whisper
+    files:
+      - whisper-snap/myna-whisper_*.snap
+      - whisper-snap/myna-whisper+*.comp
+
+  - snap: myna-parakeet
+    files:
+      - parakeet-snap/myna-parakeet_*.snap
+      - parakeet-snap/myna-parakeet+*.comp
+
+  - snap: myna-funasr
+    files:
+      - funasr-snap/myna-funasr_*.snap
+      - funasr-snap/myna-funasr+*.comp

@@ -274,8 +274,9 @@ def write_config(path, **overrides):
 
 
 class PlanArgs:
-    def __init__(self, config, only=None, out=None, budget=None, label_suffix=""):
+    def __init__(self, config, only=None, out=None, budget=None, label_suffix="", manifest=None):
         self.config = str(config)
+        self.manifest = manifest
         self.only = only
         self.out = out
         self.budget = budget
@@ -293,6 +294,32 @@ def test_relative_paths_resolve_against_the_config_not_the_cwd(tmp_path, snaps, 
 
     assert cfg.manifest == tmp_path / "corpus" / "manifest.json"
     assert cfg.out == tmp_path / "results.jsonl"
+
+
+def test_a_manifest_override_replaces_the_configs_corpus(tmp_path, snaps, monkeypatch):
+    """One publication config sweeps each corpus in turn; like --out, the
+    override is a command-line path, so it resolves against the cwd."""
+    snaps()
+    (tmp_path / "conf").mkdir()
+    config = write_config(tmp_path / "conf" / "bench.yaml", root="..")
+    monkeypatch.chdir(tmp_path)
+
+    cfg = load_config(
+        config,
+        only=None,
+        out_override=None,
+        budget_override=None,
+        manifest_override="corpus/fleurs-test-fr_fr/manifest.json",
+    )
+
+    assert cfg.manifest == tmp_path / "corpus" / "fleurs-test-fr_fr" / "manifest.json"
+
+
+def test_plan_names_the_overriding_manifest(tmp_path, snaps, capsys):
+    snaps()
+    config = write_config(tmp_path / "bench.yaml")
+    cmd_plan(PlanArgs(config, manifest=str(tmp_path / "other" / "test.json")))
+    assert "manifest=test.json" in capsys.readouterr().out
 
 
 def test_an_explicit_root_moves_the_base_of_every_relative_path(tmp_path, snaps):

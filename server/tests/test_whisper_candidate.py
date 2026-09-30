@@ -26,6 +26,15 @@ def test_iso639_1_drops_region_subtag():
     assert _iso639_1(None) is None  # auto-detect
 
 
+@pytest.mark.parametrize(
+    ("tag", "code"), [("nb", "no"), ("nb-NO", "no"), ("jv", "jw"), ("fil", "tl")]
+)
+def test_iso639_1_uses_whispers_code_where_it_differs_from_bcp47(tag, code):
+    # FLEURS nb_no, jv_id and fil_ph arrive as their BCP-47 tags; faster-whisper
+    # rejects those and knows the languages as no, jw and tl.
+    assert _iso639_1(tag) == code
+
+
 def test_candidate_labels_a_bare_size():
     cand = FasterWhisperAdapter("small").candidate
     assert cand.model == "whisper-small"

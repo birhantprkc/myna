@@ -6,6 +6,10 @@
 # Download a corpus first (one-time, ~330 MB):
 #
 #   myna-bench download-corpus --out ./corpus --select balanced -n 80
+#
+# For numbers to publish, use a whole test split instead, e.g.
+# `download-corpus --preset librispeech-test-clean`, and point a run at it with
+# `--manifest` (dev/bench-publication.yaml in the source tree is that setup).
 
 # Path to the corpus manifest produced by download-corpus or make-corpus.
 manifest: ./corpus/manifest.json

@@ -59,11 +59,19 @@ WHISPER_RATE = 16_000
 WHISPER_FORMAT = AudioFormat(sample_rate_hz=WHISPER_RATE, channels=1, sample_width_bytes=2)
 
 
+# BCP-47 primary subtags Whisper knows under another code.
+_WHISPER_CODE = {"nb": "no", "jv": "jw", "fil": "tl"}
+
+
 def _iso639_1(language: str | None) -> str | None:
     """faster-whisper wants a bare ISO 639-1 code ("en"); the corpus uses
     BCP-47-ish tags with region subtags ("en-GB"), which it rejects. Drop the
-    region. Keeps this model-specific quirk inside the adapter (house rule)."""
-    return language.split("-")[0] if language else None
+    region and use Whisper's own code where it differs. Keeps this
+    model-specific quirk inside the adapter (house rule)."""
+    if not language:
+        return None
+    primary = language.split("-")[0]
+    return _WHISPER_CODE.get(primary, primary)
 
 
 # Whisper decodes near-silence into training-data boilerplate — our shipped

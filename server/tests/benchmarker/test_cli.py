@@ -31,6 +31,7 @@ def dispatched(monkeypatch):
         ("myna.benchmarker._run", "cmd_plan", "plan"),
         ("myna.benchmarker._bench", "cmd_bench", "bench"),
         ("myna.benchmarker.corpus_english", "cmd_download", "download-corpus"),
+        ("myna.benchmarker.corpus_publication", "cmd_preset", "download-corpus --preset"),
         ("myna.benchmarker.corpus_chinese", "cmd_download_zh", "download-corpus-zh"),
         ("myna.benchmarker._corpus", "cmd_make", "make-corpus"),
         ("myna.benchmarker._summarize", "cmd_summarize", "summarize"),
@@ -149,9 +150,25 @@ def test_run_accepts_every_sweep_override(monkeypatch, dispatched):
 def test_plan_takes_the_same_target_selection_as_run(monkeypatch, dispatched):
     """A plan that could not be narrowed the way the run is would describe a
     different sweep from the one about to happen."""
-    run_cli(monkeypatch, "plan", "--config", "c.yaml", "--only", "myna-parakeet", "--budget", "10")
+    run_cli(
+        monkeypatch,
+        "plan",
+        "--config",
+        "c.yaml",
+        "--only",
+        "myna-parakeet",
+        "--budget",
+        "10",
+        "--manifest",
+        "m.json",
+    )
     args = dispatched["args"]
-    assert (args.config, args.only, args.budget) == ("c.yaml", ["myna-parakeet"], 10.0)
+    assert (args.config, args.only, args.budget, args.manifest) == (
+        "c.yaml",
+        ["myna-parakeet"],
+        10.0,
+        "m.json",
+    )
 
 
 # ─── download-corpus ─────────────────────────────────────────────────────────
@@ -203,6 +220,15 @@ def test_download_accepts_the_other_librispeech_splits(monkeypatch, dispatched):
 def test_download_rejects_a_split_that_does_not_exist(monkeypatch, dispatched):
     with pytest.raises(SystemExit):
         run_cli(monkeypatch, "download-corpus", "--subset", "train-clean-360")
+
+
+def test_download_with_a_preset_dispatches_to_the_full_split_builder(monkeypatch, dispatched):
+    run_cli(monkeypatch, "download-corpus", "--preset", "fleurs-test:fr_fr")
+    assert dispatched["command"] == "download-corpus --preset"
+    args = dispatched["args"]
+    assert args.preset == "fleurs-test:fr_fr"
+    # Unset, so the preset can tell a flag it must refuse from a default.
+    assert (args.out, args.cache, args.subset, args.n, args.select) == (None,) * 5
 
 
 # ─── make-corpus ─────────────────────────────────────────────────────────────

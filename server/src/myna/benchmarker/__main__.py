@@ -50,6 +50,11 @@ def _add_target_selection(parser: argparse.ArgumentParser) -> None:
         help="warm-sweep wall-clock budget in seconds (overrides the config)",
     )
     parser.add_argument(
+        "--manifest",
+        default=None,
+        help="corpus manifest to sweep (overrides the config), e.g. one publication preset per run",
+    )
+    parser.add_argument(
         "--label-suffix",
         default="",
         help=(
@@ -58,6 +63,16 @@ def _add_target_selection(parser: argparse.ArgumentParser) -> None:
             " it was meant to be compared against)"
         ),
     )
+
+
+# `download-corpus` without --preset: a LibriSpeech subset tier.
+_SUBSET_DEFAULTS = {
+    "out": "corpus/english",
+    "cache": ".cache/librispeech",
+    "subset": "dev-clean",
+    "n": 12,
+    "select": "archive",
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -161,11 +176,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="download the English LibriSpeech evaluation corpus",
         description=(
             "Download a clip set from LibriSpeech (CC-BY-4.0) and write a manifest\n"
-            "ready for bench.yaml. Requires ffmpeg for FLAC decode."
+            "ready for bench.yaml. Requires ffmpeg for FLAC decode.\n\n"
+            "--preset instead takes a whole published test split, for numbers quoted\n"
+            "in papers: librispeech-test-clean, librispeech-test-other, or\n"
+            "fleurs-test:<lang> (a FLEURS locale such as fr_fr). Presets cache under\n"
+            "~/.cache/myna/corpus-src and write to corpus/publication/<preset>."
         ),
     )
-    p_dl.add_argument("--out", default="corpus/english", help="output directory")
-    p_dl.add_argument("--cache", default=".cache/librispeech", help="tarball cache dir")
+    p_dl.add_argument(
+        "--preset",
+        default=None,
+        help="a whole test split: librispeech-test-clean, librispeech-test-other,"
+        " fleurs-test:<lang>; the subset flags below do not apply",
+    )
+    # The subset flags default to None so a preset can tell one that was passed
+    # (and refuse it) from one that was not; `main` fills in the defaults below.
+    p_dl.add_argument("--out", default=None, help="output directory (default corpus/english)")
+    p_dl.add_argument(
+        "--cache", default=None, help="archive cache dir (default .cache/librispeech)"
+    )
     p_dl.add_argument(
         "--tarball",
         default=None,
@@ -174,18 +203,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument(
         "--subset",
         choices=("dev-clean", "dev-other", "test-clean", "test-other"),
-        default="dev-clean",
+        default=None,
         help=(
             "LibriSpeech split (default dev-clean). The '-other' splits are the"
             " harder, accented/low-fidelity half - give them their own --out,"
             " one split per corpus dir"
         ),
     )
-    p_dl.add_argument("-n", type=int, default=12, help="number of clean clips (default 12)")
+    p_dl.add_argument("-n", type=int, default=None, help="number of clean clips (default 12)")
     p_dl.add_argument(
         "--select",
         choices=("archive", "balanced"),
-        default="archive",
+        default=None,
         help=(
             "clip selection: 'archive' = first N in archive order (one speaker);"
             " 'balanced' = round-robin over every speaker in the split - use this"
@@ -364,9 +393,16 @@ def main() -> None:
         from myna.benchmarker._bench import cmd_bench
 
         cmd_bench(args)
+    elif args.command == "download-corpus" and args.preset:
+        from myna.benchmarker.corpus_publication import cmd_preset
+
+        cmd_preset(args)
     elif args.command == "download-corpus":
         from myna.benchmarker.corpus_english import cmd_download
 
+        for name, default in _SUBSET_DEFAULTS.items():
+            if getattr(args, name) is None:
+                setattr(args, name, default)
         cmd_download(args)
     elif args.command == "download-corpus-zh":
         from myna.benchmarker.corpus_chinese import cmd_download_zh

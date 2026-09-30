@@ -26,7 +26,7 @@ from myna.benchmarker.corpus_english import (
     _speaker,
     build,
     cmd_download,
-    decode_flac,
+    decode_audio,
     download,
     is_complete,
     open_split,
@@ -67,10 +67,10 @@ def test_round_robin_of_an_empty_pool_is_empty():
     assert _round_robin({}, 5) == []
 
 
-# ─── decode_flac ────────────────────────────────────────────────────────────
+# ─── decode_audio ────────────────────────────────────────────────────────────
 
 
-def test_decode_flac_pipes_the_bytes_through_ffmpeg_at_16k_mono(monkeypatch):
+def test_decode_audio_pipes_the_bytes_through_ffmpeg_at_16k_mono(monkeypatch):
     seen = {}
 
     def run(cmd, input=None, **kwargs):  # noqa: A002
@@ -79,7 +79,7 @@ def test_decode_flac_pipes_the_bytes_through_ffmpeg_at_16k_mono(monkeypatch):
         return subprocess.CompletedProcess(cmd, 0, stdout=tone(0.1).tobytes())
 
     monkeypatch.setattr(corpus_english.subprocess, "run", run)
-    samples = decode_flac(b"fake-flac")
+    samples = decode_audio(b"fake-flac")
 
     assert seen["input"] == b"fake-flac"
     assert seen["cmd"][0] == "ffmpeg"
@@ -116,7 +116,7 @@ def make_tarball(path, subset, utterances):
 
 @pytest.fixture
 def stub_decode(monkeypatch):
-    monkeypatch.setattr(corpus_english, "decode_flac", lambda data: tone(0.25))
+    monkeypatch.setattr(corpus_english, "decode_audio", lambda data: tone(0.25))
 
 
 @pytest.fixture
@@ -423,7 +423,7 @@ def test_a_truncated_archive_names_the_file_and_the_fix(tmp_path, tarball):
     short = tmp_path / "short.tar.gz"
     short.write_bytes(tarball.read_bytes()[: len(tarball.read_bytes()) // 3])
 
-    with pytest.raises(SystemExit, match="not a complete LibriSpeech archive"):
+    with pytest.raises(SystemExit, match="not a complete archive"):
         with open_split(short):
             pass
 
@@ -431,7 +431,7 @@ def test_a_truncated_archive_names_the_file_and_the_fix(tmp_path, tarball):
 def test_a_file_that_is_not_an_archive_at_all_says_so(tmp_path):
     junk = tmp_path / "junk.tar.gz"
     junk.write_bytes(b"this is not a tarball")
-    with pytest.raises(SystemExit, match="not a complete LibriSpeech archive"):
+    with pytest.raises(SystemExit, match="not a complete archive"):
         with open_split(junk):
             pass
 

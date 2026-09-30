@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -1113,8 +1114,10 @@ class RunArgs:
         only=None,
         label_suffix="",
         skip_env_check=True,
+        manifest=None,
     ):
         self.config = str(config)
+        self.manifest = manifest
         self.out = str(out) if out else None
         self.keep_results = keep_results
         self.no_resources = no_resources
@@ -1395,6 +1398,28 @@ def test_a_sweep_writes_the_machine_header_then_one_record_per_target(
     assert lines[1]["label"] == "myna-whisper/cpu/tiny/batch"
     assert stub_target.started == 1 and stub_target.stopped == 1
     assert "MATRIX" in capsys.readouterr().out
+
+
+def test_manifest_flag_sweeps_its_corpus_not_the_configs(
+    tmp_path, corpus, stub_sweep, stub_target, monkeypatch
+):
+    monkeypatch.setattr(_run.os, "geteuid", lambda: 0)
+    out = tmp_path / "results.jsonl"
+    config = write_config(
+        tmp_path / "bench.yaml", manifest=str(tmp_path / "absent.json"), out=str(out)
+    )
+
+    cmd_run(RunArgs(config, out=out, manifest=str(corpus)))
+
+    (_, _, warm) = stub_sweep[0]
+    assert [c.id for c in warm] == ["clip-a", "clip-b"]
+
+
+def test_a_missing_manifest_flag_is_named_even_when_the_configs_exists(tmp_path, corpus):
+    config = write_config(tmp_path / "bench.yaml", manifest=str(corpus))
+    absent = tmp_path / "publication" / "manifest.json"
+    with pytest.raises(SystemExit, match=re.escape(f"manifest not found: {absent}")):
+        cmd_run(RunArgs(config, manifest=str(absent)))
 
 
 def test_every_row_carries_the_environment_manifest(tmp_path, corpus, stub_target, monkeypatch):

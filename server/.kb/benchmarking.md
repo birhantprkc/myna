@@ -100,6 +100,8 @@ sudo python3 myna-bench.pyz run --config bench.yaml
 python3 myna-bench.pyz summarize --in results.jsonl --by-category
 ```
 
+A number meant for a paper or a leaderboard comparison comes from a whole published test split, never a subset tier. `download-corpus --preset` builds one (`librispeech-test-clean`, `librispeech-test-other`, `fleurs-test:<locale>`; `corpus_publication`): every utterance, no noise or long-form variants, subset flags refused. Archives cache under the shared `~/.cache/myna/corpus-src`; the manifest names preset, dataset, split, licence, source URL and each archive's sha256. FLEURS is fetched at a pinned revision and scored against `raw_transcription`. A preset over a corpus that still verifies is a no-op; over a different corpus, refused. Sweep with `dev/bench-publication.yaml`, once per corpus with `--manifest` and its own `--out`: a results file is scored against one corpus id, and rows from different ids never compare. Sizes and costs are in that file's header. AMI, Earnings-22 and VoxPopuli wait on a licence decision; TED-LIUM 3 is CC-BY-NC-ND and excluded.
+
 Merge returned submissions with:
 
 ```shell

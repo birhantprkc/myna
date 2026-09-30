@@ -1330,6 +1330,7 @@ def load_config(
     only: list[str] | None,
     out_override: str | None,
     budget_override: float | None,
+    manifest_override: str | None = None,
 ) -> SweepConfig:
     if not config_path.exists():
         raise SystemExit(
@@ -1356,7 +1357,11 @@ def load_config(
     return SweepConfig(
         path=config_path,
         root=root,
-        manifest=(root / cfg.get("manifest", "corpus/manifest.json")).resolve(),
+        manifest=(
+            Path(manifest_override)
+            if manifest_override
+            else root / cfg.get("manifest", "corpus/manifest.json")
+        ).resolve(),
         out=(
             Path(out_override) if out_override else (root / cfg.get("out", "results.jsonl"))
         ).resolve(),
@@ -1398,7 +1403,11 @@ def cmd_plan(args: argparse.Namespace) -> None:
     rather than guessing.
     """
     cfg = load_config(
-        Path(args.config), only=args.only, out_override=args.out, budget_override=args.budget
+        Path(args.config),
+        only=args.only,
+        out_override=args.out,
+        budget_override=args.budget,
+        manifest_override=args.manifest,
     )
     print(f"config={cfg.path}  manifest={cfg.manifest.name}  out={cfg.out}")
     print(f"warm-sweep budget: {cfg.budget:.0f}s per pass over the clips")
@@ -1571,7 +1580,11 @@ def cmd_plan(args: argparse.Namespace) -> None:
 
 def cmd_run(args: argparse.Namespace) -> None:
     cfg = load_config(
-        Path(args.config), only=args.only, out_override=args.out, budget_override=args.budget
+        Path(args.config),
+        only=args.only,
+        out_override=args.out,
+        budget_override=args.budget,
+        manifest_override=args.manifest,
     )
 
     if not cfg.manifest.exists():

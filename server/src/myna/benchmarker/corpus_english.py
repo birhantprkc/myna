@@ -144,8 +144,8 @@ def download(url: str, dest: Path) -> Path:
     return dest
 
 
-def decode_flac(data: bytes) -> array[int]:
-    """Decode FLAC bytes to 16 kHz mono S16LE samples via ffmpeg (piped)."""
+def decode_audio(data: bytes) -> array[int]:
+    """Decode any audio ffmpeg reads (FLAC, float WAV) to 16 kHz mono S16LE samples."""
     pcm = subprocess.run(
         [
             "ffmpeg",
@@ -184,7 +184,7 @@ def open_split(tar_path: Path) -> contextlib.AbstractContextManager[tarfile.TarF
         except (EOFError, tarfile.ReadError, gzip.BadGzipFile, zlib.error) as exc:
             size = tar_path.stat().st_size if tar_path.exists() else 0
             raise SystemExit(
-                f"{tar_path} is not a complete LibriSpeech archive ({size >> 20} MB): {exc}. "
+                f"{tar_path} is not a complete archive ({size >> 20} MB): {exc}. "
                 f"Delete it and re-run - the download will restart:\n  rm {tar_path}"
             ) from exc
 
@@ -211,7 +211,7 @@ def collect(tar_path: Path, n: int, prefix: str) -> list[tuple[str, array[int], 
                     utt_id, _, transcript = line.partition(" ")
                     text[utt_id] = transcript
             elif name.endswith(".flac") and len(pcm) < n:
-                pcm[Path(name).stem] = decode_flac(_read_member(tar, member))
+                pcm[Path(name).stem] = decode_audio(_read_member(tar, member))
     return [(uid, pcm[uid], text[uid]) for uid in pcm if uid in text]
 
 
@@ -283,7 +283,7 @@ def collect_balanced(tar_path: Path, n: int, prefix: str) -> list[tuple[str, arr
                 continue
             utt_id = Path(member.name).stem
             if utt_id in remaining:
-                pcm[utt_id] = decode_flac(_read_member(tar, member))
+                pcm[utt_id] = decode_audio(_read_member(tar, member))
                 remaining.discard(utt_id)
                 if not remaining:
                     break
@@ -349,7 +349,7 @@ def long_form_entry(
                 continue
             utt_id = Path(member.name).stem
             if utt_id in wanted:
-                pcm_by_id[utt_id] = decode_flac(_read_member(tar, member))
+                pcm_by_id[utt_id] = decode_audio(_read_member(tar, member))
                 wanted.discard(utt_id)
                 if not wanted:
                     break
