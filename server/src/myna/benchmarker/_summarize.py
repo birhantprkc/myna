@@ -40,8 +40,9 @@ Record = dict[str, Any]
 # Readers treat a missing field as unknown, never as an error, so a file from
 # before a bump still summarizes and merges. 1 is the unstamped schema; 2 adds
 # the environment manifest (os, gpus, harness, installed artifacts, served
-# runtime).
-SCHEMA_VERSION = 2
+# runtime); 3 adds the telemetry trace to ``*-resources.jsonl`` (rows of kind
+# ``sample``) and energy, temperature and throttling to its per-cell row.
+SCHEMA_VERSION = 3
 
 # A row's identity in a results file. The machine is half of it: a leaderboard
 # holds the same <snap>/<engine>/<model>/<mode> measured on many machines, and
@@ -70,6 +71,8 @@ class SummaryRow(TypedDict):
     audio: float
     peak_rss_mb: float | None
     peak_vram_mb: float | None
+    j_per_audio_s: float | None
+    throttled: dict[str, bool | None] | None
     starved: int
 
 
@@ -321,15 +324,18 @@ def _summarize(records: list[Record]) -> dict[RowKey, SummaryRow]:
             "audio": sum(r["audio_seconds"] for r in warm),
             "peak_rss_mb": None,
             "peak_vram_mb": None,
+            "j_per_audio_s": None,
+            "throttled": None,
             "starved": len(starved),
         }
     return summary
 
 
 def _load_resources(path: Path) -> dict[RowKey, Record]:
-    """Read the sweep's peak RAM/VRAM sidecar, keyed like every other row.
+    """Read the sweep's per-cell resource rows, keyed like every other row.
 
-    Last occurrence wins. Absent file -> empty (resource columns are hidden).
+    The 1 Hz telemetry trace (``kind: sample``) is skipped. Last occurrence
+    wins. Absent file -> empty (resource columns are hidden).
     """
     if not path.exists():
         return {}
@@ -338,7 +344,8 @@ def _load_resources(path: Path) -> dict[RowKey, Record]:
         raw = raw.strip()
         if raw:
             rec = json.loads(raw)
-            peaks[row_key(rec)] = rec
+            if rec.get("kind") != "sample":
+                peaks[row_key(rec)] = rec
     return peaks
 
 
@@ -371,6 +378,14 @@ def _rtfx(value: object) -> str:
 def _scaled(rate: object) -> float | None:
     """An error rate as a percentage, keeping "not scored" distinct from zero."""
     return rate * 100 if isinstance(rate, (int, float)) else None
+
+
+def _throttle(throttled: object) -> str:
+    """Which side throttled during the cell; -- where nothing could tell."""
+    if not isinstance(throttled, dict) or all(v is None for v in throttled.values()):
+        return "--"
+    hit = [side for side in ("cpu", "gpu") if throttled.get(side)]
+    return "+".join(hit) if hit else "no"
 
 
 def _speed(rtf: object) -> str:
@@ -445,7 +460,9 @@ def _print_overall(
     lw = max([len("label"), *(len(key[1]) for key in summary)])
     mw = max([len("machine"), *(len(key[0]) for key in summary)]) if show_machine else 0
     mh = f"{'machine':{mw}} " if show_machine else ""
+    show_energy = any(s.get("throttled") is not None for s in summary.values())
     rh = f"{'RSS MB':>9} {'VRAM MB':>9}" if show_res else ""
+    rh += f" {'J/aud s':>8} {'throttle':>8}" if show_energy else ""
     header = (
         f"{'#':>3} {'label':{lw}} {'status':>13} {mh}{'clips':>5} "
         f"{'WER%':>7} {'CER%':>7} {'WERw%':>7} {'CERw%':>7} {'speed':>6} {'RTFx':>7} "
@@ -466,6 +483,8 @@ def _print_overall(
             if show_res
             else ""
         )
+        if show_energy:
+            rc += f" {_f(s.get('j_per_audio_s'), '8.3f')} {_throttle(s.get('throttled')):>8}"
         print(
             f"{rank:>3} {key[1]:{lw}} {status_col:>13} {mc}{s['clips']:>5} "
             f"{_f(_scaled(s['wer']), '7.2f')} {_f(_scaled(s['cer']), '7.2f')} "
@@ -499,6 +518,13 @@ def _print_overall(
     )
     if show_res:
         print("RSS/VRAM = peak memory during the run.")
+    if show_energy:
+        print(
+            "J/aud s = RAPL package + every NVIDIA GPU's energy over the whole cell (cold,"
+            " warmup, measured) per second of audio fed, -- when any of them went unread;"
+            " throttle = cpu/gpu slowed by power or heat during the cell, -- = not observable"
+            " here."
+        )
     starved = sum(s["starved"] for s in summary.values())
     if starved:
         print(
@@ -623,6 +649,8 @@ def cmd_summarize(args: argparse.Namespace) -> None:
         if key in summary:
             summary[key]["peak_rss_mb"] = peaks.get("peak_rss_mb")
             summary[key]["peak_vram_mb"] = peaks.get("peak_vram_mb")
+            summary[key]["j_per_audio_s"] = peaks.get("j_per_audio_s")
+            summary[key]["throttled"] = peaks.get("throttled")
     machines = {key[0] for key in summary}
     print(
         f"{len(records)} records across {len(summary)} row(s) "

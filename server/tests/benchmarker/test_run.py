@@ -39,12 +39,10 @@ from myna.benchmarker._run import (
     BATCH,
     DEFAULT_SWEEP_BUDGET_S,
     STREAMING,
-    ResourceSampler,
     SnapTarget,
     TargetUnavailable,
     Variant,
     _chown_to_invoker,
-    _gpu_memory_by_pid,
     _JsonlWriter,
     _resolve_user_home,
     _sweep_one,
@@ -167,66 +165,6 @@ def test_wait_for_socket_returns_as_soon_as_a_late_socket_binds(tmp_path):
     started = time.monotonic()
     assert wait_for_socket(sock, timeout=10.0) is True
     assert time.monotonic() - started < 5.0
-
-
-# ─── _gpu_memory_by_pid ──────────────────────────────────────────────────────
-
-
-def test_gpu_memory_maps_pids_to_mib(monkeypatch):
-    monkeypatch.setattr(
-        _run.subprocess,
-        "run",
-        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="123, 512\n456, 1024\n"),
-    )
-    assert _gpu_memory_by_pid() == {123: 512, 456: 1024}
-
-
-def test_gpu_memory_is_empty_without_nvidia_smi(monkeypatch):
-    monkeypatch.setattr(
-        _run.subprocess, "run", lambda cmd, **kw: (_ for _ in ()).throw(FileNotFoundError())
-    )
-    assert _gpu_memory_by_pid() == {}
-
-
-def test_gpu_memory_skips_unparseable_rows_rather_than_failing(monkeypatch):
-    monkeypatch.setattr(
-        _run.subprocess,
-        "run",
-        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="oops\n123, 512\n"),
-    )
-    assert _gpu_memory_by_pid() == {123: 512}
-
-
-# ─── ResourceSampler ─────────────────────────────────────────────────────────
-
-
-def test_sampler_records_a_peak_for_a_live_process(monkeypatch):
-    monkeypatch.setattr(_run, "_gpu_memory_by_pid", dict)
-    sampler = ResourceSampler(os.getpid(), interval=0.01)
-    sampler.start()
-    time.sleep(0.1)
-    sampler.stop()
-    assert sampler.peak_rss_mb > 0
-    assert sampler.peak_vram_mb is None
-    assert not sampler.is_alive()
-
-
-def test_sampler_attributes_vram_only_to_pids_in_its_own_tree(monkeypatch):
-    monkeypatch.setattr(_run, "_gpu_memory_by_pid", lambda: {os.getpid(): 700, 999999: 4096})
-    sampler = ResourceSampler(os.getpid(), interval=0.01)
-    sampler.start()
-    time.sleep(0.1)
-    sampler.stop()
-    assert sampler.peak_vram_mb == 700.0
-
-
-def test_sampler_on_a_dead_pid_stops_cleanly_at_zero(monkeypatch):
-    monkeypatch.setattr(_run, "_gpu_memory_by_pid", dict)
-    sampler = ResourceSampler(999999, interval=0.01)
-    sampler.start()
-    time.sleep(0.05)
-    sampler.stop()
-    assert sampler.peak_rss_mb == 0.0
 
 
 # ─── invoker identity under sudo ─────────────────────────────────────────────
@@ -1062,22 +1000,147 @@ def test_a_nonzero_subprocess_exit_is_recorded_by_return_code(tmp_path, monkeypa
     assert kwargs["broken"] == [("myna-whisper/cpu/tiny/batch", "exited 3")]
 
 
-def test_resource_peaks_are_written_to_the_sidecar_when_sampling(tmp_path, monkeypatch):
-    stub_run_clips(monkeypatch, (False, 1))
-    monkeypatch.setattr(_run, "_gpu_memory_by_pid", dict)
+TRACE = [
+    {
+        "t": 0.0,
+        "cpu_energy_j": 0.0,
+        "rss_mb": 900.0,
+        "vram_mb": None,
+        "gpus": [{"index": 0, "power_w": 40.0, "throttle": 0x1, "temp_c": 60.0}],
+    },
+    {
+        "t": 2.0,
+        "cpu_energy_j": 30.0,
+        "rss_mb": 1200.0,
+        "vram_mb": 800.0,
+        "gpus": [
+            {
+                "index": 0,
+                "power_w": 40.0,
+                "power_limit_w": 40.0,
+                "throttle": 0x4,
+                "temp_c": 70.0,
+                "util_pct": 90.0,
+            }
+        ],
+    },
+]
+
+
+class FakeSampler:
+    """Stands in for the telemetry child: records its span, replays TRACE."""
+
+    spans: list[str] = []
+    error: str | None = None
+
+    def __init__(self, pid):
+        self.target = pid
+
+    def start(self):
+        FakeSampler.spans.append(f"start {self.target}")
+
+    def stop(self):
+        FakeSampler.spans.append("stop")
+        return [dict(s) for s in TRACE]
+
+
+@pytest.fixture
+def fake_sampler(monkeypatch):
+    FakeSampler.spans = []
+    monkeypatch.setattr(_run, "TelemetrySampler", FakeSampler)
+    return FakeSampler
+
+
+def stub_run_clips_feeding(monkeypatch, audio_seconds):
+    """run_clips that writes one row per call, as the real one does."""
+
+    async def run_clips(**kwargs):
+        kwargs["out_fp"].write({"label": kwargs["label"], "audio_seconds": audio_seconds})
+        return False, 1
+
+    module = type(
+        "M", (), {"run_clips": staticmethod(run_clips), "AllClipsFailed": _bench.AllClipsFailed}
+    )
+    monkeypatch.setitem(__import__("sys").modules, "myna.benchmarker._bench", module)
+
+
+def read_sidecar(path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_the_cell_trace_and_its_verdict_are_written_to_the_sidecar(
+    tmp_path, monkeypatch, fake_sampler
+):
+    stub_run_clips_feeding(monkeypatch, audio_seconds=5.0)
     resources = tmp_path / "resources.jsonl"
 
-    sweep(tmp_path, FakeTarget(pid=os.getpid()), sample_resources=True, resources_path=resources)
+    sweep(
+        tmp_path,
+        FakeTarget(pid=4242),
+        clips_cold=[FakeClip("clip-cold")],
+        sample_resources=True,
+        resources_path=resources,
+    )
 
-    peak = json.loads(resources.read_text(encoding="utf-8").strip())
-    assert peak["label"] == "myna-whisper/cpu/tiny/batch"
-    assert peak["snap"] == "myna-whisper"
-    assert peak["peak_rss_mb"] > 0
-    assert peak["peak_vram_mb"] is None
-    assert peak["schema_version"] == SCHEMA_VERSION
+    *samples, cell = read_sidecar(resources)
+    assert fake_sampler.spans == ["start 4242", "stop"]
+    assert [s["kind"] for s in samples] == ["sample", "sample"]
+    assert samples[1]["gpus"][0]["power_w"] == 40.0
+    assert all(s["label"] == "myna-whisper/cpu/tiny/batch" for s in (*samples, cell))
+    assert all(s["machine"] == "unknown" and s["snap"] == "myna-whisper" for s in samples)
+    assert all(s["schema_version"] == SCHEMA_VERSION for s in (*samples, cell))
+    assert cell["kind"] == "cell"
+    assert cell["snap"] == "myna-whisper"
+    assert cell["peak_rss_mb"] == 1200.0 and cell["peak_vram_mb"] == 800.0
+    # 30 J of RAPL + 80 J of GPU over the cold and the warm row's 10 s of audio.
+    assert cell["audio_seconds"] == 10.0
+    assert cell["energy_j"] == 110.0 and cell["j_per_audio_s"] == 11.0
+    assert cell["throttled"] == {"cpu": None, "gpu": True}
+    assert cell["gpu_throttle_reasons"] == ["sw_power_cap"]
+    assert cell["telemetry_error"] is None
 
 
-def test_peaks_are_written_even_when_the_target_crashed(tmp_path, monkeypatch):
+def test_the_console_names_energy_and_throttling(tmp_path, monkeypatch, fake_sampler, capsys):
+    stub_run_clips_feeding(monkeypatch, audio_seconds=5.0)
+    sweep(tmp_path, FakeTarget(pid=4242), sample_resources=True)
+    out = capsys.readouterr().out
+    assert "peak RSS 1200.0 MB / VRAM 800.0 MB" in out
+    assert "energy 110.0 J (22.000 J/audio-s)" in out
+    assert "THROTTLED gpu: sw_power_cap" in out
+
+
+def test_a_cell_without_energy_says_so_on_the_console(tmp_path, monkeypatch, capsys):
+    stub_run_clips_feeding(monkeypatch, audio_seconds=5.0)
+
+    class Quiet(FakeSampler):
+        def stop(self):
+            return [{"t": 0.0, "rss_mb": 10.0, "gpus": []}]
+
+    monkeypatch.setattr(_run, "TelemetrySampler", Quiet)
+    sweep(tmp_path, FakeTarget(pid=4242), sample_resources=True)
+    out = capsys.readouterr().out
+    assert "peak RSS 10.0 MB / VRAM -- / energy --" in out
+    assert "THROTTLED" not in out
+
+
+def test_a_failed_sampler_is_named_in_the_cell_row(tmp_path, monkeypatch, capsys):
+    stub_run_clips_feeding(monkeypatch, audio_seconds=5.0)
+
+    class Dead(FakeSampler):
+        def stop(self):
+            self.error = "telemetry sampler exited 1 before the cell ended"
+            return []
+
+    monkeypatch.setattr(_run, "TelemetrySampler", Dead)
+    resources = tmp_path / "resources.jsonl"
+    sweep(tmp_path, FakeTarget(pid=4242), sample_resources=True, resources_path=resources)
+    (cell,) = read_sidecar(resources)
+    assert cell["telemetry_error"] == "telemetry sampler exited 1 before the cell ended"
+    assert cell["peak_rss_mb"] is None
+    assert "peak RSS -- / VRAM -- / energy --" in capsys.readouterr().out
+
+
+def test_the_trace_is_written_even_when_the_target_crashed(tmp_path, monkeypatch, fake_sampler):
     async def boom(**kwargs):
         raise RuntimeError("adapter died")
 
@@ -1085,12 +1148,12 @@ def test_peaks_are_written_even_when_the_target_crashed(tmp_path, monkeypatch):
         "M", (), {"run_clips": staticmethod(boom), "AllClipsFailed": _bench.AllClipsFailed}
     )
     monkeypatch.setitem(__import__("sys").modules, "myna.benchmarker._bench", module)
-    monkeypatch.setattr(_run, "_gpu_memory_by_pid", dict)
     resources = tmp_path / "resources.jsonl"
 
-    sweep(tmp_path, FakeTarget(pid=os.getpid()), sample_resources=True, resources_path=resources)
+    sweep(tmp_path, FakeTarget(pid=4242), sample_resources=True, resources_path=resources)
 
-    assert resources.exists()
+    cell = read_sidecar(resources)[-1]
+    assert cell["kind"] == "cell" and cell["j_per_audio_s"] is None
 
 
 def test_no_sidecar_is_written_when_the_service_has_no_pid(tmp_path, monkeypatch):

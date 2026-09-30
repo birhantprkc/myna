@@ -25,6 +25,7 @@ from myna.benchmarker._summarize import (
     _rtfx,
     _speed,
     _summarize,
+    _throttle,
     clip_samples,
     cmd_compare,
     cmd_summarize,
@@ -374,6 +375,18 @@ def test_load_resources_indexes_peaks_by_label(tmp_path):
     assert _load_resources(path)[("unknown", "a")]["peak_rss_mb"] == 512.0
 
 
+def test_load_resources_skips_the_telemetry_trace(tmp_path):
+    path = tmp_path / "results-resources.jsonl"
+    write_jsonl(
+        path,
+        [
+            {"label": "a", "kind": "cell", "peak_rss_mb": 512.0},
+            {"label": "a", "kind": "sample", "t": 3.0, "rss_mb": 1.0},
+        ],
+    )
+    assert _load_resources(path)[("unknown", "a")]["peak_rss_mb"] == 512.0
+
+
 # ─── formatting helpers ──────────────────────────────────────────────────────
 
 
@@ -505,6 +518,41 @@ def test_cmd_summarize_merges_the_resources_sidecar_next_to_the_results(tmp_path
     cmd_summarize(Args(path))
     out = capsys.readouterr().out
     assert "640.5" in out and "2048.0" in out
+
+
+def test_cmd_summarize_shows_energy_and_throttling_from_the_sidecar(tmp_path, capsys):
+    path = tmp_path / "results.jsonl"
+    write_jsonl(path, [record()])
+    write_jsonl(
+        tmp_path / "results-resources.jsonl",
+        [
+            {
+                "label": record()["label"],
+                "kind": "cell",
+                "peak_rss_mb": 640.5,
+                "peak_vram_mb": None,
+                "j_per_audio_s": 3.25,
+                "throttled": {"cpu": None, "gpu": True},
+            }
+        ],
+    )
+    cmd_summarize(Args(path))
+    out = capsys.readouterr().out
+    assert "J/aud s" in out and "3.250" in out
+    assert "throttle" in out and " gpu" in out
+
+
+@pytest.mark.parametrize(
+    ("throttled", "shown"),
+    [
+        ({"cpu": True, "gpu": True}, "cpu+gpu"),
+        ({"cpu": False, "gpu": False}, "no"),
+        ({"cpu": None, "gpu": None}, "--"),
+        (None, "--"),
+    ],
+)
+def test_throttle_cell_names_what_throttled(throttled, shown):
+    assert _throttle(throttled) == shown
 
 
 def test_cmd_summarize_ignores_peaks_for_labels_not_in_the_results(tmp_path, capsys):

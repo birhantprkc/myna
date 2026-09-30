@@ -118,7 +118,6 @@ import pwd
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from collections.abc import Mapping
 from contextlib import closing
@@ -131,10 +130,9 @@ import yaml
 from myna.benchmarker._pace import MAX, REALTIME, paced_label, paces_for, parse_paces
 from myna.benchmarker._schedule import Schedule, parse_schedule
 from myna.benchmarker._summarize import SCHEMA_VERSION
+from myna.benchmarker._telemetry import TelemetrySampler, summarise
 
 if TYPE_CHECKING:
-    import psutil
-
     from myna.benchmarker._bench import RecordSink
     from myna.benchmarker.machine import Machine
     from myna.testbed.corpus import Clip
@@ -197,75 +195,6 @@ def _capture(cmd: list[str], timeout: float = 30.0) -> subprocess.CompletedProce
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=str(exc))
-
-
-def _gpu_memory_by_pid() -> dict[int, int]:
-    """pid -> VRAM MiB, from nvidia-smi. Empty if no GPU / tool absent."""
-    try:
-        out = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-compute-apps=pid,used_memory",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=True,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    usage: dict[int, int] = {}
-    for line in out.splitlines():
-        pid, _, mem = line.partition(",")
-        try:
-            usage[int(pid.strip())] = int(mem.strip())
-        except ValueError:
-            continue
-    return usage
-
-
-class ResourceSampler(threading.Thread):
-    """Sample peak RSS (and VRAM) of a process tree until stopped."""
-
-    def __init__(self, pid: int, interval: float = 0.5):
-        super().__init__(daemon=True)
-        self.pid = pid
-        self.interval = interval
-        self._stop_event = threading.Event()
-        self.peak_rss_mb = 0.0
-        self.peak_vram_mb: float | None = None
-
-    def _tree(self) -> list[psutil.Process]:
-        try:
-            import psutil
-
-            root = psutil.Process(self.pid)
-            return [root, *root.children(recursive=True)]
-        except Exception:  # noqa: BLE001
-            return []
-
-    def run(self) -> None:
-        while not self._stop_event.is_set():
-            procs = self._tree()
-            rss = 0
-            for pr in procs:
-                try:
-                    rss += pr.memory_info().rss
-                except Exception:  # noqa: BLE001
-                    pass
-            self.peak_rss_mb = max(self.peak_rss_mb, rss / 1e6)
-            gpu = _gpu_memory_by_pid()
-            if gpu:
-                pids = {pr.pid for pr in procs}
-                mine = sum(m for p, m in gpu.items() if p in pids)
-                if mine:
-                    self.peak_vram_mb = max(self.peak_vram_mb or 0.0, float(mine))
-            self._stop_event.wait(self.interval)
-
-    def stop(self) -> None:
-        self._stop_event.set()
-        self.join(timeout=2)
 
 
 def _chown_to_invoker(path: Path) -> None:
@@ -1108,10 +1037,15 @@ class _JsonlWriter:
         self._path = path
         self._machine = machine
         self._fp = path.open("a", encoding="utf-8")
+        # Audio seconds of every row written, so a cell can divide its energy.
+        self.audio_fed = 0.0
 
     def write(self, record: Mapping[str, object]) -> None:
         self._fp.write(json.dumps(record) + "\n")
         self._fp.flush()
+        audio = record.get("audio_seconds")
+        if isinstance(audio, (int, float)):
+            self.audio_fed += audio
 
     def status(self, label: str, status: str, reason: str = "") -> None:
         """Record how a row finished, so "no data" is not read as "clean".
@@ -1197,6 +1131,7 @@ def _sweep_one(
     realtime = pace == REALTIME
     audio = sum(c.duration_seconds for c in clips_warm) if realtime else 0.0
     cell_budget = schedule.budget(budget + audio)
+    fed = out.audio_fed
 
     try:
         target.apply(mode=mode, variant=variant, togglable=togglable)
@@ -1204,7 +1139,7 @@ def _sweep_one(
         # ran and not just what it was called.
         provenance = {**provenance, "settings": dict(target.applied), "pace": pace}
         if sample_resources and target.pid is not None:
-            sampler = ResourceSampler(target.pid)
+            sampler = TelemetrySampler(target.pid)
             sampler.start()
         if clips_cold:
             print(f"[{label}] cold sample ({clips_cold[0].id})")
@@ -1284,25 +1219,70 @@ def _sweep_one(
         print(f"[{label}] FAILED: {type(exc).__name__}: {exc} - skipping cell")
     finally:
         if sampler is not None:
-            sampler.stop()
-            rss = round(sampler.peak_rss_mb, 1)
-            vram = round(sampler.peak_vram_mb, 1) if sampler.peak_vram_mb else None
-            print(f"[{label}] peak RSS {rss} MB" + (f" / VRAM {vram} MB" if vram else " / VRAM --"))
-            with resources_path.open("a", encoding="utf-8") as fp:
-                fp.write(
-                    json.dumps(
-                        {
-                            "schema_version": SCHEMA_VERSION,
-                            "machine": machine,
-                            "label": label,
-                            "snap": target.snap,
-                            "peak_rss_mb": rss,
-                            "peak_vram_mb": vram,
-                        }
-                    )
-                    + "\n"
-                )
-            _chown_to_invoker(resources_path)
+            samples = sampler.stop()
+            _write_telemetry(
+                resources_path,
+                samples,
+                audio_seconds=round(out.audio_fed - fed, 3),
+                error=sampler.error,
+                stamp={
+                    "schema_version": SCHEMA_VERSION,
+                    "machine": machine,
+                    "label": label,
+                    "snap": target.snap,
+                },
+            )
+
+
+def _write_telemetry(
+    path: Path,
+    samples: list[dict[str, Any]],
+    *,
+    audio_seconds: float,
+    stamp: dict[str, object],
+    error: str | None = None,
+) -> None:
+    """Append a cell's trace and its verdict (peaks, energy, throttling).
+
+    The verdict goes last, so a reader that keeps the last row per label
+    lands on it even if it predates the ``kind`` field. ``error`` is the
+    sampler's own account of a trace it could not complete.
+    """
+    cell = summarise(samples, audio_seconds)
+    label = stamp["label"]
+    rss = cell["peak_rss_mb"]
+    vram = cell["peak_vram_mb"]
+    energy = cell["energy_j"]
+    print(
+        f"[{label}] peak RSS "
+        + (f"{rss} MB" if rss is not None else "--")
+        + (f" / VRAM {vram} MB" if vram else " / VRAM --")
+        + (
+            f" / energy {energy:.1f} J ({cell['j_per_audio_s']:.3f} J/audio-s)"
+            if energy is not None and cell["j_per_audio_s"] is not None
+            else " / energy --"
+        )
+    )
+    throttled = [side for side, hit in cell["throttled"].items() if hit]
+    if throttled:
+        reasons = ", ".join(cell["gpu_throttle_reasons"])
+        print(f"[{label}] THROTTLED {'+'.join(throttled)}" + (f": {reasons}" if reasons else ""))
+    with path.open("a", encoding="utf-8") as fp:
+        for sample in samples:
+            fp.write(json.dumps({**stamp, "kind": "sample", **sample}) + "\n")
+        fp.write(
+            json.dumps(
+                {
+                    **stamp,
+                    "kind": "cell",
+                    "audio_seconds": audio_seconds,
+                    **cell,
+                    "telemetry_error": error,
+                }
+            )
+            + "\n"
+        )
+    _chown_to_invoker(path)
 
 
 # ---------------------------------------------------------------------------

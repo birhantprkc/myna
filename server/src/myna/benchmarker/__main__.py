@@ -106,7 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--no-resources",
         action="store_true",
-        help="skip peak RAM/VRAM sampling (for cleaner latency timing)",
+        help="skip the telemetry sampler (RAM/VRAM peaks, clocks, thermals, energy)",
     )
     p_run.add_argument(
         "--skip-env-check",
