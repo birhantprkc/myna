@@ -186,27 +186,16 @@ fn check(pill: &Pill, style: HudStyle, problems: &mut Vec<String>) {
     }
 }
 
-/// Run `then` `SETTLE` after the first frame painted with `widget` mapped and
-/// allocated: a widget's paintable replays its last painted frame, so until
-/// one is painted it renders nothing. A fixed delay raced that on a loaded CI
-/// runner. `then` gets false if the deadline passed first.
+/// Run `then` `SETTLE` after `widget`, mapped and allocated, has painted: a
+/// widget's paintable replays its last painted frame, so until one is painted
+/// it renders nothing. Neither a fixed delay nor a later frame of the clock
+/// proves that (a frame can pass before the widget draws), so this waits
+/// until it renders. `then` gets false if the deadline passed first.
 fn when_on_screen(widget: gtk::Widget, then: impl FnOnce(bool) + 'static) {
     let started = std::time::Instant::now();
-    let mut shown_at = None;
     let mut then = Some(then);
     glib::timeout_add_local(Duration::from_millis(20), move || {
-        let frame = widget
-            .frame_clock()
-            .filter(|_| widget.is_mapped() && widget.width() > 0)
-            .map(|clock| clock.frame_counter());
-        let ready = match (shown_at, frame) {
-            (Some(shown), Some(now)) => now > shown,
-            (None, Some(now)) => {
-                shown_at = Some(now);
-                false
-            }
-            _ => false,
-        };
+        let ready = widget.is_mapped() && render(&widget).is_some();
         if !ready && started.elapsed() < MAP_DEADLINE {
             return glib::ControlFlow::Continue;
         }
