@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-28 20:43+0100\n"
+"POT-Creation-Date: 2026-09-30 17:26+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -88,6 +88,16 @@ msgstr ""
 
 #: src/controller.rs:821
 msgid "No text field is focused"
+msgstr ""
+
+#. TRANSLATORS: the keyboard shortcut's name in the desktop's dialog and settings.
+#: src/shortcut/portal.rs:99
+msgid "Dictation (tap to start or stop)"
+msgstr ""
+
+#. TRANSLATORS: the keyboard shortcut's name in the desktop's dialog and settings.
+#: src/shortcut/portal.rs:101
+msgid "Dictation (hold to talk)"
 msgstr ""
 
 #: src/shortcut/retry.rs:282

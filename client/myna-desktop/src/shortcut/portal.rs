@@ -93,10 +93,12 @@ impl ActivationMode {
     /// (GNOME's Settings → Keyboard list, and the bind dialog). Derived from
     /// the mode rather than written out once, because a fixed string told
     /// every user to hold a key the daemon was treating as a toggle.
-    pub fn describe(self) -> &'static str {
+    pub fn describe(self) -> String {
         match self {
-            Self::Toggle => "myna dictation (tap to start/stop)",
-            Self::Hold => "myna dictation (hold to talk)",
+            // TRANSLATORS: the keyboard shortcut's name in the desktop's dialog and settings.
+            Self::Toggle => gettextrs::gettext("Dictation (tap to start or stop)"),
+            // TRANSLATORS: the keyboard shortcut's name in the desktop's dialog and settings.
+            Self::Hold => gettextrs::gettext("Dictation (hold to talk)"),
         }
     }
 }
@@ -1259,5 +1261,16 @@ mod tests {
         assert!(ActivationMode::Toggle.describe().contains("tap"));
         assert!(ActivationMode::Hold.describe().contains("hold"));
         assert!(!ActivationMode::Toggle.describe().contains("hold"));
+    }
+
+    // The bind dialog is the first system dialog onboarding raises, so it
+    // names the feature the way the rest of the flow does.
+    #[test]
+    fn description_names_the_feature_as_the_desktop_does() {
+        assert_eq!(
+            ActivationMode::Toggle.describe(),
+            "Dictation (tap to start or stop)"
+        );
+        assert_eq!(ActivationMode::Hold.describe(), "Dictation (hold to talk)");
     }
 }
