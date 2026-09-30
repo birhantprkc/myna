@@ -173,9 +173,11 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
     for line in [
         "onboarding-icon: themed",
         "onboarding-welcome: icon shown",
+        "onboarding-chrome: welcome untitled, no back",
         "onboarding-wrap: welcome on one line each",
         "onboarding-start: advanced",
         "onboarding-layout: forward in view",
+        "onboarding-chrome: components untitled, back",
         "onboarding-gate: held",
         "onboarding-wrap: components paragraph balanced",
         "onboarding-commands: the block copies all three",
@@ -202,6 +204,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-wrap: shortcut title on one line",
         "onboarding-shortcut: waits for the daemon",
         "onboarding-shortcut: button outlined",
+        "onboarding-chrome: shortcut untitled, back",
         "onboarding-finish: opened settings",
     ] {
         assert!(stdout.contains(line), "onboarding probe missing: {line}");

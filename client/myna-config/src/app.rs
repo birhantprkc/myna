@@ -412,10 +412,20 @@ fn onboarding_probe() -> glib::ExitCode {
         || !forward.is_sensitive()
         || forward.label().as_deref() != Some(gettextrs::gettext("Next").as_str())
         || forward.has_css_class("suggested-action")
+        || !forward.has_css_class("outlined")
     {
-        eprintln!("the welcome step offers no Next in the footer");
+        eprintln!("the welcome step offers no outlined Next in the footer");
         return glib::ExitCode::FAILURE;
     }
+    if window.default_width() != 800 || window.default_height() != 600 {
+        eprintln!("the wizard does not open at the design's 800x600");
+        return glib::ExitCode::FAILURE;
+    }
+    if header(&window) != Some(false) {
+        eprintln!("the welcome step's header is not an untitled bar without a back arrow");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-chrome: welcome untitled, no back");
     forward.emit_clicked();
     settle_gtk();
     if step(&window) != "components" {
@@ -436,6 +446,11 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-layout: forward in view");
+    if header(&window) != Some(true) || !forward.has_css_class("outlined") {
+        eprintln!("the component step's header is not an untitled bar with a back arrow");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-chrome: components untitled, back");
     if forward.is_sensitive() {
         eprintln!("the component step offered to advance with required components missing");
         return glib::ExitCode::FAILURE;
@@ -1015,10 +1030,16 @@ fn onboarding_probe() -> glib::ExitCode {
     println!("onboarding-shortcut: button outlined");
     if forward.label().as_deref() != Some(gettextrs::gettext("Done").as_str())
         || !forward.has_css_class("suggested-action")
+        || forward.has_css_class("outlined")
     {
         eprintln!("the last step does not finish with a suggested Done");
         return glib::ExitCode::FAILURE;
     }
+    if header(&window) != Some(true) {
+        eprintln!("the shortcut step's header is not an untitled bar with a back arrow");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-chrome: shortcut untitled, back");
 
     forward.emit_clicked();
     settle_gtk();
@@ -3017,6 +3038,27 @@ fn shown_lines(window: &ui::OnboardingWindow, text: &str) -> Vec<i32> {
             .collect()
     })
     .unwrap_or_default()
+}
+
+/// The visible step's header bar: `None` unless it is flat and shows no
+/// title, else whether it shows a back arrow.
+fn header(window: &ui::OnboardingWindow) -> Option<bool> {
+    let page = window.navigation().visible_page()?;
+    let toolbar = page.child()?.downcast::<adw::ToolbarView>().ok()?;
+    let bar = find_descendant(page.upcast_ref(), &|widget| {
+        widget.is_mapped() && widget.is::<adw::HeaderBar>()
+    })?
+    .downcast::<adw::HeaderBar>()
+    .ok()?;
+    if bar.shows_title() || toolbar.top_bar_style() != adw::ToolbarStyle::Flat {
+        return None;
+    }
+    Some(
+        find_descendant(bar.upcast_ref(), &|widget| {
+            widget.is_mapped() && widget.is::<gtk::Button>() && widget.has_css_class("back")
+        })
+        .is_some(),
+    )
 }
 
 /// Whether each of `texts` shows on a single line.

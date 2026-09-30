@@ -394,8 +394,10 @@ impl OnboardingUi {
         if step.next().is_some() {
             forward.set_label(&gettextrs::gettext("Next"));
             forward.remove_css_class("suggested-action");
+            forward.add_css_class("outlined");
         } else {
             forward.set_label(&gettextrs::gettext("Done"));
+            forward.remove_css_class("outlined");
             forward.add_css_class("suggested-action");
         }
         forward.set_sensitive(!self.busy.get() && can_advance(step, &components));

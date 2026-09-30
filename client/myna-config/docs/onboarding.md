@@ -4,9 +4,11 @@ The settings application ships separately from the `myna` snap, so it can be
 opened on a machine where dictation is not installed at all. When that is the
 case it opens a three-step wizard instead of the settings window.
 
-Every step leaves through one footer button: Next, and Done on the last step.
-Done closes the wizard onto the settings window. The design quits the
-application instead; the window stays because it is where the key and the
+Every step leaves through one footer button: an outlined Next, and a suggested
+Done on the last step. The window opens at the design's 800x600, and every
+step's header is flat and untitled; each step after the first carries a back
+arrow to the step before it. Done closes the wizard onto the settings window.
+The design quits the application instead; the window stays because it is where the key and the
 backend are changed later.
 The welcome step loads the application icon straight from the application's
 own resources, not by name through the icon theme: a stale icon cache that
