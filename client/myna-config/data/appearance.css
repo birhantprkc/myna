@@ -45,14 +45,6 @@ button.outlined:active {
   font-weight: normal;
 }
 
-/* The install commands on the onboarding component step. A tint of the text
-   colour: Yaru's dark sidebar colour is barely off the window's. */
-.command-block {
-  background-color: alpha(currentColor, 0.05);
-  border-radius: 6px;
-  padding: 8px;
-}
-
 /* The Recommended pill on a model row: an accent outline, as the design. */
 .recommended-pill {
   background-color: alpha(@accent_bg_color, 0.1);

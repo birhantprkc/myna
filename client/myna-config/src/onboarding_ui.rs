@@ -22,8 +22,9 @@ use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::domain::BackendSurfaceError;
 use crate::onboarding::{
-    assess, can_advance, completes, needs_onboarding, polls, Component, ComponentState, Machine,
-    Step, RECOMMENDED_BACKEND_SNAP, SHELL_EXTENSION_UUID,
+    assess, can_advance, completes, flag_enabled, model_offer, needs_onboarding, polls, row_action,
+    unlocked, Component, ComponentId, ComponentState, Machine, ModelOffer, RowAction, Step,
+    Unavailable, MYNA_DOWNLOAD_BYTES, RECOMMENDED_BACKEND_SNAP, SHELL_EXTENSION_UUID,
 };
 use crate::ports::{BackendRepository, ShellExtensions, SystemConfigurator};
 use crate::snap_changes::ApplyProgress;
@@ -41,6 +42,7 @@ const BEAT: Duration = Duration::from_secs(1);
 
 pub struct OnboardingUi {
     window: ui::OnboardingWindow,
+    components_page: ui::OnboardingComponents,
     shortcut_page: ui::OnboardingShortcut,
     shortcut: Rc<crate::shortcut_ui::ShortcutControl>,
     repository: Rc<dyn BackendRepository>,
@@ -48,6 +50,7 @@ pub struct OnboardingUi {
     extensions: Rc<dyn ShellExtensions>,
     step: Cell<Step>,
     components: RefCell<Vec<Component>>,
+    offer: Cell<ModelOffer>,
     /// Why the last assessment could not read the machine.
     problem: RefCell<Option<String>>,
     busy: Cell<bool>,
@@ -120,13 +123,6 @@ impl OnboardingUi {
             ));
         }
 
-        let commands = crate::onboarding::install_commands();
-        components_page.commands().set_label(&commands);
-        components_page.copy_button().connect_clicked({
-            let window = window.clone();
-            move |_| copy_command(&window, &commands)
-        });
-
         let shortcut = crate::shortcut_ui::ShortcutControl::attach(
             shortcut_page.shortcut_box(),
             shortcut_page.shortcut_button(),
@@ -141,6 +137,7 @@ impl OnboardingUi {
         );
         let ui = Rc::new(Self {
             window: window.clone(),
+            components_page: components_page.clone(),
             shortcut_page: shortcut_page.clone(),
             shortcut,
             repository,
@@ -148,6 +145,10 @@ impl OnboardingUi {
             extensions,
             step: Cell::new(Step::first()),
             components: RefCell::new(initial),
+            offer: Cell::new(model_offer(&Machine {
+                nvidia_gpu: crate::machine::has_nvidia_gpu(),
+                ..Machine::default()
+            })),
             problem: RefCell::default(),
             busy: Cell::new(false),
             stage: RefCell::default(),
@@ -159,6 +160,21 @@ impl OnboardingUi {
             beat_length: Cell::new(BEAT),
             beat: RefCell::new(None),
             finished: RefCell::new(Some(finished)),
+        });
+
+        // Turning the flag on is not wired yet, so the switch only shows what
+        // snapd reports.
+        components_page.flag_switch().connect_state_set({
+            let ui = Rc::downgrade(&ui);
+            move |switch, requested| {
+                if let Some(ui) = ui.upgrade() {
+                    if requested != flag_enabled(&ui.components.borrow()) {
+                        let switch = switch.clone();
+                        glib::idle_add_local_once(move || switch.set_active(switch.state()));
+                    }
+                }
+                glib::Propagation::Stop
+            }
         });
 
         window.forward_button().connect_clicked({
@@ -233,7 +249,7 @@ impl OnboardingUi {
         let configurator = self.configurator.clone();
         let extensions = self.extensions.clone();
         glib::spawn_future_local(async move {
-            let (components, problem) = read_machine(
+            let (components, offer, problem) = read_machine(
                 repository.as_ref(),
                 configurator.as_ref(),
                 extensions.as_ref(),
@@ -242,6 +258,7 @@ impl OnboardingUi {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
+            ui.offer.set(offer);
             ui.assessing.set(false);
             match &problem {
                 Some(problem) => ui.log(&format!("assessment: {problem}")),
@@ -402,6 +419,7 @@ impl OnboardingUi {
             page.set_can_pop(!self.busy.get());
         }
 
+        self.render_components(&components);
         let forward = self.window.forward_button();
         if step.next().is_some() {
             forward.set_label(&gettextrs::gettext("Next"));
@@ -436,6 +454,75 @@ impl OnboardingUi {
             if let Some(beat) = self.beat.take() {
                 beat.remove();
             }
+        }
+    }
+
+    /// The flag's switch and one row per component, each with its button or
+    /// its check, as the last assessment found them.
+    fn render_components(&self, components: &[Component]) {
+        let page = &self.components_page;
+        let flag = flag_enabled(components);
+        let switch = page.flag_switch();
+        switch.set_active(flag);
+        switch.set_state(flag);
+        page.component_list()
+            .set_sensitive(unlocked(ComponentId::Myna, components));
+        for component in components {
+            let Some(row) = page.row(component.id) else {
+                continue;
+            };
+            let action = row_action(component);
+            let subtitle = self.subtitle(component.id, action);
+            row.row.set_subtitle(&subtitle);
+            // GTK 4.14's AT-SPI reads the subtitle relation as empty.
+            row.row
+                .update_property(&[gtk::accessible::Property::Description(&subtitle)]);
+            row.installed.set_visible(action == RowAction::Installed);
+            let label = match action {
+                RowAction::Install => {
+                    Some((gettextrs::gettext("Install"), install_label(component.id)))
+                }
+                RowAction::Enable => Some((
+                    gettextrs::gettext("Enable"),
+                    gettextrs::gettext("Enable the shell extension"),
+                )),
+                RowAction::Installed | RowAction::Unavailable(_) => None,
+            };
+            row.button.set_visible(label.is_some());
+            if let Some((label, accessible)) = label {
+                row.button.set_label(&label);
+                row.button
+                    .update_property(&[gtk::accessible::Property::Label(&accessible)]);
+            }
+        }
+    }
+
+    fn subtitle(&self, id: ComponentId, action: RowAction) -> String {
+        match (id, action) {
+            (ComponentId::Myna, _) => glib::format_size(MYNA_DOWNLOAD_BYTES).to_string(),
+            (ComponentId::Model, _) => {
+                let offer = self.offer.get();
+                let name = crate::model_family::model_family(offer.snap()).name;
+                let size = glib::format_size(offer.download_bytes);
+                let frame = if offer.upper_bound {
+                    // TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "4.2 GB".
+                    gettextrs::gettext("{model} · up to {size}")
+                } else {
+                    // TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "776 MB".
+                    gettextrs::gettext("{model} · {size}")
+                };
+                frame.replace("{model}", &name).replace("{size}", &size)
+            }
+            (_, RowAction::Unavailable(Unavailable::NeedsRelogin)) => gettextrs::gettext(
+                "Log out and back in to use it. Until then, Dictation shows its status in notifications.",
+            ),
+            (_, RowAction::Unavailable(Unavailable::ShadowedByUserCopy)) => gettextrs::gettext(
+                "A copy in ~/.local/share/gnome-shell/extensions hides it. Remove that copy, then log out and back in.",
+            ),
+            (_, RowAction::Unavailable(Unavailable::NotInstalled)) => gettextrs::gettext(
+                "Not available on this system. Dictation still works and shows its status in notifications.",
+            ),
+            _ => gettextrs::gettext("Recommended"),
         }
     }
 
@@ -485,15 +572,15 @@ impl Drop for OnboardingUi {
     }
 }
 
-fn copy_command(window: &ui::OnboardingWindow, command: &str) {
-    gtk::prelude::WidgetExt::display(window)
-        .clipboard()
-        .set_text(command);
-    window
-        .overlay()
-        .add_toast(adw::Toast::new(&gettextrs::gettext(
-            "Commands copied. Paste them into a terminal.",
-        )));
+/// The Install button's name to assistive technology: three rows read
+/// "Install" alike.
+fn install_label(id: ComponentId) -> String {
+    match id {
+        ComponentId::Myna => gettextrs::gettext("Install the Dictation app"),
+        ComponentId::Model => gettextrs::gettext("Install the speech-to-text model"),
+        ComponentId::ShellExtension => gettextrs::gettext("Install the shell extension"),
+        ComponentId::UserDaemons => gettextrs::gettext("Enable user daemons experimental support"),
+    }
 }
 
 /// One assessment of what dictation is missing on this machine: one `snap
@@ -506,18 +593,19 @@ pub async fn assess_machine(
     configurator: &dyn SystemConfigurator,
     extensions: &dyn ShellExtensions,
 ) -> Vec<Component> {
-    let (components, problem) = read_machine(repository, configurator, extensions).await;
+    let (components, _, problem) = read_machine(repository, configurator, extensions).await;
     let found = problem.unwrap_or_else(|| describe(&components));
     glib::g_message!(crate::LOG_DOMAIN, "onboarding assessment: {found}");
     components
 }
 
-/// [`assess_machine`], and what it could not read.
+/// [`assess_machine`], the model it would install, and what it could not
+/// read.
 async fn read_machine(
     repository: &dyn BackendRepository,
     configurator: &dyn SystemConfigurator,
     extensions: &dyn ShellExtensions,
-) -> (Vec<Component>, Option<String>) {
+) -> (Vec<Component>, ModelOffer, Option<String>) {
     let cancellation = CancellationToken::new();
     let mut problems = Vec::new();
     let user_daemons = configurator
@@ -554,7 +642,7 @@ async fn read_machine(
         nvidia_gpu: crate::machine::has_nvidia_gpu(),
         ..Machine::new(&installed, backends)
     };
-    (assess(machine), problem)
+    (assess(machine), model_offer(&machine), problem)
 }
 
 /// What snap said, which names the cause, over how it exited.

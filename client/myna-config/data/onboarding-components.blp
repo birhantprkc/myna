@@ -24,42 +24,130 @@ template $OnboardingComponents: Adw.Bin {
         }
 
         $BalancedLabel {
-          label: _("Copy the command below and enter them in the Terminal to install all necessary components.");
-          margin-bottom: 24;
+          label: _("You need to install some components for Dictation to work.");
+          margin-bottom: 32;
         }
 
-        Gtk.Box {
-          spacing: 8;
+        Gtk.ListBox {
+          selection-mode: none;
+          margin-bottom: 16;
 
           styles [
-            "command-block",
+            "boxed-list",
           ]
 
-          Gtk.ScrolledWindow {
-            hexpand: true;
-            vscrollbar-policy: never;
-            propagate-natural-width: true;
+          Adw.ActionRow flag_row {
+            title: _("Enable user daemons experimental support");
+            subtitle: _("Required by the Dictation app");
+            activatable-widget: flag_switch;
 
-            child: Gtk.Label commands {
-              xalign: 0;
+            [suffix]
+            Gtk.Switch flag_switch {
+              valign: center;
+            }
+          }
+        }
+
+        Gtk.ListBox component_list {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          Adw.ActionRow myna_row {
+            title: _("Dictation app");
+
+            [suffix]
+            Gtk.Button myna_button {
+              valign: center;
+              width-request: 120;
 
               styles [
-                "monospace",
+                "outlined",
               ]
-            };
+            }
+
+            [suffix]
+            Gtk.Box myna_installed {
+              spacing: 8;
+              visible: false;
+
+              Gtk.Image {
+                icon-name: "object-select-symbolic";
+
+                styles [
+                  "success",
+                ]
+              }
+
+              Gtk.Label {
+                label: _("Installed");
+              }
+            }
           }
 
-          Gtk.Button copy_button {
-            icon-name: "edit-copy-symbolic";
-            tooltip-text: _("Copy");
-            valign: center;
+          Adw.ActionRow model_row {
+            title: _("Speech-to-text model");
 
-            styles [
-              "flat",
-            ]
+            [suffix]
+            Gtk.Button model_button {
+              valign: center;
+              width-request: 120;
 
-            accessibility {
-              label: _("Copy install commands");
+              styles [
+                "outlined",
+              ]
+            }
+
+            [suffix]
+            Gtk.Box model_installed {
+              spacing: 8;
+              visible: false;
+
+              Gtk.Image {
+                icon-name: "object-select-symbolic";
+
+                styles [
+                  "success",
+                ]
+              }
+
+              Gtk.Label {
+                label: _("Installed");
+              }
+            }
+          }
+
+          Adw.ActionRow extension_row {
+            title: _("Shell extension");
+
+            [suffix]
+            Gtk.Button extension_button {
+              valign: center;
+              width-request: 120;
+
+              styles [
+                "outlined",
+              ]
+            }
+
+            [suffix]
+            Gtk.Box extension_installed {
+              spacing: 8;
+              visible: false;
+
+              Gtk.Image {
+                icon-name: "object-select-symbolic";
+
+                styles [
+                  "success",
+                ]
+              }
+
+              Gtk.Label {
+                label: _("Installed");
+              }
             }
           }
         }

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-30 11:39+0100\n"
+"POT-Creation-Date: 2026-09-30 12:18+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,7 +18,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:1318
+#: data/diagnostics-page.blp:5 data/diagnostics-page.blp:8 src/app.rs:1455
 msgid "About and Diagnostics"
 msgstr ""
 
@@ -52,7 +52,7 @@ msgstr ""
 msgid "Check this computer, Myna and every model again."
 msgstr ""
 
-#: data/diagnostics-page.blp:40 data/onboarding-components.blp:54
+#: data/diagnostics-page.blp:40
 msgid "Copy"
 msgstr ""
 
@@ -92,8 +92,8 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: data/main-window.blp:39 data/myna-page.blp:38 src/app.rs:1313
-#: src/app.rs:2543 src/app.rs:2907 src/backend_apply.rs:430
+#: data/main-window.blp:39 data/myna-page.blp:38 src/app.rs:1450
+#: src/app.rs:2693 src/app.rs:3057 src/backend_apply.rs:430
 #: src/diagnostics.rs:535 src/presentation.rs:169
 msgid "Model"
 msgstr ""
@@ -122,26 +122,45 @@ msgstr ""
 msgid "Set up"
 msgstr ""
 
-#: data/myna-page.blp:34 data/onboarding-window.blp:7 src/app.rs:1664
-#: src/onboarding_ui.rs:638 src/shortcut_ui.rs:314
+#: data/myna-page.blp:34 data/onboarding-window.blp:7 src/app.rs:1801
+#: src/onboarding_ui.rs:726 src/shortcut_ui.rs:314
 msgid "Dictation"
 msgstr ""
 
-#: data/onboarding-components.blp:18 src/app.rs:3107 src/onboarding_ui.rs:639
+#: data/onboarding-components.blp:18 src/app.rs:3257 src/onboarding_ui.rs:727
 msgid "Install components"
 msgstr ""
 
-#: data/onboarding-components.blp:27 src/app.rs:469 src/app.rs:3111
-msgid ""
-"Copy the command below and enter them in the Terminal to install all "
-"necessary components."
+#: data/onboarding-components.blp:27 src/app.rs:3260
+msgid "You need to install some components for Dictation to work."
 msgstr ""
 
-#: data/onboarding-components.blp:62
-msgid "Copy install commands"
+#: data/onboarding-components.blp:40 src/app.rs:509 src/onboarding_ui.rs:582
+msgid "Enable user daemons experimental support"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:18 src/app.rs:3181 src/onboarding_ui.rs:640
+#: data/onboarding-components.blp:41 src/app.rs:511
+msgid "Required by the Dictation app"
+msgstr ""
+
+#: data/onboarding-components.blp:59
+msgid "Dictation app"
+msgstr ""
+
+#: data/onboarding-components.blp:85 data/onboarding-components.blp:117
+#: data/onboarding-components.blp:149
+msgid "Installed"
+msgstr ""
+
+#: data/onboarding-components.blp:91
+msgid "Speech-to-text model"
+msgstr ""
+
+#: data/onboarding-components.blp:123
+msgid "Shell extension"
+msgstr ""
+
+#: data/onboarding-shortcut.blp:18 src/app.rs:3366 src/onboarding_ui.rs:728
 msgid "How to dictate"
 msgstr ""
 
@@ -161,11 +180,11 @@ msgstr ""
 msgid "Setting up dictation"
 msgstr ""
 
-#: data/onboarding-window.blp:61 src/app.rs:3241
+#: data/onboarding-window.blp:61 src/app.rs:3426
 msgid "All required components installed"
 msgstr ""
 
-#: data/onboarding-window.blp:66 src/app.rs:414 src/onboarding_ui.rs:407
+#: data/onboarding-window.blp:66 src/app.rs:414 src/onboarding_ui.rs:425
 msgid "Next"
 msgstr ""
 
@@ -205,11 +224,11 @@ msgstr ""
 msgid "Press Escape to cancel."
 msgstr ""
 
-#: data/status-page.blp:8 src/app.rs:1308 src/app.rs:3316
+#: data/status-page.blp:8 src/app.rs:1445 src/app.rs:3501
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:9 src/app.rs:1309 src/app.rs:3317
+#: data/status-page.blp:9 src/app.rs:1446 src/app.rs:3502
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -217,68 +236,86 @@ msgstr ""
 msgid "translator-credits"
 msgstr ""
 
-#: src/app.rs:1103 src/onboarding_ui.rs:411
+#: src/app.rs:918 src/onboarding_ui.rs:523
+msgid ""
+"Not available on this system. Dictation still works and shows its status in "
+"notifications."
+msgstr ""
+
+#: src/app.rs:962 src/onboarding_ui.rs:517
+msgid ""
+"Log out and back in to use it. Until then, Dictation shows its status in "
+"notifications."
+msgstr ""
+
+#: src/app.rs:968 src/onboarding_ui.rs:520
+msgid ""
+"A copy in ~/.local/share/gnome-shell/extensions hides it. Remove that copy, "
+"then log out and back in."
+msgstr ""
+
+#: src/app.rs:1235 src/onboarding_ui.rs:429
 msgid "Done"
 msgstr ""
 
-#: src/app.rs:1314
+#: src/app.rs:1451
 msgid "Model details appear once Myna finds your models."
 msgstr ""
 
-#: src/app.rs:1319
+#: src/app.rs:1456
 msgid "Diagnostics appear once Myna finds your models."
 msgstr ""
 
-#: src/app.rs:2581 src/backend_ui.rs:3342 src/model_family.rs:27
+#: src/app.rs:2731 src/backend_ui.rs:3342 src/model_family.rs:27
 msgid "Fastest, good support for European languages"
 msgstr ""
 
-#: src/app.rs:2585 src/backend_ui.rs:3866 src/model_family.rs:29
+#: src/app.rs:2735 src/backend_ui.rs:3866 src/model_family.rs:29
 msgid "Widest language support"
 msgstr ""
 
-#: src/app.rs:2720 src/myna_settings.rs:104
+#: src/app.rs:2870 src/myna_settings.rs:104
 msgid "As you speak"
 msgstr ""
 
-#: src/app.rs:2721 src/myna_settings.rs:105
+#: src/app.rs:2871 src/myna_settings.rs:105
 msgid "When you stop"
 msgstr ""
 
-#: src/app.rs:2849 src/backend_ui.rs:601
+#: src/app.rs:2999 src/backend_ui.rs:601
 msgid "Changing to {model} failed"
 msgstr ""
 
-#: src/app.rs:2850 src/backend_ui.rs:610 src/backend_ui.rs:1334
+#: src/app.rs:3000 src/backend_ui.rs:610 src/backend_ui.rs:1334
 msgid "Details"
 msgstr ""
 
 #. TRANSLATORS: {setting} is a setting's name on the Model tab, such as "Unload when idle".
-#: src/app.rs:2956 src/backend_ui.rs:1326
+#: src/app.rs:3106 src/backend_ui.rs:1326
 msgid "Changing “{setting}” failed"
 msgstr ""
 
-#: src/app.rs:2957 src/presentation.rs:190
+#: src/app.rs:3107 src/presentation.rs:190
 msgid "Unload when idle"
 msgstr ""
 
-#: src/app.rs:3196 src/shortcut_ui.rs:391
+#: src/app.rs:3381 src/shortcut_ui.rs:391
 msgid "You can trigger Dictation anytime by using the keyboard shortcut:"
 msgstr ""
 
-#: src/app.rs:3321
+#: src/app.rs:3506
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:3322
+#: src/app.rs:3507
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:3338
+#: src/app.rs:3523
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:3756
+#: src/app.rs:3941
 msgid "Could not save the setting"
 msgstr ""
 
@@ -302,7 +339,7 @@ msgstr ""
 msgid "snapd is still busy with “{change}”. Try again once it has finished."
 msgstr ""
 
-#: src/backend_ui.rs:84 src/model_family.rs:285
+#: src/backend_ui.rs:84 src/onboarding_ui.rs:525 src/model_family.rs:285
 msgid "Recommended"
 msgstr ""
 
@@ -802,34 +839,64 @@ msgctxt "service state"
 msgid "unknown"
 msgstr ""
 
-#: src/onboarding_ui.rs:351
+#: src/onboarding_ui.rs:368
 msgid "Could not set up dictation"
 msgstr ""
 
-#: src/onboarding_ui.rs:495
-msgid "Commands copied. Paste them into a terminal."
+#: src/onboarding_ui.rs:483
+msgid "Install"
+msgstr ""
+
+#: src/onboarding_ui.rs:486
+msgid "Enable"
+msgstr ""
+
+#: src/onboarding_ui.rs:487
+msgid "Enable the shell extension"
+msgstr ""
+
+#. TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "4.2 GB".
+#: src/onboarding_ui.rs:509
+msgid "{model} · up to {size}"
+msgstr ""
+
+#. TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "776 MB".
+#: src/onboarding_ui.rs:512
+msgid "{model} · {size}"
+msgstr ""
+
+#: src/onboarding_ui.rs:579
+msgid "Install the Dictation app"
+msgstr ""
+
+#: src/onboarding_ui.rs:580
+msgid "Install the speech-to-text model"
+msgstr ""
+
+#: src/onboarding_ui.rs:581
+msgid "Install the shell extension"
 msgstr ""
 
 #. TRANSLATORS: {error} is snapd's own message, in English.
-#: src/onboarding_ui.rs:548
+#: src/onboarding_ui.rs:636
 msgid "Cannot read what snapd has set up: {error}"
 msgstr ""
 
-#: src/onboarding_ui.rs:586
+#: src/onboarding_ui.rs:674
 msgid "Checking the installation…"
 msgstr ""
 
 #. TRANSLATORS: {change} is snapd's own summary of what it is doing, in English.
-#: src/onboarding_ui.rs:592
+#: src/onboarding_ui.rs:680
 msgid "Waiting for snapd: {change}"
 msgstr ""
 
 #. TRANSLATORS: {model} is a model family, such as "Parakeet".
-#: src/onboarding_ui.rs:597
+#: src/onboarding_ui.rs:685
 msgid "Connecting {model}. Authorize it if asked."
 msgstr ""
 
-#: src/onboarding_ui.rs:600
+#: src/onboarding_ui.rs:688
 msgid "Starting dictation…"
 msgstr ""
 

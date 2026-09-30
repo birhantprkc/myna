@@ -463,23 +463,17 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-gate: held");
-    let paragraph = shown_lines(
+    if !one_line_each(
         &window,
-        &gettextrs::gettext(
-            "Copy the command below and enter them in the Terminal to install all necessary components.",
-        ),
-    );
-    let balanced = paragraph.len() == 2
-        && paragraph
-            .iter()
-            .min()
-            .zip(paragraph.iter().max())
-            .is_some_and(|(short, long)| short * 10 >= long * 6);
-    if !balanced || !one_line_each(&window, &["Install components"]) {
-        eprintln!("the component step's paragraph wraps unbalanced: {paragraph:?}");
+        &[
+            "Install components",
+            "You need to install some components for Dictation to work.",
+        ],
+    ) {
+        eprintln!("the component step wraps a line that fits the window");
         return glib::ExitCode::FAILURE;
     }
-    println!("onboarding-wrap: components paragraph balanced");
+    println!("onboarding-wrap: components on one line each");
     if installed_status(&window).is_some() {
         eprintln!("the footer claims everything is installed on a bare machine");
         return glib::ExitCode::FAILURE;
@@ -488,85 +482,73 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("the component step is not headed as the design");
         return glib::ExitCode::FAILURE;
     }
-
-    // One block holds every command, and its copy button puts them all on
-    // the clipboard.
-    let button = |matches: &dyn Fn(&gtk::Button) -> bool| {
-        find_descendant(window.upcast_ref(), &|widget| {
-            widget
-                .downcast_ref::<gtk::Button>()
-                .is_some_and(|button| button.is_mapped() && matches(button))
-        })
-        .and_then(|widget| widget.downcast::<gtk::Button>().ok())
-    };
-    let clipboard = || {
-        glib::MainContext::default()
-            .block_on(
-                gtk::prelude::WidgetExt::display(&window)
-                    .clipboard()
-                    .read_text_future(),
-            )
-            .ok()
-            .flatten()
-            .map(|text| text.to_string())
-    };
-    let commands = crate::onboarding::install_commands();
-    let in_block = |widget: &gtk::Widget| {
-        std::iter::successors(widget.parent(), |parent| parent.parent())
-            .any(|parent| parent.has_css_class("command-block"))
-    };
-    let shown = find_descendant(window.upcast_ref(), &|widget| {
-        in_block(widget)
-            && widget.has_css_class("monospace")
-            && widget
-                .downcast_ref::<gtk::Label>()
-                .is_some_and(|label| label.is_mapped() && label.label() == commands)
+    // Nothing to paste: every component installs from its own row.
+    let pasted = find_descendant(window.upcast_ref(), &|widget| {
+        widget.is_mapped()
+            && (widget.has_css_class("monospace")
+                || widget.downcast_ref::<gtk::Button>().is_some_and(|button| {
+                    button.icon_name().as_deref() == Some("edit-copy-symbolic")
+                }))
     });
-    if shown.is_none() {
-        eprintln!("the component step does not show the install commands in one block");
+    if pasted.is_some() {
+        eprintln!("the component step still shows commands to paste");
         return glib::ExitCode::FAILURE;
     }
-    let Some(copy) = button(&|button| {
-        in_block(button.upcast_ref())
-            && button.icon_name().as_deref() == Some("edit-copy-symbolic")
-            && button.has_css_class("flat")
-    }) else {
-        eprintln!("the command block offers no copy button");
+    println!("onboarding-commands: none");
+    let Some(page) = components_page(&window) else {
+        eprintln!("the component step shows no component page");
         return glib::ExitCode::FAILURE;
     };
-    copy.emit_clicked();
+    let flag = page.flag_switch();
+    if !flag.is_mapped()
+        || flag.is_active()
+        || !flag.is_sensitive()
+        || !flag
+            .ancestor(gtk::ListBox::static_type())
+            .is_some_and(|list| list.has_css_class("boxed-list"))
+        || page.flag_row().title() != gettextrs::gettext("Enable user daemons experimental support")
+        || page.flag_row().subtitle().as_deref()
+            != Some(gettextrs::gettext("Required by the Dictation app").as_str())
+    {
+        eprintln!("the component step offers no boxed switch for the flag");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-flag: a switch, off");
+    let list = page.component_list();
+    let titles: Vec<String> = [
+        crate::onboarding::ComponentId::Myna,
+        crate::onboarding::ComponentId::Model,
+        crate::onboarding::ComponentId::ShellExtension,
+    ]
+    .into_iter()
+    .filter_map(|id| page.row(id))
+    .filter(|row| row.row.parent().as_ref() == Some(list.upcast_ref()))
+    .map(|row| row.row.title().to_string())
+    .collect();
+    if titles != ["Dictation app", "Speech-to-text model", "Shell extension"]
+        || !list.has_css_class("boxed-list")
+    {
+        eprintln!("the component step lists {titles:?}");
+        return glib::ExitCode::FAILURE;
+    }
+    // The initial assessment found no extension: nothing to press there.
+    if list.is_sensitive() || rows_offer(&page) != ["Install", "Install", "-"] {
+        eprintln!(
+            "without the flag the list is not locked on two Install buttons: {:?}",
+            rows_offer(&page)
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-rows: locked until the flag");
+    // Nothing turns the flag on yet, so the switch cannot claim it.
+    flag.activate();
     settle_gtk();
-    if clipboard().as_deref() != Some(commands.as_str()) {
-        eprintln!("copying the block left {:?} on the clipboard", clipboard());
-        return glib::ExitCode::FAILURE;
-    }
-    println!("onboarding-commands: the block copies all three");
-    // A command broken across lines reads as two; a narrow window scrolls it.
-    let narrow = gtk::Window::builder()
-        .default_width(360)
-        .default_height(294)
-        .build();
-    let page = ui::OnboardingComponents::new();
-    page.commands().set_label(&commands);
-    narrow.set_child(Some(&page));
-    narrow.present();
     settle_gtk();
-    let lines = page.commands().layout().line_count();
-    let width = narrow.width();
-    narrow.close();
-    if lines != 3 || width > 360 {
-        eprintln!("a 360 px window shows the commands on {lines} lines at {width} px");
+    if flag.state() || flag.is_active() {
+        eprintln!("the switch claims the flag with snapd not setting it");
         return glib::ExitCode::FAILURE;
     }
-    println!("onboarding-commands: one line each when narrow");
-    let rows = find_descendant(window.upcast_ref(), &|widget| {
-        widget.is_mapped() && (widget.is::<gtk::ListBox>() || widget.is::<adw::ActionRow>())
-    });
-    if rows.is_some() {
-        eprintln!("the component step still lists components one by one");
-        return glib::ExitCode::FAILURE;
-    }
-    println!("onboarding-rows: none");
+    println!("onboarding-flag: follows snapd");
 
     // Installing happens in another window; coming back re-reads the machine.
     let elsewhere = gtk::Window::new();
@@ -609,6 +591,59 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-unreadable: said why");
+    window.close();
+    settle_gtk();
+
+    // With the flag on, the list takes input: each snap offers Install, and
+    // a disabled extension Enable.
+    let machine = ProbeMachine::flagged();
+    let window = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine {
+                user_daemons: true,
+                extension: crate::onboarding::ExtensionState::Disabled,
+                ..Machine::default()
+            }),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Disabled),
+            None,
+            Box::new(|| {}),
+        );
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    let Some(page) = components_page(&window) else {
+        eprintln!("the component step shows no component page");
+        return glib::ExitCode::FAILURE;
+    };
+    let buttons: Vec<bool> = [
+        crate::onboarding::ComponentId::Myna,
+        crate::onboarding::ComponentId::Model,
+        crate::onboarding::ComponentId::ShellExtension,
+    ]
+    .into_iter()
+    .filter_map(|id| page.row(id))
+    .map(|row| row.button.is_sensitive() && row.row.is_sensitive())
+    .collect();
+    if !page.flag_switch().state()
+        || !page.component_list().is_sensitive()
+        || rows_offer(&page) != ["Install", "Install", "Enable"]
+        || buttons != [true, true, true]
+        || window.forward_button().is_sensitive()
+    {
+        eprintln!(
+            "with the flag on the rows offer {:?}, sensitive {buttons:?}",
+            rows_offer(&page)
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-rows: unlocked by the flag");
     window.close();
     settle_gtk();
 
@@ -865,6 +900,93 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-optional: the extension waits for Next");
+    if !window.navigation().visible_page().is_some_and(|page| {
+        page.can_pop() && WidgetExt::activate_action(&page, "navigation.pop", None).is_ok()
+    }) {
+        eprintln!("the shortcut step could not go back");
+        return glib::ExitCode::FAILURE;
+    }
+    settle_gtk();
+    let Some(page) = components_page(&window) else {
+        eprintln!("going back did not show the component page");
+        return glib::ExitCode::FAILURE;
+    };
+    let extension = page
+        .row(crate::onboarding::ComponentId::ShellExtension)
+        .map(|row| row.row);
+    let fallback = gettextrs::gettext(
+        "Not available on this system. Dictation still works and shows its status in notifications.",
+    );
+    if rows_offer(&page) != ["Installed", "Installed", "-"]
+        || !page.component_list().is_sensitive()
+        // Insensitive would dim the explanation past reading.
+        || extension.as_ref().is_none_or(|row| {
+            !row.is_sensitive() || row.subtitle().as_deref() != Some(fallback.as_str())
+        })
+    {
+        eprintln!(
+            "an unavailable extension shows {:?}, subtitled {:?}",
+            rows_offer(&page),
+            extension.and_then(|row| row.subtitle())
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-rows: an unavailable extension says it falls back");
+    window.close();
+    settle_gtk();
+
+    // Each reason the extension cannot run tells the user what to do.
+    let machine = ProbeMachine::bare();
+    let extensions = ProbeExtensions::new(crate::onboarding::ExtensionState::NeedsRelogin);
+    let window = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine::default()),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            extensions.clone(),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    for (state, expected) in [
+        (
+            crate::onboarding::ExtensionState::NeedsRelogin,
+            gettextrs::gettext(
+                "Log out and back in to use it. Until then, Dictation shows its status in notifications.",
+            ),
+        ),
+        (
+            crate::onboarding::ExtensionState::ShadowedByUserCopy,
+            gettextrs::gettext(
+                "A copy in ~/.local/share/gnome-shell/extensions hides it. Remove that copy, then log out and back in.",
+            ),
+        ),
+    ] {
+        extensions.0.set(state);
+        let subtitle = || {
+            components_page(&window)
+                .and_then(|page| page.row(crate::onboarding::ComponentId::ShellExtension))
+                .and_then(|row| row.row.subtitle())
+        };
+        for _ in 0..100 {
+            if subtitle().as_deref() == Some(expected.as_str()) {
+                break;
+            }
+            settle_gtk();
+        }
+        if subtitle().as_deref() != Some(expected.as_str()) {
+            eprintln!("an extension {state:?} is subtitled {:?}", subtitle());
+            return glib::ExitCode::FAILURE;
+        }
+    }
+    println!("onboarding-rows: an extension that cannot run says why");
     window.close();
     settle_gtk();
 
@@ -983,6 +1105,7 @@ fn onboarding_probe() -> glib::ExitCode {
             &application,
             assess(Machine {
                 user_daemons: true,
+                extension: crate::onboarding::ExtensionState::Enabled,
                 ..Machine::new(&installed, 1)
             }),
             Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
@@ -1019,6 +1142,15 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-installed: shown in the footer");
+    let Some(page) = components_page(&window) else {
+        eprintln!("the component step shows no component page");
+        return glib::ExitCode::FAILURE;
+    };
+    if rows_offer(&page) != ["Installed", "Installed", "Installed"] || !page.flag_switch().state() {
+        eprintln!("an installed machine's rows show {:?}", rows_offer(&page));
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-rows: each installed");
     let reaches = |name: &str| {
         for _ in 0..100 {
             if step(&window) == name {
@@ -1206,7 +1338,12 @@ fn template_probe() -> glib::ExitCode {
     ui::OnboardingWelcome::new();
     println!("OnboardingWelcome");
     let components = ui::OnboardingComponents::new();
-    let _ = (components.commands(), components.copy_button());
+    let _ = (
+        components.flag_row(),
+        components.flag_switch(),
+        components.component_list(),
+        components.row(crate::onboarding::ComponentId::ShellExtension),
+    );
     println!("OnboardingComponents");
     let shortcut = ui::OnboardingShortcut::new();
     let _ = (
@@ -2071,6 +2208,8 @@ struct ProbeMachine {
     reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Nothing is installed yet: every `snap` read fails, as on a bare machine.
     bare: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// snapd's flag is on however bare the machine.
+    flagged: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// A daemon restart, alone or ending a switch, waits while this is set,
     /// as a slow one does.
     held: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -2103,6 +2242,7 @@ impl ProbeMachine {
             applied: std::sync::Arc::default(),
             reads: std::sync::Arc::default(),
             bare: std::sync::Arc::default(),
+            flagged: std::sync::Arc::default(),
             held: std::sync::Arc::default(),
             refusals: std::sync::Arc::default(),
             installing: std::sync::Arc::default(),
@@ -2172,7 +2312,16 @@ impl ProbeMachine {
         self.held.store(held, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// The machine before the user pastes the install commands.
+    /// snapd's flag is on and nothing is installed yet.
+    fn flagged() -> Self {
+        let machine = Self::bare();
+        machine
+            .flagged
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        machine
+    }
+
+    /// The machine before anything is installed, the flag off.
     fn bare() -> Self {
         let machine = Self::new();
         machine
@@ -2280,7 +2429,8 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
         &self,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<bool, String> {
-        Ok(!self.bare.load(std::sync::atomic::Ordering::SeqCst))
+        Ok(!self.bare.load(std::sync::atomic::Ordering::SeqCst)
+            || self.flagged.load(std::sync::atomic::Ordering::SeqCst))
     }
 
     async fn changes_in_progress(
@@ -3107,11 +3257,46 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
         gettextrs::gettext("Install components"),
         Some("onboarding-title"),
     ) && shown(
-        gettextrs::gettext(
-            "Copy the command below and enter them in the Terminal to install all necessary components.",
-        ),
+        gettextrs::gettext("You need to install some components for Dictation to work."),
         None,
     )
+}
+
+fn components_page(window: &ui::OnboardingWindow) -> Option<ui::OnboardingComponents> {
+    find_descendant(window.upcast_ref(), &|widget| {
+        widget.is_mapped() && widget.is::<ui::OnboardingComponents>()
+    })
+    .and_then(|widget| widget.downcast().ok())
+}
+
+/// What each installable row shows at its end, in order: its button's label,
+/// "Installed" for the check, or "-" for nothing.
+fn rows_offer(page: &ui::OnboardingComponents) -> Vec<String> {
+    use crate::onboarding::ComponentId;
+    [
+        ComponentId::Myna,
+        ComponentId::Model,
+        ComponentId::ShellExtension,
+    ]
+    .into_iter()
+    .filter_map(|id| page.row(id))
+    .map(|row| {
+        let installed = row.installed.is_mapped()
+            && find_descendant(row.installed.upcast_ref(), &|widget| {
+                widget.has_css_class("success")
+                    && widget.downcast_ref::<gtk::Image>().is_some_and(|image| {
+                        image.icon_name().as_deref() == Some("object-select-symbolic")
+                    })
+            })
+            .is_some();
+        match (row.button.is_mapped(), installed) {
+            (true, false) => row.button.label().unwrap_or_default().to_string(),
+            (false, true) => "Installed".to_owned(),
+            (false, false) => "-".to_owned(),
+            (true, true) => "both".to_owned(),
+        }
+    })
+    .collect()
 }
 
 /// Whether `label`, or the balanced label holding it, has `class`.

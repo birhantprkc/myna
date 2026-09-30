@@ -28,12 +28,6 @@ pub const MYNA_INSTALL_COMMAND: &str =
 /// Installs the recommended backend from a terminal.
 pub const MODEL_INSTALL_COMMAND: &str = "sudo snap install --edge myna-parakeet";
 
-/// Everything the component step asks the user to paste, one command per
-/// line. It always lists every command: rerunning one is harmless.
-pub fn install_commands() -> String {
-    format!("{MYNA_INSTALL_COMMAND}\n{MODEL_INSTALL_COMMAND}")
-}
-
 /// One thing onboarding checks for, in the order the component step lists
 /// them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -173,6 +167,9 @@ pub fn extension_state(
 pub struct ModelOffer {
     pub family: ModelFamily,
     pub download_bytes: u64,
+    /// The install hook may still pick the CPU engine, as it does for a GPU
+    /// with no driver, and download less.
+    pub upper_bound: bool,
 }
 
 impl ModelOffer {
@@ -200,6 +197,7 @@ pub fn model_offer(machine: &Machine) -> ModelOffer {
     ModelOffer {
         family: ModelFamily::Parakeet,
         download_bytes: PARAKEET_SNAP_BYTES + components,
+        upper_bound: machine.nvidia_gpu,
     }
 }
 
@@ -277,10 +275,35 @@ pub fn fully_installed(components: &[Component]) -> bool {
 /// Whether a component's row takes input. snapd refuses Myna without the
 /// flag, so the whole list waits for it.
 pub fn unlocked(id: ComponentId, components: &[Component]) -> bool {
-    id == ComponentId::UserDaemons
-        || components
-            .iter()
-            .any(|component| component.id == ComponentId::UserDaemons && component.satisfied())
+    id == ComponentId::UserDaemons || flag_enabled(components)
+}
+
+/// Whether snapd's `experimental.user-daemons` flag is on.
+pub fn flag_enabled(components: &[Component]) -> bool {
+    components
+        .iter()
+        .any(|component| component.id == ComponentId::UserDaemons && component.satisfied())
+}
+
+/// What a component's row offers in place of a button, or the button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowAction {
+    Install,
+    /// The extension's system copy is there but not running.
+    Enable,
+    Installed,
+    Unavailable(Unavailable),
+}
+
+/// What the row of a snap or the extension offers; the flag's row is a
+/// switch instead.
+pub fn row_action(component: &Component) -> RowAction {
+    match component.state {
+        ComponentState::Satisfied => RowAction::Installed,
+        ComponentState::Missing if component.id == ComponentId::ShellExtension => RowAction::Enable,
+        ComponentState::Missing => RowAction::Install,
+        ComponentState::Unavailable(why) => RowAction::Unavailable(why),
+    }
 }
 
 /// The wizard's steps, in order.
@@ -532,6 +555,50 @@ mod tests {
     }
 
     #[test]
+    fn a_row_offers_what_the_wizard_can_do_about_it() {
+        let bare = assess(Machine::default());
+        assert_eq!(row_action(&bare[1]), RowAction::Install);
+        assert_eq!(row_action(&bare[2]), RowAction::Install);
+        let installed = with_extension(ExtensionState::Enabled);
+        for component in &installed[1..] {
+            assert_eq!(row_action(component), RowAction::Installed, "{component:?}");
+        }
+        // The extension ships in a deb: a disabled system copy is enabled,
+        // never installed.
+        assert_eq!(
+            row_action(&with_extension(ExtensionState::Disabled)[3]),
+            RowAction::Enable
+        );
+        for (extension, why) in [
+            (ExtensionState::Unavailable, Unavailable::NotInstalled),
+            (ExtensionState::NeedsRelogin, Unavailable::NeedsRelogin),
+            (
+                ExtensionState::ShadowedByUserCopy,
+                Unavailable::ShadowedByUserCopy,
+            ),
+        ] {
+            assert_eq!(
+                row_action(&with_extension(extension)[3]),
+                RowAction::Unavailable(why)
+            );
+        }
+    }
+
+    #[test]
+    fn the_model_size_is_an_upper_bound_only_with_an_nvidia_gpu() {
+        // The install hook falls back to the CPU engine when the GPU has no
+        // driver, so the GPU total is the most it downloads.
+        assert!(!model_offer(&Machine::default()).upper_bound);
+        assert!(
+            model_offer(&Machine {
+                nvidia_gpu: true,
+                ..Machine::default()
+            })
+            .upper_bound
+        );
+    }
+
+    #[test]
     fn the_list_waits_for_the_flag() {
         let bare = assess(Machine::default());
         assert!(unlocked(ComponentId::UserDaemons, &bare));
@@ -599,16 +666,6 @@ mod tests {
         assert_eq!(
             walked,
             vec![Step::Welcome, Step::Components, Step::Shortcut]
-        );
-    }
-
-    #[test]
-    fn the_install_commands_are_the_three_lines_the_user_pastes() {
-        assert_eq!(
-            install_commands(),
-            "sudo snap set system experimental.user-daemons=true\n\
-             sudo snap install --edge myna\n\
-             sudo snap install --edge myna-parakeet"
         );
     }
 }

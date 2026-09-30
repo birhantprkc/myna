@@ -66,31 +66,51 @@ not cover it. Closing the wizard rediscovers, since it may have changed both.
 
 ## Installing
 
-The application installs nothing itself. The component step shows one block of
-three commands, always all three, with a copy button that puts them on the
-clipboard as they are shown. Each command stays on one line; a window too
-narrow for one scrolls the block sideways, since a command broken across
-lines reads as two:
+The component step titles itself "Install components" and lists every
+component in its own row; nothing is left for a terminal. The flag gets a boxed
+row of its own with a switch, "Enable user daemons experimental support",
+because it is a system setting rather than something to install. The other
+three share one boxed list below it: Dictation app, Speech-to-text model and
+Shell extension. The whole list is insensitive until the flag is on, since
+snapd refuses Myna without it.
 
-    sudo snap set system experimental.user-daemons=true
-    sudo snap install --edge myna
-    sudo snap install --edge myna-parakeet
+Each row ends in what the wizard can do about it (`onboarding::row_action`):
 
-Both snaps come from the store on `edge`, the only channel they are published
-to. The flag comes first: snapd refuses to install a snap declaring a user
-daemon unless `experimental.user-daemons` is set or its snap-id is on the
-hardcoded allowlist in snapd's `overlord/snapstate/snapstate.go`, so an App
-Center install of Myna fails on every stock machine, and one terminal session
-beats splitting the install between a terminal and App Center. Rerunning a
-command for a snap already installed is harmless. A plain install of the model
-is a working backend: the install hook selects an engine, and selecting one
-installs its model component.
+- Install, for a missing snap;
+- Enable, for a system copy of the extension gnome-shell is not running;
+- a check and "Installed" once it is in place;
+- nothing, for an extension out of the wizard's reach. The row stays
+  sensitive, since an insensitive row dims its subtitle past reading, and the
+  subtitle says why: not on this system (dictation still works and
+  shows its status in notifications), installed after login (log out and back
+  in), or hidden by a copy in `~/.local/share/gnome-shell/extensions`.
 
-The installs happen in another window, so the component step re-assesses the
-machine whenever the wizard regains focus, and every 2 s while something is
-missing: a terminal beside the wizard may never take its focus. Next stays
-insensitive until the required components are found; then the footer shows
-a success checkmark and "All required components installed" left of it.
+The switch shows snapd's flag and nothing else: toggling it springs back
+until turning the flag on is wired, so it never claims a state snapd does not
+report. The Install and Enable buttons do not act yet either.
+
+The subtitles size the download. The app's is the store's size of the `myna`
+snap. The model's names the family and the size of what its install fetches:
+the snap and the int8 model, or, with an NVIDIA GPU, the CUDA runtime and the
+fp32 model, said as "up to" because the install hook falls back to the CPU
+engine when the GPU has no driver. The sizes are fixed per store revision in
+`onboarding.rs`, not read from the store.
+
+Installing may still happen elsewhere, so the component step re-assesses the
+machine whenever the wizard regains focus, and every 2 s while something
+required is missing. Next stays insensitive until the required components are
+found; then the footer shows a success checkmark and "All required components
+installed" left of it.
+
+The store commands the diagnostics page suggests (`MYNA_INSTALL_COMMAND`,
+`MODEL_INSTALL_COMMAND`) ask for `edge`, the only channel both snaps are
+published to, and set the flag first: snapd refuses to install a snap
+declaring a user daemon unless `experimental.user-daemons` is set or its
+snap-id is on the hardcoded allowlist in snapd's
+`overlord/snapstate/snapstate.go`, so an App Center install of Myna fails on
+every stock machine. A plain install of the model is a working backend: the
+install hook selects an engine, and selecting one installs its model
+component.
 
 ## Finishing setup
 

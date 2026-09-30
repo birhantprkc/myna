@@ -3,8 +3,9 @@
 
 use myna_config::diagnostics::InstalledSnap;
 use myna_config::onboarding::{
-    assess, can_advance, completes, install_commands, needs_onboarding, ComponentId,
-    ExtensionState, Machine, Step, MYNA_SNAP, RECOMMENDED_BACKEND_SNAP,
+    assess, can_advance, completes, needs_onboarding, row_action, ComponentId, ExtensionState,
+    Machine, RowAction, Step, MODEL_INSTALL_COMMAND, MYNA_INSTALL_COMMAND, MYNA_SNAP,
+    RECOMMENDED_BACKEND_SNAP,
 };
 
 fn snap(name: &str) -> InstalledSnap {
@@ -33,14 +34,26 @@ fn a_ready_machine_never_opens_the_wizard() {
 }
 
 /// snapd refuses to install a snap declaring a user daemon on a stock machine,
-/// so App Center's install would fail, and the command sets the flag first.
+/// so the diagnostics' suggested command sets the flag first.
 #[test]
-fn myna_is_installed_from_a_terminal_with_user_daemons_enabled() {
-    let command = install_commands();
-    let flag = command
+fn the_suggested_myna_command_enables_user_daemons_first() {
+    let flag = MYNA_INSTALL_COMMAND
         .find("experimental.user-daemons=true")
         .expect("the command enables user daemons");
-    assert!(flag < command.find("snap install").unwrap());
+    assert!(flag < MYNA_INSTALL_COMMAND.find("snap install").unwrap());
+}
+
+/// The wizard installs from its rows; nothing is left for a terminal.
+#[test]
+fn every_missing_snap_has_an_install_button() {
+    for component in assess(Machine {
+        user_daemons: true,
+        ..Machine::default()
+    }) {
+        if matches!(component.id, ComponentId::Myna | ComponentId::Model) {
+            assert_eq!(row_action(&component), RowAction::Install);
+        }
+    }
 }
 
 /// The flag, both snaps, and the extension, in the order the step lists
@@ -95,11 +108,11 @@ fn the_component_step_is_the_only_gate() {
 /// Both snaps are published to edge only; a command without the channel
 /// fails with "no stable revision".
 #[test]
-fn every_store_install_command_asks_for_edge() {
-    let installs: Vec<String> = install_commands()
-        .lines()
+fn every_suggested_install_command_asks_for_edge() {
+    let installs: Vec<&str> = [MYNA_INSTALL_COMMAND, MODEL_INSTALL_COMMAND]
+        .iter()
+        .flat_map(|command| command.lines())
         .filter(|line| line.contains("snap install"))
-        .map(str::to_owned)
         .collect();
     assert_eq!(
         installs,

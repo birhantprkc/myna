@@ -4,6 +4,8 @@ use gtk::{glib, CompositeTemplate};
 use gtk4 as gtk;
 use libadwaita as adw;
 
+use crate::onboarding::ComponentId;
+
 mod imp {
     use super::*;
 
@@ -11,9 +13,29 @@ mod imp {
     #[template(resource = "/com/canonical/Myna/Config/ui/onboarding-components.ui")]
     pub struct OnboardingComponents {
         #[template_child]
-        pub commands: gtk::TemplateChild<gtk::Label>,
+        pub flag_row: gtk::TemplateChild<adw::ActionRow>,
         #[template_child]
-        pub copy_button: gtk::TemplateChild<gtk::Button>,
+        pub flag_switch: gtk::TemplateChild<gtk::Switch>,
+        #[template_child]
+        pub component_list: gtk::TemplateChild<gtk::ListBox>,
+        #[template_child]
+        pub myna_row: gtk::TemplateChild<adw::ActionRow>,
+        #[template_child]
+        pub myna_button: gtk::TemplateChild<gtk::Button>,
+        #[template_child]
+        pub myna_installed: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
+        pub model_row: gtk::TemplateChild<adw::ActionRow>,
+        #[template_child]
+        pub model_button: gtk::TemplateChild<gtk::Button>,
+        #[template_child]
+        pub model_installed: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
+        pub extension_row: gtk::TemplateChild<adw::ActionRow>,
+        #[template_child]
+        pub extension_button: gtk::TemplateChild<gtk::Button>,
+        #[template_child]
+        pub extension_installed: gtk::TemplateChild<gtk::Box>,
     }
 
     #[glib::object_subclass]
@@ -43,18 +65,50 @@ glib::wrapper! {
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
+/// One installable component's row: its button, or the check that replaces it.
+#[derive(Clone)]
+pub struct ComponentRow {
+    pub row: adw::ActionRow,
+    pub button: gtk::Button,
+    pub installed: gtk::Box,
+}
+
 impl OnboardingComponents {
     pub fn new() -> Self {
         super::register_resources();
         glib::Object::builder().build()
     }
 
-    pub fn commands(&self) -> gtk::Label {
-        self.imp().commands.get()
+    pub fn flag_row(&self) -> adw::ActionRow {
+        self.imp().flag_row.get()
     }
 
-    pub fn copy_button(&self) -> gtk::Button {
-        self.imp().copy_button.get()
+    pub fn flag_switch(&self) -> gtk::Switch {
+        self.imp().flag_switch.get()
+    }
+
+    pub fn component_list(&self) -> gtk::ListBox {
+        self.imp().component_list.get()
+    }
+
+    /// The row of `id`; the flag has a switch row of its own instead.
+    pub fn row(&self, id: ComponentId) -> Option<ComponentRow> {
+        let imp = self.imp();
+        let (row, button, installed) = match id {
+            ComponentId::UserDaemons => return None,
+            ComponentId::Myna => (&imp.myna_row, &imp.myna_button, &imp.myna_installed),
+            ComponentId::Model => (&imp.model_row, &imp.model_button, &imp.model_installed),
+            ComponentId::ShellExtension => (
+                &imp.extension_row,
+                &imp.extension_button,
+                &imp.extension_installed,
+            ),
+        };
+        Some(ComponentRow {
+            row: row.get(),
+            button: button.get(),
+            installed: installed.get(),
+        })
     }
 }
 
