@@ -267,6 +267,22 @@ impl SystemConfigurator for FakeConfigurator {
         unreachable!("a backend switch never turns the flag on")
     }
 
+    async fn install_snap(
+        &self,
+        _snap: &str,
+        _cancellation: CancellationToken,
+    ) -> Result<Option<String>, SystemConfiguratorError> {
+        unreachable!("a backend switch never installs a snap")
+    }
+
+    async fn snap_change(
+        &self,
+        _change_id: &str,
+        _cancellation: CancellationToken,
+    ) -> Result<ChangeInProgress, String> {
+        unreachable!("a backend switch never follows an install")
+    }
+
     async fn execute_backend_switch(
         &self,
         plan: &SwitchPlan,

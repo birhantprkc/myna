@@ -590,6 +590,11 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
 
+    if let Err(failure) = probe_installs(&application) {
+        eprintln!("{failure}");
+        return glib::ExitCode::FAILURE;
+    }
+
     // With the flag on, the list takes input: each snap offers Install, and
     // a disabled extension Enable.
     let machine = ProbeMachine::flagged();
@@ -2236,6 +2241,23 @@ struct ProbeMachine {
     /// A flag read answers what it read only once this is cleared.
     holding_reads: std::sync::Arc<std::sync::atomic::AtomicBool>,
     flag_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Myna is installed and no backend yet.
+    myna_only: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The snaps asked for, in order.
+    installs: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// How snapd answers the next install requests; `change-<snap>` once
+    /// empty.
+    install_answers: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<InstallAnswer>>>,
+    /// An install request waits while this is set, as while polkit asks.
+    holding_install: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// While set, change reads report this percentage of the download
+    /// fetched.
+    downloading: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
+    /// How the change ends: snapd's error, or done when none.
+    install_error: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// Install changes started outside the wizard, as `select=in-progress`
+    /// lists them.
+    pending_installs: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl ProbeMachine {
@@ -2266,6 +2288,58 @@ impl ProbeMachine {
             flag_writes: std::sync::Arc::default(),
             holding_reads: std::sync::Arc::default(),
             flag_reads: std::sync::Arc::default(),
+            myna_only: std::sync::Arc::default(),
+            installs: std::sync::Arc::default(),
+            install_answers: std::sync::Arc::default(),
+            holding_install: std::sync::Arc::default(),
+            downloading: std::sync::Arc::default(),
+            install_error: std::sync::Arc::default(),
+            pending_installs: std::sync::Arc::default(),
+        }
+    }
+
+    fn answer_install(&self, answer: InstallAnswer) {
+        self.install_answers
+            .lock()
+            .expect("probe machine lock")
+            .push_back(answer);
+    }
+
+    fn hold_install(&self, holding: bool) {
+        self.holding_install
+            .store(holding, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Change reads report `done` percent fetched until this is `None`.
+    fn download(&self, done: Option<u64>) {
+        *self.downloading.lock().expect("probe machine lock") = done;
+    }
+
+    fn fail_installs(&self, error: Option<&str>) {
+        *self.install_error.lock().expect("probe machine lock") = error.map(str::to_owned);
+    }
+
+    fn installs(&self) -> Vec<String> {
+        self.installs.lock().expect("probe machine lock").clone()
+    }
+
+    /// A change installing `snap` is running, started elsewhere.
+    fn installing_elsewhere(&self, snap: &str) {
+        self.pending_installs
+            .lock()
+            .expect("probe machine lock")
+            .push(snap.to_owned());
+    }
+
+    /// What installing `snap` leaves on the machine.
+    fn installed(&self, snap: &str) {
+        use std::sync::atomic::Ordering::SeqCst;
+        if snap == crate::onboarding::MYNA_SNAP && self.bare.load(SeqCst) {
+            self.myna_only.store(true, SeqCst);
+            self.bare.store(false, SeqCst);
+        } else if snap != crate::onboarding::MYNA_SNAP {
+            self.myna_only.store(false, SeqCst);
+            self.bare.store(false, SeqCst);
         }
     }
 
@@ -2385,6 +2459,20 @@ impl ProbeMachine {
             return None;
         }
         let fixture = |text: &str| Some(text.to_owned());
+        if self.myna_only.load(std::sync::atomic::Ordering::SeqCst) {
+            let content = include_str!("../tests/fixtures/snap-interface-content.txt");
+            return match arguments {
+                ["list", "--unicode=never"] => fixture(
+                    "Name  Version  Rev  Tracking  Publisher  Notes\n\
+                     myna  1.2.3  7  latest/edge  canonical**  -\n",
+                ),
+                ["connections", "--all"] => fixture("Interface  Plug  Slot  Notes\n"),
+                ["interface", "content", "--attrs"] => content
+                    .split_once("  - myna-parakeet:provider:")
+                    .map(|(head, _)| head.to_owned()),
+                _ => None,
+            };
+        }
         match arguments {
             ["list", "--unicode=never"] => fixture(
                 "Name  Version  Rev  Tracking  Publisher  Notes\n\
@@ -2445,6 +2533,12 @@ impl crate::command::CommandRunner for ProbeMachine {
     }
 }
 
+type InstallAnswer = Result<Option<String>, crate::ports::SystemConfiguratorError>;
+
+/// One percent of a download bigger than any the wizard expects, so the
+/// row shows the percentage the probe sets.
+const PROBE_PERCENT: u64 = 1 << 32;
+
 /// gnome-shell as the probes need it, changed as they go.
 struct ProbeExtensions(Cell<crate::onboarding::ExtensionState>);
 
@@ -2499,10 +2593,84 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
         answer
     }
 
+    async fn install_snap(
+        &self,
+        snap: &str,
+        _cancellation: crate::command::CancellationToken,
+    ) -> Result<Option<String>, crate::ports::SystemConfiguratorError> {
+        self.installs
+            .lock()
+            .expect("probe machine lock")
+            .push(snap.to_owned());
+        while self
+            .holding_install
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            glib::timeout_future(Duration::from_millis(10)).await;
+        }
+        let answer = self
+            .install_answers
+            .lock()
+            .expect("probe machine lock")
+            .pop_front()
+            .unwrap_or_else(|| Ok(Some(format!("change-{snap}"))));
+        if matches!(answer, Ok(None)) {
+            self.installed(snap);
+        }
+        answer
+    }
+
+    async fn snap_change(
+        &self,
+        change_id: &str,
+        _cancellation: crate::command::CancellationToken,
+    ) -> Result<crate::snap_changes::ChangeInProgress, String> {
+        let snap = change_id.trim_start_matches("change-");
+        let downloading = *self.downloading.lock().expect("probe machine lock");
+        let error = self
+            .install_error
+            .lock()
+            .expect("probe machine lock")
+            .clone();
+        let change = match (downloading, error) {
+            (Some(done), _) => serde_json::json!({"id": change_id, "kind": "install-snap",
+                "ready": false, "status": "Doing", "summary": format!("Install \"{snap}\" snap"),
+                "tasks": [{"kind": "download-snap", "status": "Doing",
+                    "progress": {"label": snap, "done": done * PROBE_PERCENT, "total": 100 * PROBE_PERCENT}}]}),
+            (None, Some(err)) => serde_json::json!({"id": change_id, "kind": "install-snap",
+                "ready": true, "status": "Error", "err": err,
+                "summary": format!("Install \"{snap}\" snap")}),
+            (None, None) => {
+                self.installed(snap);
+                self.pending_installs
+                    .lock()
+                    .expect("probe machine lock")
+                    .retain(|pending| pending != snap);
+                serde_json::json!({"id": change_id, "kind": "install-snap",
+                    "ready": true, "status": "Done", "summary": format!("Install \"{snap}\" snap")})
+            }
+        };
+        crate::snap_changes::parse_change(change)
+    }
+
     async fn changes_in_progress(
         &self,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<Vec<crate::snap_changes::ChangeInProgress>, String> {
+        let pending: Vec<serde_json::Value> = self
+            .pending_installs
+            .lock()
+            .expect("probe machine lock")
+            .iter()
+            .map(|snap| {
+                serde_json::json!({"id": format!("change-{snap}"), "kind": "install-snap",
+                    "ready": false, "status": "Doing",
+                    "summary": format!("Install \"{snap}\" snap from \"latest/edge\" channel")})
+            })
+            .collect();
+        if !pending.is_empty() {
+            return crate::snap_changes::parse_changes(serde_json::Value::Array(pending));
+        }
         if self.bare.load(std::sync::atomic::Ordering::SeqCst) {
             return Err("the probe machine has no snapd".to_owned());
         }
@@ -3328,6 +3496,260 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
     )
 }
 
+/// The Install buttons against a scripted snapd: the row follows the change,
+/// one install runs at a time, a dismissed prompt reverts silently, a failed
+/// change with a toast whose report names the request, and an install
+/// started elsewhere is followed rather than offered again.
+fn probe_installs(application: &adw::Application) -> Result<(), String> {
+    use crate::onboarding::{assess, ComponentId, ExtensionState, Machine};
+
+    let machine = ProbeMachine::flagged();
+    let window = {
+        let ui = crate::onboarding_ui::OnboardingUi::present_with_ports(
+            application,
+            assess(Machine {
+                user_daemons: true,
+                extension: ExtensionState::Enabled,
+                ..Machine::default()
+            }),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            ProbeExtensions::new(ExtensionState::Enabled),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.set_beat(Duration::from_secs(60));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    let page = components_page(&window).ok_or("the component step shows no component page")?;
+    let until = |done: &dyn Fn() -> bool| {
+        for _ in 0..200 {
+            if done() {
+                break;
+            }
+            settle_gtk();
+        }
+        done()
+    };
+    let toast_texts = || {
+        descendants(window.upcast_ref(), &|widget| {
+            widget.type_().name() == "AdwToastWidget"
+        })
+        .iter()
+        .flat_map(|toast| {
+            descendants(toast, &|widget| widget.is::<gtk::Label>())
+                .into_iter()
+                .filter_map(|label| label.downcast::<gtk::Label>().ok())
+                .map(|label| label.label().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+    };
+    let row = |id| page.row(id).expect("an installable row");
+    let offers = |expected: &[&str]| rows_offer(&page) == expected;
+    if !until(&|| offers(&["Install", "Install", "Installed"])) {
+        return Err(format!("a flagged machine offers {:?}", rows_offer(&page)));
+    }
+
+    machine.answer_install(Err(crate::ports::SystemConfiguratorError::Cancelled));
+    row(ComponentId::Myna).button.emit_clicked();
+    if !until(&|| machine.installs().len() == 1 && offers(&["Install", "Install", "Installed"]))
+        || !toast_texts().is_empty()
+    {
+        return Err(format!(
+            "a dismissed install prompt left {:?}, toasts {:?}",
+            rows_offer(&page),
+            toast_texts()
+        ));
+    }
+    println!("onboarding-install: a dismissed prompt reverts silently");
+
+    machine.hold_install(true);
+    row(ComponentId::Myna).button.emit_clicked();
+    let asking = || {
+        offers(&[&gettextrs::gettext("Installing…"), "Install", "Installed"])
+            && !row(ComponentId::Model).button.is_sensitive()
+            && row(ComponentId::Myna).row.is_sensitive()
+            && !window.forward_button().is_sensitive()
+    };
+    if !until(&asking) {
+        return Err(format!(
+            "while snapd asks, the rows offer {:?}, the model's Install sensitive {}",
+            rows_offer(&page),
+            row(ComponentId::Model).button.is_sensitive()
+        ));
+    }
+    row(ComponentId::Model).button.emit_clicked();
+    settle_gtk();
+    if machine.installs() != ["myna", "myna"] {
+        return Err(format!(
+            "a second install started beside the first: {:?}",
+            machine.installs()
+        ));
+    }
+    println!("onboarding-install: one install at a time");
+
+    machine.download(Some(42));
+    machine.hold_install(false);
+    let percent = gettextrs::gettext("Installing {percent}%").replace("{percent}", "42");
+    if !until(&|| offers(&[&percent, "Install", "Installed"])) {
+        return Err(format!(
+            "a download under way shows {:?}",
+            rows_offer(&page)
+        ));
+    }
+    println!("onboarding-install: the download's percentage shown");
+
+    machine.download(None);
+    if !until(&|| offers(&["Installed", "Install", "Installed"]))
+        || !row(ComponentId::Model).button.is_sensitive()
+    {
+        return Err(format!(
+            "a finished install left the rows {:?}",
+            rows_offer(&page)
+        ));
+    }
+    println!("onboarding-install: installed once snapd is done");
+
+    machine.fail_installs(Some(
+        "cannot perform the following tasks:\n- Run install hook",
+    ));
+    row(ComponentId::Model).button.emit_clicked();
+    let heading = gettextrs::gettext("Installing the speech-to-text model failed");
+    if !until(&|| {
+        toast_texts() == [heading.clone(), gettextrs::gettext("Details")]
+            && offers(&["Installed", "Install", "Installed"])
+    }) {
+        return Err(format!(
+            "a failed install left {:?} with toasts {:?}",
+            rows_offer(&page),
+            toast_texts()
+        ));
+    }
+    let details = gettextrs::gettext("Details");
+    descendants(window.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::Button>()
+            .is_some_and(|button| button.label().as_deref() == Some(details.as_str()))
+    })
+    .into_iter()
+    .next()
+    .and_then(|button| button.downcast::<gtk::Button>().ok())
+    .ok_or("the failure toast has no Details button")?
+    .emit_clicked();
+    for _ in 0..8 {
+        settle_gtk();
+    }
+    let dialog = window
+        .visible_dialog()
+        .and_then(|dialog| dialog.downcast::<ui::OperationErrorDialog>().ok())
+        .ok_or("Details opened no failure report")?;
+    let expected = format!(
+        "{} POST /v2/snaps/myna-parakeet (install, latest/edge)\n{} 202\n{}\ncannot perform the following tasks:\n- Run install hook",
+        gettextrs::gettext("Request:"),
+        gettextrs::gettext("HTTP status:"),
+        gettextrs::gettext("Message:"),
+    );
+    if dialog.details_text() != expected {
+        return Err(format!(
+            "the failed install's report reads {:?}",
+            dialog.details_text()
+        ));
+    }
+    dialog.force_close();
+    if !until(&|| window.visible_dialog().is_none()) {
+        return Err("the failure report did not close".to_owned());
+    }
+    println!("onboarding-install: a failed change reverts with a toast and its report");
+
+    // Discovery finds the backend's slot before its install has fetched the
+    // model: the row, and Next, wait for the change.
+    machine.fail_installs(None);
+    machine.download(Some(10));
+    row(ComponentId::Model).button.emit_clicked();
+    let downloading = gettextrs::gettext("Installing {percent}%").replace("{percent}", "10");
+    if !until(&|| offers(&["Installed", &downloading, "Installed"])) {
+        return Err(format!("the model install shows {:?}", rows_offer(&page)));
+    }
+    machine.installed(crate::onboarding::RECOMMENDED_BACKEND_SNAP);
+    let reads = machine.reads();
+    if !until(&|| machine.reads() > reads + 4)
+        || !offers(&["Installed", &downloading, "Installed"])
+        || window.forward_button().is_sensitive()
+    {
+        return Err(format!(
+            "a backend found mid-install shows {:?}, Next sensitive {}",
+            rows_offer(&page),
+            window.forward_button().is_sensitive()
+        ));
+    }
+    println!("onboarding-install: the model waits for its change");
+    machine.download(None);
+    if !until(&|| offers(&["Installed", "Installed", "Installed"])) {
+        return Err(format!(
+            "the model install ended as {:?}",
+            rows_offer(&page)
+        ));
+    }
+    println!("onboarding-install: the model installed");
+    window.close();
+    settle_gtk();
+
+    // A change snapd runs for a missing row, started in a terminal or by a
+    // wizard since closed, is followed and not started again.
+    let machine = ProbeMachine::flagged();
+    machine.installing_elsewhere(crate::onboarding::MYNA_SNAP);
+    machine.download(Some(7));
+    let window = {
+        let ui = crate::onboarding_ui::OnboardingUi::present_with_ports(
+            application,
+            assess(Machine {
+                user_daemons: true,
+                ..Machine::default()
+            }),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            ProbeExtensions::new(ExtensionState::Unavailable),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    let page = components_page(&window).ok_or("the component step shows no component page")?;
+    let elsewhere = gettextrs::gettext("Installing {percent}%").replace("{percent}", "7");
+    let followed = || rows_offer(&page) == [elsewhere.as_str(), "Install", "-"];
+    if !until(&followed) || !machine.installs().is_empty() {
+        return Err(format!(
+            "an install started elsewhere shows {:?}, installs {:?}",
+            rows_offer(&page),
+            machine.installs()
+        ));
+    }
+    machine.download(None);
+    if !until(&|| rows_offer(&page) == ["Installed", "Install", "-"]) {
+        return Err(format!(
+            "an install followed to its end shows {:?}",
+            rows_offer(&page)
+        ));
+    }
+    println!("onboarding-install: an install started elsewhere is followed");
+    window.close();
+    settle_gtk();
+    Ok(())
+}
+
 /// The flag's switch asks snapd, whose polkit prompt is the only question:
 /// dismissing it reverts silently, a refusal with a toast, and success
 /// unlocks the list. It never turns the flag off.
@@ -3641,11 +4063,16 @@ fn rows_offer(page: &ui::OnboardingComponents) -> Vec<String> {
                     })
             })
             .is_some();
-        match (row.button.is_mapped(), installed) {
-            (true, false) => row.button.label().unwrap_or_default().to_string(),
-            (false, true) => "Installed".to_owned(),
-            (false, false) => "-".to_owned(),
-            (true, true) => "both".to_owned(),
+        let installing = row
+            .installing
+            .as_ref()
+            .filter(|progress| progress.container.is_mapped() && progress.spinner.is_spinning());
+        match (row.button.is_mapped(), installed, installing) {
+            (false, false, Some(progress)) => progress.label.label().to_string(),
+            (true, false, None) => row.button.label().unwrap_or_default().to_string(),
+            (false, true, None) => "Installed".to_owned(),
+            (false, false, None) => "-".to_owned(),
+            _ => "both".to_owned(),
         }
     })
     .collect()

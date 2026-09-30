@@ -27,11 +27,23 @@ mod imp {
         #[template_child]
         pub myna_installed: gtk::TemplateChild<gtk::Box>,
         #[template_child]
+        pub myna_installing: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
+        pub myna_spinner: gtk::TemplateChild<gtk::Spinner>,
+        #[template_child]
+        pub myna_progress: gtk::TemplateChild<gtk::Label>,
+        #[template_child]
         pub model_row: gtk::TemplateChild<adw::ActionRow>,
         #[template_child]
         pub model_button: gtk::TemplateChild<gtk::Button>,
         #[template_child]
         pub model_installed: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
+        pub model_installing: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
+        pub model_spinner: gtk::TemplateChild<gtk::Spinner>,
+        #[template_child]
+        pub model_progress: gtk::TemplateChild<gtk::Label>,
         #[template_child]
         pub extension_row: gtk::TemplateChild<adw::ActionRow>,
         #[template_child]
@@ -73,6 +85,17 @@ pub struct ComponentRow {
     pub row: adw::ActionRow,
     pub button: gtk::Button,
     pub installed: gtk::Box,
+    /// What replaces the button while snapd installs it; the extension is
+    /// not installed through snapd.
+    pub installing: Option<RowProgress>,
+}
+
+/// A spinner and how far the install has come.
+#[derive(Clone)]
+pub struct RowProgress {
+    pub container: gtk::Box,
+    pub spinner: gtk::Spinner,
+    pub label: gtk::Label,
 }
 
 impl OnboardingComponents {
@@ -100,20 +123,45 @@ impl OnboardingComponents {
     /// The row of `id`; the flag has a switch row of its own instead.
     pub fn row(&self, id: ComponentId) -> Option<ComponentRow> {
         let imp = self.imp();
-        let (row, button, installed) = match id {
+        let progress = |container: &gtk::TemplateChild<gtk::Box>,
+                        spinner: &gtk::TemplateChild<gtk::Spinner>,
+                        label: &gtk::TemplateChild<gtk::Label>| {
+            Some(RowProgress {
+                container: container.get(),
+                spinner: spinner.get(),
+                label: label.get(),
+            })
+        };
+        let (row, button, installed, installing) = match id {
             ComponentId::UserDaemons => return None,
-            ComponentId::Myna => (&imp.myna_row, &imp.myna_button, &imp.myna_installed),
-            ComponentId::Model => (&imp.model_row, &imp.model_button, &imp.model_installed),
+            ComponentId::Myna => (
+                &imp.myna_row,
+                &imp.myna_button,
+                &imp.myna_installed,
+                progress(&imp.myna_installing, &imp.myna_spinner, &imp.myna_progress),
+            ),
+            ComponentId::Model => (
+                &imp.model_row,
+                &imp.model_button,
+                &imp.model_installed,
+                progress(
+                    &imp.model_installing,
+                    &imp.model_spinner,
+                    &imp.model_progress,
+                ),
+            ),
             ComponentId::ShellExtension => (
                 &imp.extension_row,
                 &imp.extension_button,
                 &imp.extension_installed,
+                None,
             ),
         };
         Some(ComponentRow {
             row: row.get(),
             button: button.get(),
             installed: installed.get(),
+            installing,
         })
     }
 }

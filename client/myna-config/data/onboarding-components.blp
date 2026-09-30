@@ -80,6 +80,22 @@ template $OnboardingComponents: Adw.Bin {
             }
 
             [suffix]
+            Gtk.Box myna_installing {
+              spacing: 8;
+              visible: false;
+
+              Gtk.Spinner myna_spinner {
+                valign: center;
+              }
+
+              Gtk.Label myna_progress {
+                styles [
+                  "numeric",
+                ]
+              }
+            }
+
+            [suffix]
             Gtk.Box myna_installed {
               spacing: 8;
               visible: false;
@@ -109,6 +125,22 @@ template $OnboardingComponents: Adw.Bin {
               styles [
                 "outlined",
               ]
+            }
+
+            [suffix]
+            Gtk.Box model_installing {
+              spacing: 8;
+              visible: false;
+
+              Gtk.Spinner model_spinner {
+                valign: center;
+              }
+
+              Gtk.Label model_progress {
+                styles [
+                  "numeric",
+                ]
+              }
             }
 
             [suffix]

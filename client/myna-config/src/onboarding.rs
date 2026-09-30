@@ -259,6 +259,34 @@ pub fn assess(machine: Machine) -> Vec<Component> {
         .collect()
 }
 
+/// The components as the step shows them while snapd installs `installing`:
+/// missing until its change is done, whatever a read found half-way through
+/// it. A backend's slot is published before its install has fetched the
+/// model.
+pub fn while_installing(components: &[Component], installing: &[ComponentId]) -> Vec<Component> {
+    components
+        .iter()
+        .map(|component| Component {
+            state: if installing.contains(&component.id) {
+                ComponentState::Missing
+            } else {
+                component.state
+            },
+            ..*component
+        })
+        .collect()
+}
+
+/// The snap a row's Install button installs and what that is expected to
+/// download; the flag and the extension are not snaps.
+pub fn installs(id: ComponentId, offer: &ModelOffer) -> Option<(&'static str, u64)> {
+    match id {
+        ComponentId::Myna => Some((MYNA_SNAP, MYNA_DOWNLOAD_BYTES)),
+        ComponentId::Model => Some((offer.snap(), offer.download_bytes)),
+        ComponentId::UserDaemons | ComponentId::ShellExtension => None,
+    }
+}
+
 /// Whether a required component is missing: what opens the wizard at
 /// startup and holds its component step.
 pub fn needs_onboarding(components: &[Component]) -> bool {
@@ -653,6 +681,36 @@ mod tests {
             ..Machine::default()
         });
         assert_eq!(gpu.download_bytes, 4_172_693_504);
+    }
+
+    #[test]
+    fn a_component_snapd_is_still_installing_shows_missing() {
+        // A backend's slot is published before its install has fetched the
+        // model, so discovery finds it half-way through the change.
+        let found = with_extension(ExtensionState::Enabled);
+        let shown = while_installing(&found, &[ComponentId::Model]);
+        assert_eq!(shown[2].state, ComponentState::Missing);
+        assert!(!can_advance(Step::Components, &shown));
+        assert!(!fully_installed(&shown));
+        assert_eq!(while_installing(&found, &[]), found);
+        for index in [0, 1, 3] {
+            assert_eq!(shown[index], found[index]);
+        }
+    }
+
+    #[test]
+    fn only_the_app_and_the_model_are_installed_from_snapd() {
+        let offer = model_offer(&Machine::default());
+        assert_eq!(
+            installs(ComponentId::Myna, &offer),
+            Some((MYNA_SNAP, MYNA_DOWNLOAD_BYTES))
+        );
+        assert_eq!(
+            installs(ComponentId::Model, &offer),
+            Some((RECOMMENDED_BACKEND_SNAP, offer.download_bytes))
+        );
+        assert_eq!(installs(ComponentId::UserDaemons, &offer), None);
+        assert_eq!(installs(ComponentId::ShellExtension, &offer), None);
     }
 
     #[test]

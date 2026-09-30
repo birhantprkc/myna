@@ -4546,6 +4546,22 @@ mod tests {
             unreachable!("the settings window never turns the flag on")
         }
 
+        async fn install_snap(
+            &self,
+            _snap: &str,
+            _cancellation: CancellationToken,
+        ) -> Result<Option<String>, crate::ports::SystemConfiguratorError> {
+            unreachable!("the Model tab never installs a snap")
+        }
+
+        async fn snap_change(
+            &self,
+            _change_id: &str,
+            _cancellation: CancellationToken,
+        ) -> Result<crate::snap_changes::ChangeInProgress, String> {
+            unreachable!("the Model tab never follows an install")
+        }
+
         async fn execute_backend_switch(
             &self,
             _plan: &crate::active_backend::SwitchPlan,

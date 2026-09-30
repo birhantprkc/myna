@@ -17,6 +17,7 @@ use crate::domain::CommandResult;
 use crate::ports::FailedStep;
 use crate::ports::{SystemConfigurator, SystemConfiguratorError, SystemConfiguratorFailure};
 use crate::snap_changes::ChangeInProgress;
+use crate::snap_install::install_request;
 
 /// Fixed plug reference the direct snapd adapter is willing to send. Any
 /// switch step whose typed target does not match these exact allowlists is
@@ -178,6 +179,28 @@ impl SystemConfigurator for PkexecSystemConfigurator {
             .enable_user_daemons(cancellation)
             .await
             .map_err(|error| snapd_error_to_system_error(user_daemons_on_request(), error))
+    }
+
+    async fn install_snap(
+        &self,
+        snap: &str,
+        cancellation: CancellationToken,
+    ) -> Result<Option<String>, SystemConfiguratorError> {
+        self.snapd
+            .install_snap(snap, cancellation)
+            .await
+            .map_err(|error| snapd_error_to_system_error(install_request(snap), error))
+    }
+
+    async fn snap_change(
+        &self,
+        change_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<ChangeInProgress, String> {
+        self.snapd
+            .change(change_id, cancellation)
+            .await
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -1002,6 +1025,22 @@ mod tests {
             _cancellation: CancellationToken,
         ) -> Result<(), SnapdError> {
             unreachable!("no switch turns the flag on")
+        }
+
+        async fn install_snap(
+            &self,
+            _snap: &str,
+            _cancellation: CancellationToken,
+        ) -> Result<Option<String>, SnapdError> {
+            unreachable!("no switch installs a snap")
+        }
+
+        async fn change(
+            &self,
+            _change_id: &str,
+            _cancellation: CancellationToken,
+        ) -> Result<ChangeInProgress, SnapdError> {
+            unreachable!("no switch follows an install")
         }
     }
 

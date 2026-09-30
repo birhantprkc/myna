@@ -14,6 +14,9 @@
 //! * `GET  /v2/system-info` to read whether `experimental.user-daemons` is on.
 //! * `PUT  /v2/snaps/system/conf` with exactly
 //!   `{"experimental.user-daemons":true}` to turn it on.
+//! * `POST /v2/snaps/{name}` with exactly
+//!   `{"action":"install","channel":"latest/edge"}`, `{name}` a validated
+//!   snap name, to install it as `snap install --edge` does.
 //!
 //! There is deliberately no way to send an arbitrary path, method, body, or
 //! header through this module. Snap names are re-validated against the strict
@@ -34,7 +37,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::command::CancellationToken;
-use crate::snap_changes::{parse_changes, ChangeInProgress};
+use crate::snap_changes::{parse_change, parse_changes, ChangeInProgress};
 
 /// Every change snapd has not finished. Not `for=<snap>`: snapd cannot name
 /// the snap of the `snapctl-install` change a model download runs in.
@@ -47,6 +50,8 @@ const SYSTEM_INFO: &str = "/v2/system-info";
 pub(crate) const SYSTEM_CONF: &str = "/v2/snaps/system/conf";
 pub(crate) const INTERFACES: &str = "/v2/interfaces";
 const USER_DAEMONS_ON: &str = r#"{"experimental.user-daemons":true}"#;
+
+const INSTALL_ON_EDGE: &str = r#"{"action":"install","channel":"latest/edge"}"#;
 
 /// Default host location of the snapd socket. The value is deliberately a
 /// constant, not user configurable, so an attacker cannot redirect the client.
@@ -360,6 +365,22 @@ pub trait SnapdClient {
     /// Turn `experimental.user-daemons` on; snapd asks polkit for
     /// `manage-configuration`.
     async fn enable_user_daemons(&self, cancellation: CancellationToken) -> Result<(), SnapdError>;
+
+    /// Start installing `snap` from edge; snapd asks polkit
+    /// for `manage`. The change it started, none when the snap is already
+    /// installed.
+    async fn install_snap(
+        &self,
+        snap: &str,
+        cancellation: CancellationToken,
+    ) -> Result<Option<String>, SnapdError>;
+
+    /// One change as snapd reports it now, read as the user.
+    async fn change(
+        &self,
+        change_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<ChangeInProgress, SnapdError>;
 }
 
 /// Real snapd client. Runs blocking Unix-socket I/O off the GTK main loop via
@@ -458,6 +479,104 @@ impl SnapdClient for UnixSocketSnapdClient {
             message: format!("snapd worker join failed: {error:?}"),
         })?
     }
+
+    async fn install_snap(
+        &self,
+        snap: &str,
+        cancellation: CancellationToken,
+    ) -> Result<Option<String>, SnapdError> {
+        if !is_valid_snap_name(snap) {
+            return Err(SnapdError::Transport {
+                message: format!("invalid snap name: {snap}"),
+            });
+        }
+        let socket_path = self.socket_path.clone();
+        let timeouts = self.timeouts;
+        let path = format!("/v2/snaps/{snap}");
+        let handle = gio::spawn_blocking(move || {
+            blocking_start(
+                &socket_path,
+                timeouts,
+                "POST",
+                &path,
+                INSTALL_ON_EDGE,
+                &cancellation,
+            )
+        });
+        let started = handle.await.map_err(|error| SnapdError::Transport {
+            message: format!("snapd worker join failed: {error:?}"),
+        })?;
+        match started {
+            Ok(Started::Change(change_id)) => Ok(Some(change_id)),
+            Ok(Started::Sync) => Err(SnapdError::Protocol {
+                message: "snapd answered an install synchronously".to_owned(),
+                body: String::new(),
+            }),
+            Err(SnapdError::Snapd {
+                kind: Some(kind), ..
+            }) if kind == "snap-already-installed" => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn change(
+        &self,
+        change_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<ChangeInProgress, SnapdError> {
+        if !is_valid_change_id(change_id) {
+            return Err(SnapdError::Protocol {
+                message: format!("refusing to read invalid change id: {change_id:?}"),
+                body: String::new(),
+            });
+        }
+        let socket_path = self.socket_path.clone();
+        let timeouts = self.timeouts;
+        let path = format!("/v2/changes/{change_id}");
+        let handle = gio::spawn_blocking(move || {
+            blocking_change(&socket_path, timeouts, &path, cancellation)
+        });
+        handle.await.map_err(|error| SnapdError::Transport {
+            message: format!("snapd worker join failed: {error:?}"),
+        })?
+    }
+}
+
+fn blocking_change(
+    socket_path: &Path,
+    timeouts: SnapdTimeouts,
+    path: &str,
+    cancellation: CancellationToken,
+) -> Result<ChangeInProgress, SnapdError> {
+    let start = Instant::now();
+    let response = do_request(
+        socket_path,
+        "GET",
+        path,
+        None,
+        SnapdTimeoutContext::Request,
+        &timeouts,
+        &cancellation,
+        start,
+        start + timeouts.per_request,
+    )?;
+    match parse_envelope(&response)? {
+        Envelope::Sync { result_json } => {
+            parse_change(result_json).map_err(|message| SnapdError::Protocol {
+                message: format!("could not parse the change: {message}"),
+                body: truncate(&response, 512),
+            })
+        }
+        Envelope::Async { .. } => Err(SnapdError::Protocol {
+            message: "unexpected async envelope for a change".to_owned(),
+            body: truncate(&response, 512),
+        }),
+        Envelope::Error {
+            status_code,
+            kind,
+            message,
+        } => Err(classify_error(status_code, kind, message)),
+    }
 }
 
 fn blocking_user_daemons_enabled(
@@ -554,16 +673,22 @@ fn blocking_apply_interface_action(
     )
 }
 
-/// Send one privileged write and follow its change. The request may wait
-/// out the user's polkit prompt; the change then gets the total budget.
-fn blocking_write(
+/// What a write started.
+enum Started {
+    Sync,
+    Change(String),
+}
+
+/// Send one privileged write. snapd answers only once the user has answered
+/// its polkit prompt, so the request waits `timeouts.authorization`.
+fn blocking_start(
     socket_path: &Path,
     timeouts: SnapdTimeouts,
     method: &str,
     path: &str,
     body: &str,
-    cancellation: CancellationToken,
-) -> Result<SnapdOutcome, SnapdError> {
+    cancellation: &CancellationToken,
+) -> Result<Started, SnapdError> {
     let start = Instant::now();
     let answering = SnapdTimeouts {
         per_request: timeouts.authorization,
@@ -576,20 +701,41 @@ fn blocking_write(
         Some(body),
         SnapdTimeoutContext::Request,
         &answering,
-        &cancellation,
+        cancellation,
         start,
         start + timeouts.authorization,
     )?;
-
     match parse_envelope(&response)? {
-        Envelope::Sync { .. } => Ok(SnapdOutcome::Sync),
-        Envelope::Async { change_id } => {
-            if !is_valid_change_id(&change_id) {
-                return Err(SnapdError::Protocol {
-                    message: format!("snapd returned an invalid change id: {change_id:?}"),
-                    body: truncate(&response, 512),
-                });
-            }
+        Envelope::Sync { .. } => Ok(Started::Sync),
+        Envelope::Async { change_id } if is_valid_change_id(&change_id) => {
+            Ok(Started::Change(change_id))
+        }
+        Envelope::Async { change_id } => Err(SnapdError::Protocol {
+            message: format!("snapd returned an invalid change id: {change_id:?}"),
+            body: truncate(&response, 512),
+        }),
+        Envelope::Error {
+            status_code,
+            kind,
+            message,
+        } => Err(classify_error(status_code, kind, message)),
+    }
+}
+
+/// Send one privileged write and follow its change. The request may wait
+/// out the user's polkit prompt; the change then gets the total budget.
+fn blocking_write(
+    socket_path: &Path,
+    timeouts: SnapdTimeouts,
+    method: &str,
+    path: &str,
+    body: &str,
+    cancellation: CancellationToken,
+) -> Result<SnapdOutcome, SnapdError> {
+    let start = Instant::now();
+    match blocking_start(socket_path, timeouts, method, path, body, &cancellation)? {
+        Started::Sync => Ok(SnapdOutcome::Sync),
+        Started::Change(change_id) => {
             let answered = Instant::now();
             poll_change(
                 socket_path,
@@ -601,11 +747,6 @@ fn blocking_write(
             )
             .map(SnapdOutcome::Async)
         }
-        Envelope::Error {
-            status_code,
-            kind,
-            message,
-        } => Err(classify_error(status_code, kind, message)),
     }
 }
 

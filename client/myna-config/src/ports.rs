@@ -95,6 +95,22 @@ pub trait SystemConfigurator {
         cancellation: CancellationToken,
     ) -> Result<(), SystemConfiguratorError>;
 
+    /// Start installing `snap` from edge, as the user: snapd raises polkit's
+    /// prompt itself. The change it started, none when it is installed
+    /// already.
+    async fn install_snap(
+        &self,
+        snap: &str,
+        cancellation: CancellationToken,
+    ) -> Result<Option<String>, SystemConfiguratorError>;
+
+    /// One snapd change as it stands now, read as the user.
+    async fn snap_change(
+        &self,
+        change_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<ChangeInProgress, String>;
+
     /// What snapd is doing on `backend_snap` now, while an apply runs; none
     /// when it is doing nothing there or cannot be read.
     async fn apply_progress(

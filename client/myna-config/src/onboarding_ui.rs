@@ -6,6 +6,7 @@
 //! control back to the settings window when the user is done.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,14 +23,16 @@ use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::domain::BackendSurfaceError;
 use crate::onboarding::{
-    assess, can_advance, completes, flag_enabled, model_offer, needs_onboarding, polls, row_action,
-    unlocked, Component, ComponentId, ComponentState, Machine, ModelOffer, RowAction, Step,
-    Unavailable, MYNA_DOWNLOAD_BYTES, RECOMMENDED_BACKEND_SNAP, SHELL_EXTENSION_UUID,
+    assess, can_advance, completes, flag_enabled, installs, model_offer, needs_onboarding, polls,
+    row_action, unlocked, while_installing, Component, ComponentId, ComponentState, Machine,
+    ModelOffer, RowAction, Step, Unavailable, MYNA_DOWNLOAD_BYTES, RECOMMENDED_BACKEND_SNAP,
+    SHELL_EXTENSION_UUID,
 };
 use crate::ports::{
     BackendRepository, ShellExtensions, SystemConfigurator, SystemConfiguratorError,
 };
-use crate::snap_changes::ApplyProgress;
+use crate::snap_changes::{pending_install, ApplyProgress};
+use crate::snap_install::{follow_change, install, Follow};
 use crate::ui;
 
 /// How often the component step re-reads the machine while something is
@@ -41,6 +44,18 @@ const SNAPD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// How long "All required components installed" shows before the wizard moves on by
 /// itself.
 const BEAT: Duration = Duration::from_secs(1);
+/// How often an install's change is read for its progress.
+const FOLLOW_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Where a row's install stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Install {
+    /// snapd is installing it: its polkit prompt may still be open, and the
+    /// percentage appears once a download announces its size.
+    Running(Option<u8>),
+    /// snapd is done; the row waits for a read that shows it.
+    Confirming,
+}
 
 /// Where turning snapd's flag on stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +86,10 @@ pub struct OnboardingUi {
     /// Bumped by every flag write, so a read that started before one is not
     /// taken for the machine after it.
     epoch: Cell<u64>,
+    installs: RefCell<BTreeMap<ComponentId, Install>>,
+    /// Stop following installs when the wizard closes; snapd carries on.
+    install_cancellation: CancellationToken,
+    follow_interval: Cell<Duration>,
     stage: RefCell<Option<SetupStage>>,
     setup_cancellation: RefCell<Option<CancellationToken>>,
     /// The last line logged, so a poll repeats none.
@@ -171,6 +190,9 @@ impl OnboardingUi {
             flag_write: Cell::new(FlagWrite::Idle),
             flag_cancellation: RefCell::default(),
             epoch: Cell::new(0),
+            installs: RefCell::default(),
+            install_cancellation: CancellationToken::new(),
+            follow_interval: Cell::new(FOLLOW_INTERVAL),
             stage: RefCell::default(),
             setup_cancellation: RefCell::default(),
             logged: RefCell::default(),
@@ -202,6 +224,20 @@ impl OnboardingUi {
                 glib::Propagation::Stop
             }
         });
+
+        for id in [ComponentId::Myna, ComponentId::Model] {
+            let Some(row) = components_page.row(id) else {
+                continue;
+            };
+            row.button.connect_clicked({
+                let ui = Rc::downgrade(&ui);
+                move |_| {
+                    if let Some(ui) = ui.upgrade() {
+                        ui.install(id);
+                    }
+                }
+            });
+        }
 
         window.forward_button().connect_clicked({
             let ui = Rc::downgrade(&ui);
@@ -251,6 +287,7 @@ impl OnboardingUi {
                     if let Some(cancellation) = ui.flag_cancellation.take() {
                         cancellation.cancel();
                     }
+                    ui.install_cancellation.cancel();
                     if let Some(cancellation) = ui.setup_cancellation.take() {
                         ui.log("setup: cancelled, the wizard closed");
                         cancellation.cancel();
@@ -296,18 +333,23 @@ impl OnboardingUi {
             if ui.flag_write.get() == FlagWrite::Confirming {
                 ui.flag_write.set(FlagWrite::Idle);
             }
+            let before = ui.shown();
+            ui.installs
+                .borrow_mut()
+                .retain(|_, install| *install != Install::Confirming);
             ui.offer.set(offer);
             match &problem {
                 Some(problem) => ui.log(&format!("assessment: {problem}")),
                 None => ui.log(&format!("assessment: {}", describe(&components))),
             }
             ui.problem.replace(problem);
-            let before = ui.components.replace(components);
+            ui.components.replace(components);
+            ui.follow_installs_elsewhere().await;
             // The user installed the last piece while watching: finish for
             // them, as Next would.
             let finish = ui.step.get() == Step::Components
                 && !ui.busy.get()
-                && completes(&before, &ui.components.borrow());
+                && completes(&before, &ui.shown());
             if finish {
                 ui.finish_setup(Step::Shortcut, true);
             } else {
@@ -355,8 +397,167 @@ impl OnboardingUi {
         });
     }
 
+    /// The components as the step shows them: one snapd is still
+    /// installing is missing until its change is done.
+    fn shown(&self) -> Vec<Component> {
+        let installing: Vec<ComponentId> = self.installs.borrow().keys().copied().collect();
+        while_installing(&self.components.borrow(), &installing)
+    }
+
+    /// Install the snap behind `id` through snapd as the user, one row at a
+    /// time. Its polkit prompt is the only question: dismissing it puts the
+    /// button back silently, a refusal or a failed change with a toast
+    /// whose Details open the report.
+    fn install(self: &Rc<Self>, id: ComponentId) {
+        let Some((snap, expected)) = installs(id, &self.offer.get()) else {
+            return;
+        };
+        if !self.installs.borrow().is_empty()
+            || row_action_of(&self.shown(), id) != Some(RowAction::Install)
+        {
+            return;
+        }
+        self.installs
+            .borrow_mut()
+            .insert(id, Install::Running(None));
+        self.epoch.set(self.epoch.get() + 1);
+        self.log(&format!("install: installing {snap}"));
+        self.render();
+        let ui = Rc::downgrade(self);
+        let configurator = self.configurator.clone();
+        let cancellation = self.install_cancellation.clone();
+        let interval = self.follow_interval.get();
+        glib::spawn_future_local(async move {
+            let sleep = |interval| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> {
+                Box::pin(glib::timeout_future(interval))
+            };
+            let follow = Follow {
+                interval,
+                sleep: &sleep,
+                cancellation,
+            };
+            let report = progress_reporter(ui.clone(), id);
+            let outcome = install(configurator.as_ref(), snap, expected, &follow, &report).await;
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.epoch.set(ui.epoch.get() + 1);
+            match outcome {
+                Ok(()) => {
+                    ui.log(&format!("install: {snap} installed"));
+                    ui.installs.borrow_mut().insert(id, Install::Confirming);
+                    ui.refresh_assessment();
+                }
+                Err(SystemConfiguratorError::Cancelled) => {
+                    ui.log(&format!("install: {snap}: the prompt was dismissed"));
+                    ui.installs.borrow_mut().remove(&id);
+                }
+                Err(error) => {
+                    ui.log(&format!("install: {snap} failed: {error}"));
+                    ui.installs.borrow_mut().remove(&id);
+                    ui.announce_failure(install_failed(id), &error);
+                }
+            }
+            ui.render();
+        });
+    }
+
+    /// Follow an install snapd is already running for a missing row, one
+    /// started in a terminal or by a wizard since closed, rather than offer
+    /// to start it again. Costs one read of snapd's changes, and only while
+    /// such a row is missing.
+    async fn follow_installs_elsewhere(self: &Rc<Self>) {
+        let offer = self.offer.get();
+        let missing: Vec<(ComponentId, &'static str, u64)> = self
+            .shown()
+            .iter()
+            .filter(|component| component.state == ComponentState::Missing)
+            .filter(|component| !self.installs.borrow().contains_key(&component.id))
+            .filter_map(|component| {
+                installs(component.id, &offer).map(|(snap, bytes)| (component.id, snap, bytes))
+            })
+            .collect();
+        if missing.is_empty() || !flag_enabled(&self.components.borrow()) {
+            return;
+        }
+        let Ok(changes) = self
+            .configurator
+            .changes_in_progress(CancellationToken::new())
+            .await
+        else {
+            return;
+        };
+        for (id, snap, expected) in missing {
+            if self.installs.borrow().contains_key(&id) {
+                continue;
+            }
+            if let Some(change) = pending_install(&changes, snap) {
+                self.follow_elsewhere(id, snap, change.id().to_owned(), expected);
+            }
+        }
+    }
+
+    fn follow_elsewhere(
+        self: &Rc<Self>,
+        id: ComponentId,
+        snap: &str,
+        change_id: String,
+        expected: u64,
+    ) {
+        self.installs
+            .borrow_mut()
+            .insert(id, Install::Running(None));
+        self.log(&format!(
+            "install: following change {change_id} installing {snap}"
+        ));
+        let ui = Rc::downgrade(self);
+        let configurator = self.configurator.clone();
+        let cancellation = self.install_cancellation.clone();
+        let interval = self.follow_interval.get();
+        let snap = snap.to_owned();
+        glib::spawn_future_local(async move {
+            let sleep = |interval| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> {
+                Box::pin(glib::timeout_future(interval))
+            };
+            let follow = Follow {
+                interval,
+                sleep: &sleep,
+                cancellation,
+            };
+            let report = progress_reporter(ui.clone(), id);
+            let outcome = follow_change(
+                configurator.as_ref(),
+                &change_id,
+                expected,
+                &follow,
+                &report,
+            )
+            .await;
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.epoch.set(ui.epoch.get() + 1);
+            // Not the user's action here, so a failure only puts Install back.
+            match outcome {
+                Ok(()) => {
+                    ui.log(&format!("install: {snap} installed"));
+                    ui.installs.borrow_mut().insert(id, Install::Confirming);
+                    ui.refresh_assessment();
+                }
+                Err(failure) => {
+                    ui.log(&format!("install: change {change_id} ended: {failure:?}"));
+                    ui.installs.borrow_mut().remove(&id);
+                }
+            }
+            ui.render();
+        });
+    }
+
     fn announce_flag_failure(&self, error: &SystemConfiguratorError) {
-        let heading = gettextrs::gettext("Enabling user daemons failed");
+        self.announce_failure(gettextrs::gettext("Enabling user daemons failed"), error);
+    }
+
+    fn announce_failure(&self, heading: String, error: &SystemConfiguratorError) {
         let summary = crate::backend_ui::system_failure_summary(error);
         let details = crate::backend_ui::system_error_details(error);
         let toast = adw::Toast::builder()
@@ -376,7 +577,7 @@ impl OnboardingUi {
         // The gate lives here, not on the button: a step can also be advanced
         // by activating the button from the keyboard or a screen reader, and
         // an insensitive widget still emits `clicked` when told to.
-        if self.busy.get() || !can_advance(self.step.get(), &self.components.borrow()) {
+        if self.busy.get() || !can_advance(self.step.get(), &self.shown()) {
             return;
         }
         // Set up already; only the pause before moving on is left.
@@ -480,6 +681,7 @@ impl OnboardingUi {
     /// The probe polls and pauses shorter than a person needs.
     pub fn set_poll_interval(&self, interval: Duration) {
         self.poll_interval.set(interval);
+        self.follow_interval.set(interval);
     }
 
     pub fn set_beat(&self, beat: Duration) {
@@ -504,7 +706,7 @@ impl OnboardingUi {
 
     fn render(self: &Rc<Self>) {
         let step = self.step.get();
-        let components = self.components.borrow().clone();
+        let components = self.shown();
 
         self.window.set_title(Some(&step_title(step)));
         // Setting up restarts the daemon; leaving mid-way would strand it.
@@ -578,6 +780,7 @@ impl OnboardingUi {
         flag_row.update_state(&[gtk::accessible::State::Busy(pending)]);
         page.component_list()
             .set_sensitive(unlocked(ComponentId::Myna, components));
+        let installs = self.installs.borrow();
         for component in components {
             let Some(row) = page.row(component.id) else {
                 continue;
@@ -588,6 +791,23 @@ impl OnboardingUi {
             // GTK 4.14's AT-SPI reads the subtitle relation as empty.
             row.row
                 .update_property(&[gtk::accessible::Property::Description(&subtitle)]);
+            let install = installs.get(&component.id).copied();
+            row.row
+                .update_state(&[gtk::accessible::State::Busy(install.is_some())]);
+            if let Some(progress) = &row.installing {
+                progress.container.set_visible(install.is_some());
+                progress.spinner.set_spinning(install.is_some());
+                if let Some(install) = install {
+                    progress.label.set_label(&install_text(install));
+                }
+            }
+            if install.is_some() {
+                row.installed.set_visible(false);
+                row.button.set_visible(false);
+                continue;
+            }
+            // One install at a time: snapd's prompt covers one request.
+            row.button.set_sensitive(installs.is_empty());
             row.installed.set_visible(action == RowAction::Installed);
             let label = match action {
                 RowAction::Install => {
@@ -602,6 +822,9 @@ impl OnboardingUi {
             row.button.set_visible(label.is_some());
             if let Some((label, accessible)) = label {
                 row.button.set_label(&label);
+                // A button is labelled by its label child, over any name set.
+                row.button
+                    .reset_relation(gtk::AccessibleRelation::LabelledBy);
                 row.button
                     .update_property(&[gtk::accessible::Property::Label(&accessible)]);
             }
@@ -610,11 +833,11 @@ impl OnboardingUi {
 
     fn subtitle(&self, id: ComponentId, action: RowAction) -> String {
         match (id, action) {
-            (ComponentId::Myna, _) => glib::format_size(MYNA_DOWNLOAD_BYTES).to_string(),
+            (ComponentId::Myna, _) => download_size(MYNA_DOWNLOAD_BYTES),
             (ComponentId::Model, _) => {
                 let offer = self.offer.get();
                 let name = crate::model_family::model_family(offer.snap()).name;
-                let size = glib::format_size(offer.download_bytes);
+                let size = download_size(offer.download_bytes);
                 let frame = if offer.upper_bound {
                     // TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "4.2 GB".
                     gettextrs::gettext("{model} · up to {size}")
@@ -680,6 +903,46 @@ impl Drop for OnboardingUi {
         for source in [self.poll.take(), self.beat.take()].into_iter().flatten() {
             source.remove();
         }
+    }
+}
+
+/// What a row offers, by id.
+fn row_action_of(components: &[Component], id: ComponentId) -> Option<RowAction> {
+    components
+        .iter()
+        .find(|component| component.id == id)
+        .map(row_action)
+}
+
+/// What a row's install reports hands to the row.
+fn progress_reporter(ui: std::rc::Weak<OnboardingUi>, id: ComponentId) -> impl Fn(Option<u8>) {
+    move |percent| {
+        if let Some(ui) = ui.upgrade() {
+            ui.installs
+                .borrow_mut()
+                .insert(id, Install::Running(percent));
+            ui.render();
+        }
+    }
+}
+
+/// An install as its row says it, beside the spinner.
+fn install_text(install: Install) -> String {
+    match install {
+        Install::Running(Some(percent)) => {
+            // TRANSLATORS: {percent} is how much of the download has arrived, a number from 0 to 100.
+            let frame = gettextrs::gettext("Installing {percent}%");
+            frame.replace("{percent}", &percent.to_string())
+        }
+        Install::Running(None) | Install::Confirming => gettextrs::gettext("Installing…"),
+    }
+}
+
+/// The toast's heading when installing `id` fails.
+fn install_failed(id: ComponentId) -> String {
+    match id {
+        ComponentId::Model => gettextrs::gettext("Installing the speech-to-text model failed"),
+        _ => gettextrs::gettext("Installing the Dictation app failed"),
     }
 }
 
@@ -779,6 +1042,17 @@ fn describe(components: &[Component]) -> String {
         .join(", ")
 }
 
+/// A download's size as the rows show it: in whole megabytes from 100 MB to
+/// 1 GB, where a decimal only adds noise.
+fn download_size(bytes: u64) -> String {
+    if !(100_000_000..999_500_000).contains(&bytes) {
+        return glib::format_size(bytes).to_string();
+    }
+    // TRANSLATORS: a download size in megabytes, such as "776 MB"; the space is a no-break space.
+    gettextrs::gettext("{megabytes} MB")
+        .replace("{megabytes}", &((bytes + 500_000) / 1_000_000).to_string())
+}
+
 /// A stage as the footer says it, beside the spinner.
 fn stage_text(stage: &SetupStage) -> String {
     match stage {
@@ -786,10 +1060,8 @@ fn stage_text(stage: &SetupStage) -> String {
         SetupStage::Waiting(progress @ ApplyProgress::Download { .. }) => {
             crate::backend_ui::apply_progress_text(progress)
         }
-        SetupStage::Waiting(ApplyProgress::Change { summary }) => {
-            // TRANSLATORS: {change} is snapd's own summary of what it is doing, in English.
-            let frame = gettextrs::gettext("Waiting for snapd: {change}");
-            frame.replace("{change}", summary)
+        SetupStage::Waiting(ApplyProgress::Change { .. }) => {
+            gettextrs::gettext("Waiting for other software changes to finish…")
         }
         SetupStage::Connecting(snap) => {
             // TRANSLATORS: {model} is a model family, such as "Parakeet".
@@ -837,5 +1109,40 @@ fn step_title(step: Step) -> String {
         Step::Welcome => gettextrs::gettext("Dictation"),
         Step::Components => gettextrs::gettext("Install components"),
         Step::Shortcut => gettextrs::gettext("How to dictate"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wait_on_snapd_keeps_its_english_summary_for_the_log() {
+        let stage = SetupStage::Waiting(ApplyProgress::Change {
+            summary: "Auto-refresh snap \"myna\"".to_owned(),
+        });
+
+        assert_eq!(
+            stage_text(&stage),
+            "Waiting for other software changes to finish…"
+        );
+        assert_eq!(
+            stage_log(&stage),
+            "waiting for snapd: Auto-refresh snap \"myna\""
+        );
+    }
+
+    #[test]
+    fn a_download_over_100_mb_is_sized_in_whole_megabytes() {
+        assert_eq!(download_size(10_133_504), glib::format_size(10_133_504));
+        assert_eq!(download_size(775_593_984), "776\u{a0}MB");
+        assert_eq!(download_size(100_000_000), "100\u{a0}MB");
+        assert_eq!(download_size(99_999_999), glib::format_size(99_999_999));
+        assert_eq!(download_size(999_499_999), "999\u{a0}MB");
+        assert_eq!(download_size(999_500_000), glib::format_size(999_500_000));
+        assert_eq!(
+            download_size(4_172_693_504),
+            glib::format_size(4_172_693_504)
+        );
     }
 }

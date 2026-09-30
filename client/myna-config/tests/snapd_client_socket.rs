@@ -20,7 +20,7 @@ use myna_config::adapters::system_configurator::PkexecSystemConfigurator;
 use myna_config::command::{CancellationToken, CommandOutput, FakeCommandRunner};
 use myna_config::domain::{parse_connections, BackendIdentity};
 use myna_config::ports::{FailedStep, SystemConfigurator, SystemConfiguratorError};
-use myna_config::snap_changes::ApplyProgress;
+use myna_config::snap_changes::{ApplyProgress, ChangeInProgress};
 
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     MainContext::new().block_on(future)
@@ -988,5 +988,237 @@ fn a_failed_configuration_change_is_reported() {
     assert!(
         matches!(&failed, Err(SystemConfiguratorError::Execution { message, .. }) if message == "cannot run hook"),
         "{failed:?}"
+    );
+}
+
+const CHANGE_12_ACCEPTED: &str = r#"{"type":"async","status-code":202,"change":"12"}"#;
+
+/// The same install `snap install --edge myna` makes, asked as the user:
+/// snapd raises polkit's prompt for `io.snapcraft.snapd.manage` itself.
+#[test]
+fn installing_a_snap_asks_for_edge_and_hands_back_its_change() {
+    let fake = FakeSnapd::start(vec![step(
+        "POST /v2/snaps/myna ",
+        http_body(202, "Accepted", CHANGE_12_ACCEPTED),
+        None,
+    )]);
+
+    let started = block_on(fake.client().install_snap("myna", CancellationToken::new()));
+
+    assert_eq!(started, Ok(Some("12".to_owned())));
+    let calls = fake.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(calls[0].starts_with("POST /v2/snaps/myna HTTP/1.1\r\n"));
+    assert!(calls[0].contains("X-Allow-Interaction: true\r\n"));
+    assert!(calls[0].ends_with("\r\n\r\n{\"action\":\"install\",\"channel\":\"latest/edge\"}"));
+}
+
+#[test]
+fn an_install_prompt_may_outlast_a_request() {
+    let fake = FakeSnapd::start(vec![step(
+        "POST /v2/snaps/myna-parakeet ",
+        http_body(202, "Accepted", CHANGE_12_ACCEPTED),
+        Some(Duration::from_millis(600)),
+    )]);
+    let client =
+        UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
+            per_request: Duration::from_millis(200),
+            authorization: Duration::from_secs(3),
+            poll_interval: Duration::from_millis(20),
+            total: Duration::from_millis(400),
+        });
+
+    assert_eq!(
+        block_on(client.install_snap("myna-parakeet", CancellationToken::new())),
+        Ok(Some("12".to_owned()))
+    );
+}
+
+/// Installed elsewhere between the last read and the click: nothing to do.
+#[test]
+fn installing_an_installed_snap_has_no_change_to_follow() {
+    let fake = FakeSnapd::start(vec![step(
+        "POST /v2/snaps/myna ",
+        http_body(
+            400,
+            "Bad Request",
+            r#"{"type":"error","status-code":400,"result":{"message":"snap \"myna\" is already installed","kind":"snap-already-installed","value":"myna"}}"#,
+        ),
+        None,
+    )]);
+
+    assert_eq!(
+        block_on(fake.client().install_snap("myna", CancellationToken::new())),
+        Ok(None)
+    );
+}
+
+#[test]
+fn a_snap_name_outside_the_grammar_is_never_sent() {
+    let fake = FakeSnapd::start(Vec::new());
+
+    let refused = block_on(
+        fake.client()
+            .install_snap("../v2/logout", CancellationToken::new()),
+    );
+
+    assert!(
+        matches!(refused, Err(SnapdError::Transport { .. })),
+        "{refused:?}"
+    );
+    assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_change_is_read_with_its_tasks() {
+    let fake = FakeSnapd::start(vec![step(
+        "GET /v2/changes/12 ",
+        http_body(
+            200,
+            "OK",
+            r#"{"type":"sync","status-code":200,"result":{"id":"12","kind":"install-snap","summary":"Install \"myna\" snap from \"latest/edge\" channel","status":"Doing","ready":false,"tasks":[{"kind":"download-snap","status":"Doing","progress":{"label":"myna","done":5066752,"total":10133504}}]}}"#,
+        ),
+        None,
+    )]);
+
+    let change = block_on(fake.client().change("12", CancellationToken::new())).unwrap();
+
+    assert_eq!(change.id(), "12");
+    assert!(!change.ready());
+    assert_eq!(change.download_percent(10_133_504), Some(50));
+}
+
+#[test]
+fn a_change_id_outside_the_grammar_is_never_read() {
+    let fake = FakeSnapd::start(Vec::new());
+
+    let refused = block_on(
+        fake.client()
+            .change("12/../../logout", CancellationToken::new()),
+    );
+
+    assert!(
+        matches!(refused, Err(SnapdError::Protocol { .. })),
+        "{refused:?}"
+    );
+    assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+fn install_answered(response: String) -> Result<Option<String>, SystemConfiguratorError> {
+    let fake = FakeSnapd::start(vec![step("POST /v2/snaps/myna ", response, None)]);
+    let configurator = PkexecSystemConfigurator::with_snapd_client(
+        Arc::new(FakeCommandRunner::default()),
+        Arc::new(fake.client()),
+    );
+    block_on(configurator.install_snap("myna", CancellationToken::new()))
+}
+
+#[test]
+fn a_dismissed_prompt_cancels_an_install() {
+    assert_eq!(
+        install_answered(http_body(
+            403,
+            "Forbidden",
+            r#"{"type":"error","status-code":403,"result":{"message":"cancelled","kind":"auth-cancelled"}}"#,
+        )),
+        Err(SystemConfiguratorError::Cancelled)
+    );
+}
+
+#[test]
+fn a_refused_install_names_its_request() {
+    let refused = install_answered(http_body(
+        401,
+        "Unauthorized",
+        r#"{"type":"error","status-code":401,"result":{"message":"access denied","kind":"login-required"}}"#,
+    ));
+    assert_eq!(
+        refused,
+        Err(SystemConfiguratorError::snapd_authorization_denied(
+            "POST /v2/snaps/myna (install, latest/edge)",
+            401,
+            "access denied",
+        ))
+    );
+}
+
+/// Measured on Noble: without the flag snapd refuses Myna synchronously.
+#[test]
+fn an_install_snapd_rejects_reports_its_reason() {
+    let rejected = install_answered(http_body(
+        400,
+        "Bad Request",
+        r#"{"type":"error","status-code":400,"result":{"message":"cannot install \"myna\": feature flag validation failed"}}"#,
+    ));
+    assert_eq!(
+        rejected,
+        Err(SystemConfiguratorError::snapd_execution(
+            "POST /v2/snaps/myna (install, latest/edge)",
+            Some(400),
+            "cannot install \"myna\": feature flag validation failed",
+        ))
+    );
+}
+
+fn change_answered(response: String) -> Result<ChangeInProgress, SnapdError> {
+    let fake = FakeSnapd::start(vec![step("GET /v2/changes/12 ", response, None)]);
+    block_on(fake.client().change("12", CancellationToken::new()))
+}
+
+/// snapd prunes a finished change after a day.
+#[test]
+fn a_change_snapd_no_longer_knows_is_its_error() {
+    let missing = change_answered(http_body(
+        404,
+        "Not Found",
+        r#"{"type":"error","status-code":404,"result":{"message":"cannot find change with id \"12\"","kind":"not-found"}}"#,
+    ));
+    assert!(
+        matches!(
+            &missing,
+            Err(SnapdError::Snapd {
+                status_code: 404,
+                ..
+            })
+        ),
+        "{missing:?}"
+    );
+}
+
+#[test]
+fn a_change_that_is_not_a_change_is_a_protocol_error() {
+    for body in [
+        r#"{"type":"sync","status-code":200,"result":{"id":"12"}}"#,
+        r#"{"type":"async","status-code":202,"change":"13"}"#,
+    ] {
+        let read = change_answered(http_body(200, "OK", body));
+        assert!(
+            matches!(&read, Err(SnapdError::Protocol { .. })),
+            "{body}: {read:?}"
+        );
+    }
+}
+
+#[test]
+fn an_unreadable_change_reaches_the_follower_as_text() {
+    let fake = FakeSnapd::start(vec![step(
+        "GET /v2/changes/12 ",
+        http_body(
+            404,
+            "Not Found",
+            r#"{"type":"error","status-code":404,"result":{"message":"cannot find change with id \"12\"","kind":"not-found"}}"#,
+        ),
+        None,
+    )]);
+    let configurator = PkexecSystemConfigurator::with_snapd_client(
+        Arc::new(FakeCommandRunner::default()),
+        Arc::new(fake.client()),
+    );
+
+    let read = block_on(configurator.snap_change("12", CancellationToken::new()));
+
+    assert!(
+        matches!(&read, Err(message) if message.contains("cannot find change")),
+        "{read:?}"
     );
 }

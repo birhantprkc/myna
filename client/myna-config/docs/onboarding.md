@@ -104,9 +104,49 @@ is discarded rather than taken for the machine after it. The switch never
 turns the flag off: activating it again springs back, since snapd refuses
 Myna's refreshes without the flag.
 
-The Install and Enable buttons do not act yet.
+Install asks snapd for the snap as the user
+(`POST /v2/snaps/<name>`, `{"action":"install","channel":"latest/edge"}`),
+the same install `snap install --edge` makes, and snapd raises polkit's prompt
+for `io.snapcraft.snapd.manage` itself. That action is `auth_admin_keep` per
+process, so installing the model within five minutes of the app asks nothing
+more. snapd answers once the prompt is answered; the row then follows the
+change `GET /v2/changes/<id>` once a second (`snap_install.rs`); ten failed
+reads in a row end it, so snapd restarting mid-install is no failure. The button
+gives way to a spinner and "Installing…", then "Installing 42%" once a
+download announces its size: the bytes of every download task in the change
+over what they announce or what the row expected to fetch, whichever is
+more, never going down. The percentage shows only while a download runs:
+mounting, hooks and services take 15 s or more after the app's download,
+and "Installing 100%" there read as stuck (seen on Noble). The model's
+component download runs inside the backend's own install change, fetched by
+its install hook's engine choice, so the model row follows it to the end,
+the percentage resuming where the snap's own download left it. A download
+served from snapd's cache reports no bytes, so a cached install shows no
+percentage.
 
-The subtitles size the download. The app's is the store's size of the `myna`
+A row snapd is still installing counts as missing (`onboarding::while_installing`)
+whatever a read finds half-way: the backend's slot is published, and
+discovery finds it, minutes before its model has arrived. Next and the
+automatic move on therefore wait for the change. Once it is done the row
+waits for a fresh read, which shows Installed. One install runs at a time,
+since one request raises one prompt; the other Install buttons are
+insensitive meanwhile. Dismissing the prompt puts the button back silently;
+a refusal, a request snapd rejects (Myna without the flag: "feature flag
+validation failed") or a change that fails puts it back with a toast whose
+Details name the request, snapd's HTTP status (202 for a change that failed
+after snapd accepted it) and snapd's error. Closing the wizard stops
+following; snapd's change carries on.
+
+A change snapd is already running to install a missing row's snap, started
+in a terminal or by a wizard since closed, is followed the same way instead
+of offering Install again. It is found in `/v2/changes?select=in-progress` as
+an unfinished `install-snap` change whose summary names the snap. Such a change failing only puts Install back, since it
+was not this window's action.
+
+Enable does not act yet.
+
+The subtitles size the download, in whole megabytes from 100 MB to 1 GB,
+where a decimal is noise. The app's is the store's size of the `myna`
 snap. The model's names the family and the size of what its install fetches:
 the snap and the int8 model, or, with an NVIDIA GPU, the CUDA runtime and the
 fp32 model, said as "up to" because the install hook falls back to the CPU
@@ -150,8 +190,11 @@ model, and mounts the backend into Myna's namespace only as the change's
 last task. A daemon restarted before then never finds the backend, although
 it looks for it at every utterance. So setup first waits, spinner spinning,
 until snapd's `/v2/changes?select=in-progress`, read as the user, lists no
-change on Myna or a discovered backend, then decides on a fresh discovery. After 15 min it gives up with the
-error dialog, naming the change, and Next retries. Otherwise it runs the active-backend switch,
+unfinished change on Myna or a discovered backend, then decides on a fresh discovery. After 15 min it gives up with the
+error dialog, naming the change, and Next retries. `snap_changes::parse_changes`
+drops every ready change: that listing also returns a held one, `Hold` and
+ready with no tasks, such as the auto-refresh of a snap removed while its
+refresh was inhibited (stonking, 2026-09-30), and setup sat under it. Otherwise it runs the active-backend switch,
 which costs one polkit prompt: snapd's `manage-interfaces` action is
 `auth_admin_keep`, and the restart goes through `systemctl --user`, which needs
 none.
@@ -164,7 +207,9 @@ install downloads the GPU components rather than the int8 model.
 
 A spinner alone read as a hang, so beside it a line says what setup is
 doing as it starts doing it (`active_backend::SetupStage`): checking, the
-download in bytes or snapd's summary of the change it waits on, connecting
+download in bytes or "Waiting for other software changes to finish…"
+(snapd's summary of the change goes to the log only: it is English and
+names snapd's internals), connecting
 the model, with a reminder to authorize it since polkit's dialog can open
 behind the wizard, and starting dictation. Closing the wizard stops a setup
 still waiting on snapd, so nothing is connected or restarted behind it.
@@ -226,6 +271,9 @@ and so does each poll while a component is missing: a `snap list`, a
 discovery, one read of snapd's socket for the flag, one `GetExtensionInfo`
 call to gnome-shell (at most 2 s when it does not answer), a stat of each
 extension directory and a scan of `/sys/bus/pci/devices` for an NVIDIA GPU.
+While a snap row is missing and the flag is on, each re-assessment also
+reads snapd's in-progress changes once, to follow an install started
+elsewhere. An install reads its change once a second until snapd is done.
 Setting up reads snapd's changes over its socket once, and again every 2 s
 while snapd is still changing Myna or a backend, plus one discovery after
 such a wait.
