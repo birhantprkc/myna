@@ -24,10 +24,20 @@ template $ShortcutDialog: Adw.Dialog {
       margin-bottom: 24;
 
       Gtk.Label {
-        label: _("Press the keys for dictation, for example Super+J.");
+        label: _("Press the keys for dictation, for example:");
         justify: center;
         wrap: true;
         max-width-chars: 40;
+      }
+
+      Gtk.Box example {
+        halign: center;
+        spacing: 8;
+        margin-bottom: 12;
+
+        styles [
+          "dim-label",
+        ]
       }
 
       Gtk.Label refusal {

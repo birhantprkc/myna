@@ -2,8 +2,8 @@
 //!
 //! Thin, like [`crate::backend_ui`]: [`crate::onboarding`] decides what is
 //! missing, how to install it, and when the flow may advance; this module
-//! renders that, connects and restarts what the user installed, and hands
-//! control back to the settings window when the user is done.
+//! renders that, connects and restarts what the user installed, and closes
+//! Myna Settings when the user is done.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -112,17 +112,11 @@ pub struct OnboardingUi {
     poll: RefCell<Option<glib::SourceId>>,
     beat_length: Cell<Duration>,
     beat: RefCell<Option<glib::SourceId>>,
-    finished: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl OnboardingUi {
     /// Build and present the wizard against the real snapd and snap ports.
-    /// `finished` runs once, when the user completes or closes the flow.
-    pub fn present(
-        application: &adw::Application,
-        initial: Vec<Component>,
-        finished: Box<dyn Fn()>,
-    ) -> Rc<Self> {
+    pub fn present(application: &adw::Application, initial: Vec<Component>) -> Rc<Self> {
         let runner = Arc::new(GioCommandRunner);
         Self::present_with_ports(
             application,
@@ -131,7 +125,6 @@ impl OnboardingUi {
             Rc::new(PkexecSystemConfigurator::new(runner)),
             Rc::new(GnomeShellExtensions::new()),
             None,
-            finished,
         )
     }
 
@@ -144,7 +137,6 @@ impl OnboardingUi {
         configurator: Rc<dyn SystemConfigurator>,
         extensions: Rc<dyn ShellExtensions>,
         parent: Option<&gtk::Window>,
-        finished: Box<dyn Fn()>,
     ) -> Rc<Self> {
         let window = ui::OnboardingWindow::new(application);
         if let Some(parent) = parent {
@@ -217,7 +209,6 @@ impl OnboardingUi {
             poll: RefCell::new(None),
             beat_length: Cell::new(BEAT),
             beat: RefCell::new(None),
-            finished: RefCell::new(Some(finished)),
         });
 
         ui.shortcut.connect_changed(Box::new({
@@ -680,10 +671,7 @@ impl OnboardingUi {
         match self.step.get().next() {
             Some(step) if self.step.get() == Step::Components => self.finish_setup(step, false),
             Some(step) => self.window.navigation().push_by_tag(step_name(step)),
-            None => {
-                self.notify_finished();
-                self.window.close();
-            }
+            None => self.close_application(),
         }
     }
 
@@ -821,9 +809,18 @@ impl OnboardingUi {
         self.shortcut_page.shortcut_button()
     }
 
-    fn notify_finished(self: &Rc<Self>) {
-        if let Some(finished) = self.finished.borrow_mut().take() {
-            finished();
+    /// Done closes Myna Settings, the settings window the wizard may have
+    /// been opened from included. Closing, not quitting, so each window's
+    /// close handler still stops what it runs.
+    fn close_application(&self) {
+        let windows = self
+            .window
+            .application()
+            .map(|application| application.windows())
+            .unwrap_or_else(|| vec![self.window.clone().upcast()]);
+        self.window.close();
+        for window in windows {
+            window.close();
         }
     }
 
@@ -844,13 +841,21 @@ impl OnboardingUi {
         let forward = self.window.forward_button();
         if step.next().is_some() {
             forward.set_label(&gettextrs::gettext("Next"));
+            forward.update_property(&[gtk::accessible::Property::Description(
+                &gettextrs::gettext("Continue to the next onboarding step."),
+            )]);
             forward.remove_css_class("suggested-action");
+            forward.remove_css_class("success-action");
             forward.add_css_class("outlined");
         } else {
             forward.set_label(&gettextrs::gettext("Done"));
+            forward.update_property(&[gtk::accessible::Property::Description(
+                &gettextrs::gettext("Close Myna Settings."),
+            )]);
             // Done gives way to setting up the key while there is none.
             let main = !self.shortcut.needs_key();
             set_class(&forward, "suggested-action", main);
+            set_class(&forward, "success-action", main);
             set_class(&forward, "outlined", !main);
         }
         forward.set_sensitive(

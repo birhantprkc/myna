@@ -37,8 +37,8 @@ fn every_top_level_template_instantiates_headlessly_when_enabled() {
         assert!(stdout.contains(name), "{name} was not instantiated");
     }
     assert!(
-        stdout.contains("onboarding-shortcut: the page holds its place when a key is bound"),
-        "the shortcut step's column changed height"
+        stdout.contains("onboarding-shortcut: no room held for absent key caps"),
+        "the shortcut step holds room for key caps it does not show"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     for offender in ["Failed to parse markup", "unknown tag", "Pango-WARNING"] {
@@ -243,7 +243,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-shortcut: waits for the daemon",
         "onboarding-shortcut: button outlined",
         "onboarding-chrome: shortcut untitled, back",
-        "onboarding-finish: opened settings",
+        "onboarding-finish: Done closes Myna Settings",
     ] {
         assert!(stdout.contains(line), "onboarding probe missing: {line}");
     }
@@ -315,6 +315,8 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
     for line in [
         "shortcut-unbound: offered set-up",
         "shortcut-bound: Super+J",
+        "shortcut-dialog: example is the default key",
+        "shortcut-dialog: example dimmed",
         "shortcut-changed: Ctrl+Alt+D",
         "shortcut-special-key: Calculator",
         "shortcut-reserved: Super+O refused",
@@ -370,8 +372,10 @@ fn onboarding_installs_the_default_key_only_under_control_activation() {
         "onboarding-keys: set up leads while no key is bound",
         "onboarding-keys: Super+J under the portal",
         "onboarding-keys: Done leads once a key is bound",
+        "onboarding-keys: follows a portal rebind",
         "onboarding-default: Super+J without a click",
         "onboarding-keys: Super+J under control",
+        "onboarding-keys: follows a desktop rebind",
         "onboarding-restart: waits for the daemon's name",
     ] {
         assert!(

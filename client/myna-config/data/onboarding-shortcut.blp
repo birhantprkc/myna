@@ -27,39 +27,11 @@ template $OnboardingShortcut: Adw.Bin {
           margin-bottom: 32;
         }
 
-        // As high as a row of key caps even with none, so the page stays put
-        // when the desktop grants a key.
-        Gtk.Stack key_slot {
-          vhomogeneous: true;
-          hhomogeneous: false;
+        Gtk.Box shortcut_box {
+          halign: center;
+          spacing: 8;
           margin-bottom: 24;
-
-          Gtk.StackPage {
-            name: "none";
-
-            child: Gtk.Box {};
-          }
-
-          Gtk.StackPage {
-            name: "keys";
-
-            child: Gtk.Box shortcut_box {
-              halign: center;
-              spacing: 8;
-            };
-          }
-
-          Gtk.StackPage {
-            name: "sample";
-
-            child: Gtk.Label {
-              label: "J";
-
-              styles [
-                "keycap",
-              ]
-            };
-          }
+          visible: false;
         }
 
         Gtk.Button shortcut_button {

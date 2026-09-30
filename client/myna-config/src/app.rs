@@ -362,7 +362,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(ProbeMachine::new()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
-            Box::new(|| {}),
         );
         ui.window()
     };
@@ -617,7 +616,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Disabled),
             None,
-            Box::new(|| {}),
         );
         ui.window()
     };
@@ -667,7 +665,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.set_beat(Duration::from_millis(300));
@@ -780,7 +777,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.window()
@@ -820,7 +816,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.set_beat(Duration::from_secs(60));
@@ -863,7 +858,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Unavailable),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.set_beat(Duration::from_millis(50));
@@ -954,7 +948,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             extensions.clone(),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.window()
@@ -1016,7 +1009,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.window()
@@ -1093,7 +1085,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(ProbeMachine::new()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
-            Box::new(|| {}),
         );
         ui.window()
     };
@@ -1140,7 +1131,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
-            Box::new(|| {}),
         );
         ui.window()
     };
@@ -1209,8 +1199,8 @@ fn onboarding_probe() -> glib::ExitCode {
     window.close();
     settle_gtk();
 
-    // A machine with everything installed walks to the end, and
-    // finishing opens the settings window, as it does in production.
+    // A machine with everything installed walks to the end, and Done
+    // closes the application.
     let installed = [crate::diagnostics::InstalledSnap {
         name: crate::onboarding::MYNA_SNAP.to_owned(),
         version: "1".to_owned(),
@@ -1230,10 +1220,6 @@ fn onboarding_probe() -> glib::ExitCode {
             Rc::new(machine.clone()),
             ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
-            Box::new({
-                let application = application.clone();
-                move || build_settings_window(&application)
-            }),
         );
         (ui.window(), ui.shortcut_button())
     };
@@ -1407,9 +1393,10 @@ fn onboarding_probe() -> glib::ExitCode {
     println!("onboarding-shortcut: button outlined");
     if forward.label().as_deref() != Some(gettextrs::gettext("Done").as_str())
         || !forward.has_css_class("suggested-action")
+        || !forward.has_css_class("success-action")
         || forward.has_css_class("outlined")
     {
-        eprintln!("the last step does not finish with a suggested Done");
+        eprintln!("the last step does not finish with a green suggested Done");
         return glib::ExitCode::FAILURE;
     }
     if header(&window) != Some(true) {
@@ -1418,31 +1405,23 @@ fn onboarding_probe() -> glib::ExitCode {
     }
     println!("onboarding-chrome: shortcut untitled, back");
 
+    // Done closes Myna Settings, whatever else it had open.
+    let settings = gtk::ApplicationWindow::new(&application);
+    settings.present();
     forward.emit_clicked();
     settle_gtk();
-    let Some(settings) = settings_window(&application) else {
-        eprintln!("finishing the wizard did not open the settings window");
-        return glib::ExitCode::FAILURE;
-    };
-    if window.is_visible() {
-        eprintln!("finishing the wizard left it open");
+    let open = application.windows();
+    if !open.is_empty() {
+        eprintln!("Done left {} windows open", open.len());
         return glib::ExitCode::FAILURE;
     }
-    // Done keeps the application running on the settings window alone.
-    let windows = application.windows();
-    if windows.len() != 1 || windows[0] != *settings.upcast_ref::<gtk::Window>() {
-        eprintln!("finishing the wizard left {} windows open", windows.len());
-        return glib::ExitCode::FAILURE;
-    }
-    println!("onboarding-finish: opened settings");
-    settings.close();
-    settle_gtk();
+    println!("onboarding-finish: Done closes Myna Settings");
     glib::ExitCode::SUCCESS
 }
 
-/// The shortcut step's column is centred, so a column that grew when the
-/// portal's grant lands would move the title under the user's eyes.
-fn shortcut_page_holds_its_place(page: &ui::OnboardingShortcut) -> Result<(), String> {
+/// With no key the caps leave no room behind: the sentence leads straight to
+/// the button, and the column grows by exactly the caps once a key lands.
+fn shortcut_page_closes_up(page: &ui::OnboardingShortcut) -> Result<(), String> {
     use crate::shortcut::{ShortcutPath, ShortcutState};
     use crate::shortcut_ui::{fill_keys, onboarding_description, Surface};
     let keys = page.shortcut_box();
@@ -1457,15 +1436,19 @@ fn shortcut_page_holds_its_place(page: &ui::OnboardingShortcut) -> Result<(), St
             fill_keys(&keys, trigger, Surface::Onboarding);
         }
         keys.set_visible(matches!(state, ShortcutState::Bound(_)));
-        page.description()
-            .set_label(&onboarding_description(state, ShortcutPath::Portal));
         column.measure(gtk::Orientation::Vertical, 540).1
     };
-    let bound = height(&ShortcutState::Bound("<Super>j".to_owned()));
+    // One sentence for both, so only the caps differ.
+    let bound = ShortcutState::Bound("<Super>j".to_owned());
+    page.description()
+        .set_label(&onboarding_description(&bound, ShortcutPath::Portal));
+    let bound = height(&bound);
+    let caps = keys.measure(gtk::Orientation::Vertical, -1).1;
     let unbound = height(&ShortcutState::Unbound);
-    if bound != unbound {
+    if bound - unbound < caps {
         return Err(format!(
-            "the shortcut step's column is {unbound} px high unbound and {bound} px bound"
+            "the shortcut step's column is {unbound} px high unbound and {bound} px bound, \
+             with {caps} px of key caps"
         ));
     }
     Ok(())
@@ -1556,11 +1539,11 @@ fn template_probe() -> glib::ExitCode {
         shortcut.shortcut_button(),
     );
     println!("OnboardingShortcut");
-    if let Err(error) = shortcut_page_holds_its_place(&shortcut) {
+    if let Err(error) = shortcut_page_closes_up(&shortcut) {
         eprintln!("{error}");
         return glib::ExitCode::FAILURE;
     }
-    println!("onboarding-shortcut: the page holds its place when a key is bound");
+    println!("onboarding-shortcut: no room held for absent key caps");
     let onboarding = ui::OnboardingWindow::new(&application);
     let _ = (
         onboarding.overlay(),
@@ -1638,12 +1621,7 @@ fn build_window(application: &adw::Application) {
         )
         .await;
         if needs_onboarding(&components) {
-            let settings_application = application.clone();
-            crate::onboarding_ui::OnboardingUi::present(
-                &application,
-                components,
-                Box::new(move || build_settings_window(&settings_application)),
-            );
+            crate::onboarding_ui::OnboardingUi::present(&application, components);
         } else {
             build_settings_window(&application);
         }
@@ -1651,20 +1629,7 @@ fn build_window(application: &adw::Application) {
     });
 }
 
-fn settings_window(application: &adw::Application) -> Option<ui::MainWindow> {
-    application
-        .windows()
-        .into_iter()
-        .find_map(|window| window.downcast::<ui::MainWindow>().ok())
-}
-
 fn build_settings_window(application: &adw::Application) {
-    // Not `active_window`: when the wizard finishes, that is the wizard.
-    if let Some(window) = settings_window(application) {
-        window.present();
-        return;
-    }
-
     let window = ui::MainWindow::new(application);
     let general_nav = window.general_nav();
     let backend_nav = window.backend_nav();
@@ -1777,6 +1742,15 @@ pub(crate) fn install_appearance_policy(window: &gtk::Widget) {
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+    if gtk::check_version(4, 16, 0).is_none() {
+        let modern = gtk::CssProvider::new();
+        modern.load_from_resource("/com/canonical/Myna/Config/ui/appearance-gtk416.css");
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &modern,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+        );
+    }
     // The application id's resource path covers this only under that id, and
     // the probes run under others.
     let icons = gtk::IconTheme::for_display(&display);
@@ -2010,7 +1984,6 @@ fn onboarding_control_probe() -> glib::ExitCode {
                 Rc::new(machine),
                 ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
                 None,
-                Box::new(|| {}),
             );
             (ui.window(), ui.shortcut_button())
         };
@@ -2135,6 +2108,40 @@ fn onboarding_control_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-keys: Done leads once a key is bound");
+    // A rebind in the desktop's settings reaches the page as the daemon's
+    // property changing.
+    shortcut.replace("Press <Control><Alt>k".to_owned());
+    let changed =
+        std::collections::HashMap::from([("Shortcut".to_owned(), shortcut.borrow().to_variant())]);
+    let _ = connection.emit_signal(
+        None,
+        "/com/canonical/Myna/Dictation",
+        "org.freedesktop.DBus.Properties",
+        "PropertiesChanged",
+        Some(
+            &(
+                "com.canonical.Myna.Dictation",
+                changed,
+                Vec::<String>::new(),
+            )
+                .to_variant(),
+        ),
+    );
+    for _ in 0..20 {
+        if keycaps(window.upcast_ref()) == ["Ctrl", "Alt", "K"] {
+            break;
+        }
+        settle_gtk();
+    }
+    shortcut.replace(String::new());
+    if keycaps(window.upcast_ref()) != ["Ctrl", "Alt", "K"] {
+        eprintln!(
+            "a rebind under the portal left the caps {:?}",
+            keycaps(window.upcast_ref())
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-keys: follows a portal rebind");
     window.close();
 
     let (window, button) = walk("control");
@@ -2165,7 +2172,25 @@ fn onboarding_control_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-keys: Super+J under control");
+    // Myna Settings' own row and GNOME's keyboard settings both rewrite the
+    // desktop shortcut; the page follows either.
+    let _ = desktop.install(&dictation, &toggle, "<Super>k");
+    for _ in 0..20 {
+        if keycaps(window.upcast_ref()) == ["Super", "K"] {
+            break;
+        }
+        settle_gtk();
+    }
+    if keycaps(window.upcast_ref()) != ["Super", "K"] {
+        eprintln!(
+            "a new desktop key left the caps {:?}",
+            keycaps(window.upcast_ref())
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-keys: follows a desktop rebind");
     window.close();
+    let _ = desktop.install(&dictation, &toggle, "");
     settle_gtk();
 
     // The restarted daemon takes a moment to claim its name; moving on
@@ -2204,7 +2229,6 @@ fn onboarding_control_probe() -> glib::ExitCode {
         Rc::new(ProbeMachine::new()),
         ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
         None,
-        Box::new(|| {}),
     )
     .window();
     settle_gtk();
@@ -2458,6 +2482,20 @@ fn shortcut_probe(control: bool) -> glib::ExitCode {
             eprintln!("the capture dialog does not hold keyboard focus");
             return glib::ExitCode::FAILURE;
         }
+        // The example is the default key, drawn as the onboarding step draws it.
+        if keycaps(dialog.upcast_ref()) != ["Super", "J"] {
+            eprintln!(
+                "the capture dialog's example reads {:?}",
+                keycaps(dialog.upcast_ref())
+            );
+            return glib::ExitCode::FAILURE;
+        }
+        println!("shortcut-dialog: example is the default key");
+        if !keycaps_dimmed(dialog.upcast_ref()) {
+            eprintln!("the capture dialog's example caps read as a captured key");
+            return glib::ExitCode::FAILURE;
+        }
+        println!("shortcut-dialog: example dimmed");
         dialog.press(
             gtk::gdk::Key::d,
             gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK,
@@ -3908,7 +3946,6 @@ fn probe_extension_enable(application: &adw::Application) -> Result<(), String> 
             Rc::new(machine.clone()),
             extensions.clone(),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.set_beat(Duration::from_millis(50));
@@ -4067,7 +4104,6 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
             Rc::new(machine.clone()),
             extensions.clone(),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.set_beat(Duration::from_secs(60));
@@ -4283,7 +4319,6 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
             Rc::new(machine.clone()),
             ProbeExtensions::new(ExtensionState::Unavailable),
             None,
-            Box::new(|| {}),
         );
         ui.set_poll_interval(Duration::from_millis(50));
         ui.window()
@@ -4330,7 +4365,6 @@ fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
         Rc::new(machine.clone()),
         ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
         None,
-        Box::new(|| {}),
     )
     .window();
     settle_gtk();
@@ -4560,7 +4594,6 @@ fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
         Rc::new(machine.clone()),
         ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
         None,
-        Box::new(|| {}),
     )
     .window();
     settle_gtk();
@@ -4743,6 +4776,24 @@ fn keycaps(root: &gtk::Widget) -> Vec<String> {
         child = widget.next_sibling();
     }
     caps
+}
+
+/// Whether every mapped key cap under `root` sits in a dimmed container.
+fn keycaps_dimmed(root: &gtk::Widget) -> bool {
+    if root.is_mapped() && root.has_css_class("keycap") {
+        return false;
+    }
+    if root.has_css_class("dim-label") {
+        return true;
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if !keycaps_dimmed(&widget) {
+            return false;
+        }
+        child = widget.next_sibling();
+    }
+    true
 }
 
 /// Whether the onboarding footer says everything is installed: a success

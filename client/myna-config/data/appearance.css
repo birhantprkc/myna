@@ -7,13 +7,13 @@
   outline-offset: -2px;
 }
 
-/* Keyboard caps on the onboarding shortcut step, as the design: the thick
-   bottom border is the cap's shadow. */
+/* Keyboard caps on the onboarding shortcut step and the capture dialog, as
+   the design: the thick bottom border is the cap's shadow. */
 .keycap {
   background: alpha(currentColor, 0.08);
   border: 1px solid alpha(currentColor, 0.2);
   border-bottom-width: 4px;
-  border-radius: 2px;
+  border-radius: 6px;
   padding: 8px 16px;
   min-width: 11px;
   font-size: 20px;
@@ -37,6 +37,13 @@ button.outlined:hover {
 
 button.outlined:active {
   background-color: alpha(currentColor, 0.16);
+}
+
+/* Onboarding's Done, green as the design: finishing, not the accent.
+   appearance-gtk416.css darkens a pale green where GTK can. */
+button.suggested-action.success-action {
+  background-color: @success_bg_color;
+  color: @success_fg_color;
 }
 
 /* Onboarding step titles: larger than body text, but regular weight. */

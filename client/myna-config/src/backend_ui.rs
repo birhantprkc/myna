@@ -1059,7 +1059,6 @@ impl BackendUi {
                 configurator,
                 extensions,
                 Some(window.upcast_ref()),
-                Box::new(|| {}),
             );
             wizard.window().connect_close_request(move |_| {
                 action.set_enabled(true);

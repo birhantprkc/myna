@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/com/canonical/Myna/Config/ui">
     <file>appearance.css</file>
+    <file>appearance-gtk416.css</file>
     <file>backend-page.ui</file>
     <file>diagnostics-page.ui</file>
     <file>install-models-dialog.ui</file>

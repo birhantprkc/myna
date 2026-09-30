@@ -4,12 +4,17 @@ The settings application ships separately from the `myna` snap, so it can be
 opened on a machine where dictation is not installed at all. When that is the
 case it opens a three-step wizard instead of the settings window.
 
-Every step leaves through one footer button: an outlined Next, and a suggested
-Done on the last step. The window opens at the design's 800x600, and every
-step's header is flat and untitled; each step after the first carries a back
-arrow to the step before it. Done closes the wizard onto the settings window.
-The design quits the application instead; the window stays because it is where the key and the
-backend are changed later.
+Every step leaves through one footer button: an outlined Next, and a green
+suggested Done on the last step (`success-action`, libadwaita's success colour:
+the design sets finishing apart from the accent). Upstream libadwaita's light
+success green is too pale for white text (2.3:1), so from GTK 4.16 its oklab
+lightness is capped at 0.54 (about 4.5:1); Yaru's greens are darker and pass
+unchanged, and Noble's GTK 4.14 keeps the theme's colour. The window opens at the
+design's 800x600, and every step's header is flat and untitled; each step after
+the first carries a back arrow to the step before it. Done closes Myna
+Settings, as the design says: the wizard and, when it was opened from the menu,
+the settings window under it. It closes each window rather than quitting, so
+their close handlers still stop what they run.
 The welcome step loads the application icon straight from the application's
 own resources, not by name through the icon theme: a stale icon cache that
 still lists a deleted hicolor copy made the theme fail without falling back.
@@ -305,8 +310,9 @@ resolute, both ways between the old and new name).
 The dialog belongs to the daemon, which owns the portal session, and is raised
 with no parent window: the wizard is another process with no handle to lend
 it. GNOME still centres it over the focused wizard and gives it focus
-(resolute, 2026-09-30). Until a key lands, the step keeps the key caps' height
-free, so the page does not move when it does.
+(resolute, 2026-09-30). Until a key lands the step holds no room for key caps,
+so the sentence leads straight to Set up shortcut; the centred column grows by
+one row of caps when a key lands, mostly while the portal's dialog covers it.
 
 **Control (Noble).** The key is a GNOME custom shortcut to
 `/snap/bin/myna.toggle`, the entry `myna.install-shortcut` writes; this
@@ -320,8 +326,11 @@ shortcut" cannot be silent there. A dialog dismissed there is the user's
 answer and is not reported, unlike one raised by the step's button. While
 no key is bound, Set up shortcut is the step's suggested action and Done is
 outlined, so finishing with nothing to trigger dictation is not the obvious
-path. Set Up installs Super+J;
-Change captures a key in a dialog that:
+path. The key caps follow the key live on either path: the daemon's
+`Shortcut` property under the portal, the custom shortcut's GSettings under
+control, so a change in the settings window or in GNOME Settings shows at once. Set Up installs Super+J;
+Change captures a key in a dialog that shows the default key as key caps for
+its example and:
 
 - takes a chord with Ctrl, Alt or Super, or a lone function or media key, so
   typing is never hijacked; media keys are stored as `XF86<Name>`, the only

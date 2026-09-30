@@ -17,6 +17,8 @@ mod imp {
     #[template(resource = "/com/canonical/Myna/Config/ui/shortcut-dialog.ui")]
     pub struct ShortcutDialog {
         #[template_child]
+        pub example: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
         pub refusal: gtk::TemplateChild<gtk::Label>,
         pub captured: RefCell<Option<Captured>>,
     }
@@ -39,6 +41,11 @@ mod imp {
     impl ObjectImpl for ShortcutDialog {
         fn constructed(&self) {
             self.parent_constructed();
+            crate::shortcut_ui::fill_keys(
+                &self.example,
+                crate::shortcut::DEFAULT_ACCELERATOR,
+                crate::shortcut_ui::Surface::Onboarding,
+            );
             let keys = gtk::EventControllerKey::new();
             keys.set_propagation_phase(gtk::PropagationPhase::Capture);
             let dialog = self.obj().downgrade();
