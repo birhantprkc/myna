@@ -225,7 +225,11 @@ impl OnboardingUi {
             }
         });
 
-        for id in [ComponentId::Myna, ComponentId::Model] {
+        for id in [
+            ComponentId::Myna,
+            ComponentId::Model,
+            ComponentId::ShellExtension,
+        ] {
             let Some(row) = components_page.row(id) else {
                 continue;
             };
@@ -233,7 +237,10 @@ impl OnboardingUi {
                 let ui = Rc::downgrade(&ui);
                 move |_| {
                     if let Some(ui) = ui.upgrade() {
-                        ui.install(id);
+                        match id {
+                            ComponentId::ShellExtension => ui.enable_extension(),
+                            _ => ui.install(id),
+                        }
                     }
                 }
             });
@@ -412,9 +419,7 @@ impl OnboardingUi {
         let Some((snap, expected)) = installs(id, &self.offer.get()) else {
             return;
         };
-        if !self.installs.borrow().is_empty()
-            || row_action_of(&self.shown(), id) != Some(RowAction::Install)
-        {
+        if self.snap_installing() || row_action_of(&self.shown(), id) != Some(RowAction::Install) {
             return;
         }
         self.installs
@@ -456,6 +461,58 @@ impl OnboardingUi {
                     ui.log(&format!("install: {snap} failed: {error}"));
                     ui.installs.borrow_mut().remove(&id);
                     ui.announce_failure(install_failed(id), &error);
+                }
+            }
+            ui.render();
+        });
+    }
+
+    /// Whether snapd is installing a row's snap. Enabling the extension
+    /// asks gnome-shell, not snapd, so it does not count.
+    fn snap_installing(&self) -> bool {
+        self.installs
+            .borrow()
+            .keys()
+            .any(|id| *id != ComponentId::ShellExtension)
+    }
+
+    /// Have gnome-shell enable the packaged extension, beside any snapd
+    /// install: it asks no prompt. It runs at once, so no re-login is asked
+    /// for; a failure reverts with a toast whose Details name the call.
+    fn enable_extension(self: &Rc<Self>) {
+        let id = ComponentId::ShellExtension;
+        if self.installs.borrow().contains_key(&id)
+            || row_action_of(&self.shown(), id) != Some(RowAction::Enable)
+        {
+            return;
+        }
+        self.installs
+            .borrow_mut()
+            .insert(id, Install::Running(None));
+        self.epoch.set(self.epoch.get() + 1);
+        self.log("extension: enabling");
+        self.render();
+        let ui = Rc::downgrade(self);
+        let extensions = self.extensions.clone();
+        glib::spawn_future_local(async move {
+            let outcome = extensions.enable_extension(SHELL_EXTENSION_UUID).await;
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.epoch.set(ui.epoch.get() + 1);
+            match outcome {
+                Ok(()) => {
+                    ui.log("extension: enabled");
+                    ui.installs.borrow_mut().insert(id, Install::Confirming);
+                    ui.refresh_assessment();
+                }
+                Err(error) => {
+                    ui.log(&format!("extension: enabling failed: {error}"));
+                    ui.installs.borrow_mut().remove(&id);
+                    ui.announce_failure(
+                        gettextrs::gettext("Enabling the shell extension failed"),
+                        &error,
+                    );
                 }
             }
             ui.render();
@@ -780,6 +837,7 @@ impl OnboardingUi {
         flag_row.update_state(&[gtk::accessible::State::Busy(pending)]);
         page.component_list()
             .set_sensitive(unlocked(ComponentId::Myna, components));
+        let snap_installing = self.snap_installing();
         let installs = self.installs.borrow();
         for component in components {
             let Some(row) = page.row(component.id) else {
@@ -794,20 +852,22 @@ impl OnboardingUi {
             let install = installs.get(&component.id).copied();
             row.row
                 .update_state(&[gtk::accessible::State::Busy(install.is_some())]);
-            if let Some(progress) = &row.installing {
-                progress.container.set_visible(install.is_some());
-                progress.spinner.set_spinning(install.is_some());
-                if let Some(install) = install {
-                    progress.label.set_label(&install_text(install));
-                }
+            let progress = &row.installing;
+            progress.container.set_visible(install.is_some());
+            progress.spinner.set_spinning(install.is_some());
+            if let Some(install) = install {
+                progress
+                    .label
+                    .set_label(&install_text(component.id, install));
             }
             if install.is_some() {
                 row.installed.set_visible(false);
                 row.button.set_visible(false);
                 continue;
             }
-            // One install at a time: snapd's prompt covers one request.
-            row.button.set_sensitive(installs.is_empty());
+            // One snapd install at a time: its prompt covers one request.
+            row.button
+                .set_sensitive(component.id == ComponentId::ShellExtension || !snap_installing);
             row.installed.set_visible(action == RowAction::Installed);
             let label = match action {
                 RowAction::Install => {
@@ -852,6 +912,9 @@ impl OnboardingUi {
             ),
             (_, RowAction::Unavailable(Unavailable::ShadowedByUserCopy)) => gettextrs::gettext(
                 "A copy in ~/.local/share/gnome-shell/extensions hides it. Remove that copy, then log out and back in.",
+            ),
+            (_, RowAction::Unavailable(Unavailable::ExtensionsOff)) => gettextrs::gettext(
+                "Extensions are turned off. Turn them on in the Extensions app to use it. Until then, Dictation shows its status in notifications.",
             ),
             (_, RowAction::Unavailable(Unavailable::NotInstalled)) => gettextrs::gettext(
                 "Not available on this system. Dictation still works and shows its status in notifications.",
@@ -927,8 +990,9 @@ fn progress_reporter(ui: std::rc::Weak<OnboardingUi>, id: ComponentId) -> impl F
 }
 
 /// An install as its row says it, beside the spinner.
-fn install_text(install: Install) -> String {
+fn install_text(id: ComponentId, install: Install) -> String {
     match install {
+        _ if id == ComponentId::ShellExtension => gettextrs::gettext("Enabling…"),
         Install::Running(Some(percent)) => {
             // TRANSLATORS: {percent} is how much of the download has arrived, a number from 0 to 100.
             let frame = gettextrs::gettext("Installing {percent}%");
@@ -947,13 +1011,11 @@ fn install_failed(id: ComponentId) -> String {
 }
 
 /// The Install button's name to assistive technology: three rows read
-/// "Install" alike.
+/// "Install" alike. Only the snaps' rows offer Install.
 fn install_label(id: ComponentId) -> String {
     match id {
-        ComponentId::Myna => gettextrs::gettext("Install the Dictation app"),
         ComponentId::Model => gettextrs::gettext("Install the speech-to-text model"),
-        ComponentId::ShellExtension => gettextrs::gettext("Install the shell extension"),
-        ComponentId::UserDaemons => gettextrs::gettext("Enable user daemons experimental support"),
+        _ => gettextrs::gettext("Install the Dictation app"),
     }
 }
 

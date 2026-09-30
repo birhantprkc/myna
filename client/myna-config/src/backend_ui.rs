@@ -2009,9 +2009,9 @@ pub(crate) fn system_error_details(error: &crate::ports::SystemConfiguratorError
     failure_details(error.step(), message)
 }
 
-/// Name the failed step as what it was, a command or a snapd request, then
-/// the message. Every field but the snapd request flows through
-/// [`diagnostics::redact_text`].
+/// Name the failed step as what it was, a command, a snapd request or a
+/// D-Bus call, then the message. Every field but the request and the call
+/// flows through [`diagnostics::redact_text`].
 fn failure_details(step: Option<&crate::ports::FailedStep>, message: &str) -> String {
     let mut out = String::new();
     match step {
@@ -2064,6 +2064,12 @@ fn failure_details(step: Option<&crate::ports::FailedStep>, message: &str) -> St
                 out.push_str(&status.to_string());
                 out.push('\n');
             }
+        }
+        Some(crate::ports::FailedStep::DBus { call }) => {
+            out.push_str(&gettextrs::gettext("D-Bus call:"));
+            out.push(' ');
+            out.push_str(call);
+            out.push('\n');
         }
         None => {}
     }

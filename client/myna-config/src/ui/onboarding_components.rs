@@ -50,6 +50,12 @@ mod imp {
         pub extension_button: gtk::TemplateChild<gtk::Button>,
         #[template_child]
         pub extension_installed: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
+        pub extension_installing: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
+        pub extension_spinner: gtk::TemplateChild<gtk::Spinner>,
+        #[template_child]
+        pub extension_progress: gtk::TemplateChild<gtk::Label>,
     }
 
     #[glib::object_subclass]
@@ -85,12 +91,12 @@ pub struct ComponentRow {
     pub row: adw::ActionRow,
     pub button: gtk::Button,
     pub installed: gtk::Box,
-    /// What replaces the button while snapd installs it; the extension is
-    /// not installed through snapd.
-    pub installing: Option<RowProgress>,
+    /// What replaces the button while snapd installs it, or gnome-shell
+    /// enables the extension.
+    pub installing: RowProgress,
 }
 
-/// A spinner and how far the install has come.
+/// A spinner and how far the install or enable has come.
 #[derive(Clone)]
 pub struct RowProgress {
     pub container: gtk::Box,
@@ -126,11 +132,11 @@ impl OnboardingComponents {
         let progress = |container: &gtk::TemplateChild<gtk::Box>,
                         spinner: &gtk::TemplateChild<gtk::Spinner>,
                         label: &gtk::TemplateChild<gtk::Label>| {
-            Some(RowProgress {
+            RowProgress {
                 container: container.get(),
                 spinner: spinner.get(),
                 label: label.get(),
-            })
+            }
         };
         let (row, button, installed, installing) = match id {
             ComponentId::UserDaemons => return None,
@@ -154,7 +160,11 @@ impl OnboardingComponents {
                 &imp.extension_row,
                 &imp.extension_button,
                 &imp.extension_installed,
-                None,
+                progress(
+                    &imp.extension_installing,
+                    &imp.extension_spinner,
+                    &imp.extension_progress,
+                ),
             ),
         };
         Some(ComponentRow {

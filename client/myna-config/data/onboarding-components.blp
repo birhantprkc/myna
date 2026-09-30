@@ -176,6 +176,18 @@ template $OnboardingComponents: Adw.Bin {
             }
 
             [suffix]
+            Gtk.Box extension_installing {
+              spacing: 8;
+              visible: false;
+
+              Gtk.Spinner extension_spinner {
+                valign: center;
+              }
+
+              Gtk.Label extension_progress {}
+            }
+
+            [suffix]
             Gtk.Box extension_installed {
               spacing: 8;
               visible: false;

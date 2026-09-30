@@ -79,6 +79,8 @@ pub enum Unavailable {
     /// Hidden by a copy in the user's data dir, which gnome-shell loads
     /// first; a re-login does not help, removing that copy does.
     ShadowedByUserCopy,
+    /// The user turned all extensions off (the Extensions app's switch).
+    ExtensionsOff,
 }
 
 /// One assessed component.
@@ -105,7 +107,10 @@ pub enum ExtensionState {
     NeedsRelogin,
     /// A system copy is on disk, and a user copy of the same uuid hides it.
     ShadowedByUserCopy,
-    /// No system copy, or one gnome-shell cannot run.
+    /// A system copy gnome-shell will not run while extensions are off.
+    TurnedOff,
+    /// No system copy, or one gnome-shell cannot run or the user may not
+    /// change.
     #[default]
     Unavailable,
 }
@@ -116,7 +121,10 @@ pub enum ExtensionRun {
     Enabled,
     /// Disabled, or initialized and never enabled.
     Disabled,
-    /// Errored, out of date, or uninstalled: enabling it would not run it.
+    /// Not running because the user turned all extensions off.
+    TurnedOff,
+    /// Errored, out of date, uninstalled or locked down: enabling it would
+    /// not run it.
     Broken,
 }
 
@@ -152,6 +160,10 @@ pub fn extension_state(
             system: true,
             run: ExtensionRun::Disabled,
         }) => ExtensionState::Disabled,
+        Some(ExtensionInfo {
+            system: true,
+            run: ExtensionRun::TurnedOff,
+        }) => ExtensionState::TurnedOff,
         Some(ExtensionInfo {
             system: true,
             run: ExtensionRun::Broken,
@@ -249,6 +261,9 @@ pub fn assess(machine: Machine) -> Vec<Component> {
                     }
                     ExtensionState::ShadowedByUserCopy => {
                         ComponentState::Unavailable(Unavailable::ShadowedByUserCopy)
+                    }
+                    ExtensionState::TurnedOff => {
+                        ComponentState::Unavailable(Unavailable::ExtensionsOff)
                     }
                     ExtensionState::Unavailable => {
                         ComponentState::Unavailable(Unavailable::NotInstalled)
@@ -504,6 +519,10 @@ mod tests {
             ComponentState::Unavailable(Unavailable::ShadowedByUserCopy)
         );
         assert_eq!(
+            state(ExtensionState::TurnedOff),
+            ComponentState::Unavailable(Unavailable::ExtensionsOff)
+        );
+        assert_eq!(
             state(ExtensionState::Unavailable),
             ComponentState::Unavailable(Unavailable::NotInstalled)
         );
@@ -528,6 +547,10 @@ mod tests {
         assert_eq!(
             extension_state(info(true, ExtensionRun::Broken), packaged),
             ExtensionState::Unavailable
+        );
+        assert_eq!(
+            extension_state(info(true, ExtensionRun::TurnedOff), packaged),
+            ExtensionState::TurnedOff
         );
         // A development copy in ~/.local, enabled or not, is not what ships.
         assert_eq!(
@@ -604,6 +627,7 @@ mod tests {
                 ExtensionState::ShadowedByUserCopy,
                 Unavailable::ShadowedByUserCopy,
             ),
+            (ExtensionState::TurnedOff, Unavailable::ExtensionsOff),
         ] {
             assert_eq!(
                 row_action(&with_extension(extension)[3]),

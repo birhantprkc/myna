@@ -153,6 +153,13 @@ manual-acceptance; see `specs/004-gnome-shell-indicator/quickstart.md`.
 Text injection, model/mic selection, translation, transcript display, and
 screen-reader announcements (tracked separately) are out of scope for this
 extension; the HUD rendering itself is the `myna-hud` application, not this
-extension. Public distribution (extensions.gnome.org review, Ubuntu archive,
-or bundling in a snap) is noted as follow-up, not delivered here — install
-today by copying the bundle in-tree per above.
+extension.
+
+## Distribution
+
+Ubuntu ships the extension as a system copy in the
+`gnome-shell-ubuntu-extensions` deb, from 26.10 on (earlier series await a
+backport). Myna Settings enables that copy during onboarding; it never
+installs one. The in-tree copy above is for development only, and while it
+sits in `~/.local` it hides the packaged one. extensions.gnome.org is not a
+channel.

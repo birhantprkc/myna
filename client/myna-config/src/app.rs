@@ -595,6 +595,11 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
 
+    if let Err(failure) = probe_extension_enable(&application) {
+        eprintln!("{failure}");
+        return glib::ExitCode::FAILURE;
+    }
+
     // With the flag on, the list takes input: each snap offers Install, and
     // a disabled extension Enable.
     let machine = ProbeMachine::flagged();
@@ -969,8 +974,14 @@ fn onboarding_probe() -> glib::ExitCode {
                 "A copy in ~/.local/share/gnome-shell/extensions hides it. Remove that copy, then log out and back in.",
             ),
         ),
+        (
+            crate::onboarding::ExtensionState::TurnedOff,
+            gettextrs::gettext(
+                "Extensions are turned off. Turn them on in the Extensions app to use it. Until then, Dictation shows its status in notifications.",
+            ),
+        ),
     ] {
-        extensions.0.set(state);
+        extensions.state.set(state);
         let subtitle = || {
             components_page(&window)
                 .and_then(|page| page.row(crate::onboarding::ComponentId::ShellExtension))
@@ -2540,18 +2551,48 @@ type InstallAnswer = Result<Option<String>, crate::ports::SystemConfiguratorErro
 const PROBE_PERCENT: u64 = 1 << 32;
 
 /// gnome-shell as the probes need it, changed as they go.
-struct ProbeExtensions(Cell<crate::onboarding::ExtensionState>);
+struct ProbeExtensions {
+    state: Cell<crate::onboarding::ExtensionState>,
+    /// Why the next enables fail; they succeed once cleared.
+    failing: RefCell<Option<String>>,
+    /// An enable waits while this is set, as while gnome-shell starts it.
+    holding: Cell<bool>,
+    enables: Cell<usize>,
+}
 
 impl ProbeExtensions {
     fn new(state: crate::onboarding::ExtensionState) -> Rc<Self> {
-        Rc::new(Self(Cell::new(state)))
+        Rc::new(Self {
+            state: Cell::new(state),
+            failing: RefCell::default(),
+            holding: Cell::new(false),
+            enables: Cell::new(0),
+        })
     }
 }
 
 #[async_trait::async_trait(?Send)]
 impl crate::ports::ShellExtensions for ProbeExtensions {
     async fn extension_state(&self, _uuid: &str) -> crate::onboarding::ExtensionState {
-        self.0.get()
+        self.state.get()
+    }
+
+    async fn enable_extension(
+        &self,
+        uuid: &str,
+    ) -> Result<(), crate::ports::SystemConfiguratorError> {
+        self.enables.set(self.enables.get() + 1);
+        while self.holding.get() {
+            glib::timeout_future(Duration::from_millis(10)).await;
+        }
+        if let Some(message) = self.failing.borrow().clone() {
+            return Err(crate::ports::SystemConfiguratorError::dbus_execution(
+                format!("org.gnome.Shell.Extensions.EnableExtension({uuid:?})"),
+                message,
+            ));
+        }
+        self.state.set(crate::onboarding::ExtensionState::Enabled);
+        Ok(())
     }
 }
 
@@ -3496,6 +3537,166 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
     )
 }
 
+/// The extension row's Enable against a scripted gnome-shell: a failure
+/// reverts with a toast whose report names the D-Bus call, the row shows
+/// the enable under way, and enabling the last missing piece moves on.
+fn probe_extension_enable(application: &adw::Application) -> Result<(), String> {
+    use crate::onboarding::{assess, ComponentId, ExtensionState, Machine};
+
+    let machine = ProbeMachine::new();
+    let extensions = ProbeExtensions::new(ExtensionState::Disabled);
+    let window = {
+        let ui = crate::onboarding_ui::OnboardingUi::present_with_ports(
+            application,
+            assess(Machine {
+                user_daemons: true,
+                myna_installed: true,
+                backend_discovered: true,
+                extension: ExtensionState::Disabled,
+                ..Machine::default()
+            }),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            extensions.clone(),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.set_beat(Duration::from_millis(50));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    let page = components_page(&window).ok_or("the component step shows no component page")?;
+    let until = |done: &dyn Fn() -> bool| {
+        for _ in 0..200 {
+            if done() {
+                break;
+            }
+            settle_gtk();
+        }
+        done()
+    };
+    let toast_texts = || {
+        descendants(window.upcast_ref(), &|widget| {
+            widget.type_().name() == "AdwToastWidget"
+        })
+        .iter()
+        .flat_map(|toast| {
+            descendants(toast, &|widget| widget.is::<gtk::Label>())
+                .into_iter()
+                .filter_map(|label| label.downcast::<gtk::Label>().ok())
+                .map(|label| label.label().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+    };
+    let step = || {
+        window
+            .navigation()
+            .visible_page()
+            .and_then(|page| page.tag())
+            .map(|tag| tag.to_string())
+            .unwrap_or_default()
+    };
+    let enable = gettextrs::gettext("Enable");
+    let offers = |expected: &[&str]| rows_offer(&page) == expected;
+    if !until(&|| offers(&["Installed", "Installed", &enable])) {
+        return Err(format!(
+            "a disabled extension offers {:?}",
+            rows_offer(&page)
+        ));
+    }
+    let button = page
+        .row(ComponentId::ShellExtension)
+        .expect("the extension row")
+        .button;
+
+    let reason = "gnome-shell could not run myna-shell@canonical.com: TypeError: boom";
+    extensions.failing.replace(Some(reason.to_owned()));
+    button.emit_clicked();
+    let heading = gettextrs::gettext("Enabling the shell extension failed");
+    if !until(&|| {
+        toast_texts() == [heading.clone(), gettextrs::gettext("Details")]
+            && offers(&["Installed", "Installed", &enable])
+    }) || extensions.enables.get() != 1
+    {
+        return Err(format!(
+            "a failed enable left {:?} with toasts {:?} after {} calls",
+            rows_offer(&page),
+            toast_texts(),
+            extensions.enables.get()
+        ));
+    }
+    let details = gettextrs::gettext("Details");
+    descendants(window.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::Button>()
+            .is_some_and(|button| button.label().as_deref() == Some(details.as_str()))
+    })
+    .into_iter()
+    .next()
+    .and_then(|button| button.downcast::<gtk::Button>().ok())
+    .ok_or("the failure toast has no Details button")?
+    .emit_clicked();
+    for _ in 0..8 {
+        settle_gtk();
+    }
+    let dialog = window
+        .visible_dialog()
+        .and_then(|dialog| dialog.downcast::<ui::OperationErrorDialog>().ok())
+        .ok_or("Details opened no failure report")?;
+    let expected = format!(
+        "{} org.gnome.Shell.Extensions.EnableExtension(\"myna-shell@canonical.com\")\n{}\n{reason}",
+        gettextrs::gettext("D-Bus call:"),
+        gettextrs::gettext("Message:"),
+    );
+    if dialog.details_text() != expected {
+        return Err(format!(
+            "the failed enable's report reads {:?}",
+            dialog.details_text()
+        ));
+    }
+    dialog.force_close();
+    if !until(&|| window.visible_dialog().is_none()) {
+        return Err("the failure report did not close".to_owned());
+    }
+    println!("onboarding-extension: a failure reverts with a toast and its report");
+
+    extensions.failing.replace(None);
+    extensions.holding.set(true);
+    button.emit_clicked();
+    let enabling = gettextrs::gettext("Enabling…");
+    if !until(&|| offers(&["Installed", "Installed", &enabling])) {
+        return Err(format!("an enable under way shows {:?}", rows_offer(&page)));
+    }
+    button.emit_clicked();
+    settle_gtk();
+    if extensions.enables.get() != 2 {
+        return Err(format!(
+            "a second enable started beside the first: {} calls",
+            extensions.enables.get()
+        ));
+    }
+    println!("onboarding-extension: enabling shown in the row");
+
+    extensions.holding.set(false);
+    if !until(&|| step() == "shortcut") {
+        return Err(format!(
+            "enabling the last missing piece stayed on {} showing {:?}",
+            step(),
+            rows_offer(&page)
+        ));
+    }
+    println!("onboarding-extension: enabled, and the wizard moved on");
+    window.close();
+    settle_gtk();
+    Ok(())
+}
+
 /// The Install buttons against a scripted snapd: the row follows the change,
 /// one install runs at a time, a dismissed prompt reverts silently, a failed
 /// change with a toast whose report names the request, and an install
@@ -3504,19 +3705,20 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     use crate::onboarding::{assess, ComponentId, ExtensionState, Machine};
 
     let machine = ProbeMachine::flagged();
+    let extensions = ProbeExtensions::new(ExtensionState::Disabled);
     let window = {
         let ui = crate::onboarding_ui::OnboardingUi::present_with_ports(
             application,
             assess(Machine {
                 user_daemons: true,
-                extension: ExtensionState::Enabled,
+                extension: ExtensionState::Disabled,
                 ..Machine::default()
             }),
             Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
                 std::sync::Arc::new(machine.clone()),
             )),
             Rc::new(machine.clone()),
-            ProbeExtensions::new(ExtensionState::Enabled),
+            extensions.clone(),
             None,
             Box::new(|| {}),
         );
@@ -3553,13 +3755,14 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     };
     let row = |id| page.row(id).expect("an installable row");
     let offers = |expected: &[&str]| rows_offer(&page) == expected;
-    if !until(&|| offers(&["Install", "Install", "Installed"])) {
+    let enable = gettextrs::gettext("Enable");
+    if !until(&|| offers(&["Install", "Install", &enable])) {
         return Err(format!("a flagged machine offers {:?}", rows_offer(&page)));
     }
 
     machine.answer_install(Err(crate::ports::SystemConfiguratorError::Cancelled));
     row(ComponentId::Myna).button.emit_clicked();
-    if !until(&|| machine.installs().len() == 1 && offers(&["Install", "Install", "Installed"]))
+    if !until(&|| machine.installs().len() == 1 && offers(&["Install", "Install", &enable]))
         || !toast_texts().is_empty()
     {
         return Err(format!(
@@ -3573,8 +3776,9 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     machine.hold_install(true);
     row(ComponentId::Myna).button.emit_clicked();
     let asking = || {
-        offers(&[&gettextrs::gettext("Installing…"), "Install", "Installed"])
+        offers(&[&gettextrs::gettext("Installing…"), "Install", &enable])
             && !row(ComponentId::Model).button.is_sensitive()
+            && row(ComponentId::ShellExtension).button.is_sensitive()
             && row(ComponentId::Myna).row.is_sensitive()
             && !window.forward_button().is_sensitive()
     };
@@ -3594,6 +3798,19 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
         ));
     }
     println!("onboarding-install: one install at a time");
+
+    row(ComponentId::ShellExtension).button.emit_clicked();
+    if !until(&|| {
+        extensions.enables.get() == 1
+            && offers(&[&gettextrs::gettext("Installing…"), "Install", "Installed"])
+    }) {
+        return Err(format!(
+            "enabling beside an install left {:?} after {} calls",
+            rows_offer(&page),
+            extensions.enables.get()
+        ));
+    }
+    println!("onboarding-install: the extension enables beside an install");
 
     machine.download(Some(42));
     machine.hold_install(false);
@@ -4063,9 +4280,7 @@ fn rows_offer(page: &ui::OnboardingComponents) -> Vec<String> {
                     })
             })
             .is_some();
-        let installing = row
-            .installing
-            .as_ref()
+        let installing = Some(&row.installing)
             .filter(|progress| progress.container.is_mapped() && progress.spinner.is_spinning());
         match (row.button.is_mapped(), installed, installing) {
             (false, false, Some(progress)) => progress.label.label().to_string(),

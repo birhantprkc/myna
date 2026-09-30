@@ -6,11 +6,13 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gio::glib::{MainContext, Variant, VariantDict};
+use std::time::Duration;
+
+use gio::glib::{self, MainContext, Variant, VariantDict};
 use gio::prelude::*;
 use myna_config::adapters::shell_extensions::GnomeShellExtensions;
 use myna_config::onboarding::{ExtensionState, SHELL_EXTENSION_UUID};
-use myna_config::ports::ShellExtensions;
+use myna_config::ports::{FailedStep, ShellExtensions, SystemConfiguratorError};
 
 const SHELL_XML: &str = "<node>\
   <interface name='org.gnome.Shell.Extensions'>\
@@ -18,6 +20,11 @@ const SHELL_XML: &str = "<node>\
       <arg type='s' name='uuid' direction='in'/>\
       <arg type='a{sv}' name='info' direction='out'/>\
     </method>\
+    <method name='EnableExtension'>\
+      <arg type='s' name='uuid' direction='in'/>\
+      <arg type='b' name='success' direction='out'/>\
+    </method>\
+    <property name='UserExtensionsEnabled' type='b' access='readwrite'/>\
   </interface>\
 </node>";
 
@@ -26,9 +33,40 @@ fn socket(stream: UnixStream) -> gio::IOStream {
     socket.connection_factory_create_connection().upcast()
 }
 
+type Known = Rc<RefCell<Vec<(String, Variant)>>>;
+
+/// The shell-wide switch, kept in `known` beside the extension's info.
+const USER_EXTENSIONS_ENABLED: &str = "UserExtensionsEnabled";
+
+/// What the stand-in shell does when asked to enable the extension.
+#[derive(Clone, Copy)]
+enum OnEnable {
+    /// Starts it a moment later, as gnome-shell does once its setting
+    /// changes.
+    Start,
+    /// Answers false, as gnome-shell does for a uuid it does not know.
+    Refuse,
+    /// Tries, and the extension errors.
+    Fail,
+    /// Reports it activating, and then it errors.
+    ActivateThenFail,
+    /// Accepts and never starts it.
+    Ignore,
+}
+
+fn set(known: &Known, key: &str, value: Variant) {
+    let mut known = known.borrow_mut();
+    known.retain(|(existing, _)| existing != key);
+    known.push((key.to_owned(), value));
+}
+
 /// A connected pair: the adapter's end and the stand-in shell's, which
 /// answers `GetExtensionInfo` with whatever `known` holds for the uuid.
-fn shell(known: Rc<RefCell<Vec<(String, Variant)>>>) -> (gio::DBusConnection, gio::DBusConnection) {
+fn shell(known: Known) -> (gio::DBusConnection, gio::DBusConnection) {
+    shell_enabling(known, OnEnable::Start)
+}
+
+fn shell_enabling(known: Known, on_enable: OnEnable) -> (gio::DBusConnection, gio::DBusConnection) {
     let (client, server) = UnixStream::pair().expect("socket pair");
     let guid = gio::dbus_generate_guid();
     let (client, server) = MainContext::ref_thread_default().block_on(async {
@@ -54,17 +92,55 @@ fn shell(known: Rc<RefCell<Vec<(String, Variant)>>>) -> (gio::DBusConnection, gi
         .unwrap()
         .lookup_interface("org.gnome.Shell.Extensions")
         .unwrap();
+    let properties = known.clone();
     server
         .register_object("/org/gnome/Shell", &interface)
-        .method_call(move |_, _, _, _, _, parameters, invocation| {
+        .method_call(move |_, _, _, _, method, parameters, invocation| {
             let (uuid,) = parameters.get::<(String,)>().unwrap();
+            if method == "EnableExtension" {
+                let known = known.clone();
+                let now = known.clone();
+                let later = move |state: f64, error: &'static str| {
+                    MainContext::ref_thread_default().spawn_local(async move {
+                        glib::timeout_future(Duration::from_millis(50)).await;
+                        set(&known, "state", state.to_variant());
+                        set(&known, "error", error.to_variant());
+                    });
+                };
+                let accepted = match on_enable {
+                    OnEnable::Start => {
+                        later(1.0, "");
+                        true
+                    }
+                    OnEnable::ActivateThenFail => {
+                        set(&now, "state", 8.0.to_variant());
+                        later(3.0, "Error: gone mid-start");
+                        true
+                    }
+                    OnEnable::Fail => {
+                        later(3.0, "TypeError: boom");
+                        true
+                    }
+                    OnEnable::Refuse => false,
+                    OnEnable::Ignore => true,
+                };
+                invocation.return_value(Some(&(accepted,).to_variant()));
+                return;
+            }
             let dict = VariantDict::new(None);
             for (key, value) in known.borrow().iter() {
-                if uuid == SHELL_EXTENSION_UUID {
+                if uuid == SHELL_EXTENSION_UUID && key != USER_EXTENSIONS_ENABLED {
                     dict.insert_value(key, value);
                 }
             }
             invocation.return_value(Some(&Variant::tuple_from_iter([dict.end()])));
+        })
+        .property(move |_, _, _, _, _| {
+            properties
+                .borrow()
+                .iter()
+                .find(|(key, _)| key == USER_EXTENSIONS_ENABLED)
+                .map_or_else(|| true.to_variant(), |(_, value)| value.clone())
         })
         .build()
         .expect("register the stand-in shell");
@@ -243,4 +319,147 @@ fn a_shell_that_is_gone_is_no_shell() {
         block_on(extensions.extension_state(SHELL_EXTENSION_UUID))
     });
     assert_eq!(state, ExtensionState::Unavailable);
+}
+
+/// Enable the extension through a stand-in shell that reports it disabled,
+/// then read it back.
+fn enable(
+    on_enable: OnEnable,
+    settle: Duration,
+) -> (Result<(), SystemConfiguratorError>, ExtensionState) {
+    on_own_context(|| {
+        let known: Known = Rc::default();
+        set(&known, "type", 1.0.to_variant());
+        set(&known, "state", 2.0.to_variant());
+        let dirs = data_dirs(true, false);
+        let (client, _server) = shell_enabling(known, on_enable);
+        let extensions = GnomeShellExtensions::with_connection(
+            client,
+            dirs.system_dirs.clone(),
+            dirs.user_dir.clone(),
+        )
+        .with_settle_timeout(settle);
+        let outcome = block_on(extensions.enable_extension(SHELL_EXTENSION_UUID));
+        (
+            outcome,
+            block_on(extensions.extension_state(SHELL_EXTENSION_UUID)),
+        )
+    })
+}
+
+const ENABLE_CALL: &str =
+    "org.gnome.Shell.Extensions.EnableExtension(\"myna-shell@canonical.com\")";
+
+fn failure(outcome: Result<(), SystemConfiguratorError>) -> (String, String) {
+    match outcome {
+        Err(SystemConfiguratorError::Execution {
+            step: FailedStep::DBus { call },
+            message,
+        }) => (call, message),
+        other => panic!("expected a failed D-Bus call, got {other:?}"),
+    }
+}
+
+#[test]
+fn enabling_waits_until_the_shell_runs_it() {
+    let (outcome, state) = enable(OnEnable::Start, Duration::from_secs(5));
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(state, ExtensionState::Enabled);
+}
+
+#[test]
+fn a_refused_enable_names_the_call() {
+    let (call, message) = failure(enable(OnEnable::Refuse, Duration::from_secs(5)).0);
+    assert_eq!(call, ENABLE_CALL);
+    assert!(message.contains("does not know"), "{message}");
+}
+
+#[test]
+fn an_extension_that_errors_reports_the_shells_error() {
+    let (call, message) = failure(enable(OnEnable::Fail, Duration::from_secs(5)).0);
+    assert_eq!(call, ENABLE_CALL);
+    assert!(message.contains("TypeError: boom"), "{message}");
+}
+
+#[test]
+fn an_extension_that_never_starts_gives_up() {
+    let (call, message) = failure(enable(OnEnable::Ignore, Duration::from_millis(300)).0);
+    assert_eq!(call, ENABLE_CALL);
+    assert!(message.contains("did not start"), "{message}");
+}
+
+#[test]
+fn enabling_with_no_shell_fails_with_the_bus_error() {
+    let outcome = on_own_context(|| {
+        let dirs = data_dirs(true, false);
+        let (client, server) = shell(Rc::default());
+        block_on(server.close_future()).unwrap();
+        let extensions = GnomeShellExtensions::with_connection(
+            client,
+            dirs.system_dirs.clone(),
+            dirs.user_dir.clone(),
+        );
+        block_on(extensions.enable_extension(SHELL_EXTENSION_UUID))
+    });
+    let (call, message) = failure(outcome);
+    assert_eq!(call, ENABLE_CALL);
+    assert!(!message.is_empty());
+}
+
+#[test]
+fn a_locked_extension_cannot_be_enabled() {
+    assert_eq!(
+        state(&[("type", 1.0), ("state", 2.0)], true),
+        ExtensionState::Disabled
+    );
+    let locked = on_own_context(|| {
+        let known: Known = Rc::default();
+        set(&known, "type", 1.0.to_variant());
+        set(&known, "state", 2.0.to_variant());
+        set(&known, "canChange", false.to_variant());
+        let dirs = data_dirs(true, false);
+        let (client, _server) = shell(known);
+        let extensions = GnomeShellExtensions::with_connection(
+            client,
+            dirs.system_dirs.clone(),
+            dirs.user_dir.clone(),
+        );
+        block_on(extensions.extension_state(SHELL_EXTENSION_UUID))
+    });
+    assert_eq!(locked, ExtensionState::Unavailable);
+}
+
+#[test]
+fn an_extension_held_off_by_the_extensions_switch_is_turned_off() {
+    let held = |user_extensions: bool| {
+        on_own_context(|| {
+            let known: Known = Rc::default();
+            set(&known, "type", 1.0.to_variant());
+            set(&known, "state", 6.0.to_variant());
+            set(&known, "canChange", false.to_variant());
+            set(
+                &known,
+                USER_EXTENSIONS_ENABLED,
+                user_extensions.to_variant(),
+            );
+            let dirs = data_dirs(true, false);
+            let (client, _server) = shell(known);
+            let extensions = GnomeShellExtensions::with_connection(
+                client,
+                dirs.system_dirs.clone(),
+                dirs.user_dir.clone(),
+            );
+            block_on(extensions.extension_state(SHELL_EXTENSION_UUID))
+        })
+    };
+    assert_eq!(held(false), ExtensionState::TurnedOff);
+    // With the switch on, only the administrator's lockdown is left.
+    assert_eq!(held(true), ExtensionState::Unavailable);
+}
+
+#[test]
+fn an_extension_that_fails_while_activating_is_not_enabled() {
+    let (call, message) = failure(enable(OnEnable::ActivateThenFail, Duration::from_secs(5)).0);
+    assert_eq!(call, ENABLE_CALL);
+    assert!(message.contains("gone mid-start"), "{message}");
 }

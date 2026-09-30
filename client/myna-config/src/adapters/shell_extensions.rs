@@ -15,21 +15,29 @@ use gio::prelude::*;
 use crate::onboarding::{
     extension_state, ExtensionCopies, ExtensionInfo, ExtensionRun, ExtensionState,
 };
-use crate::ports::ShellExtensions;
+use crate::ports::{ShellExtensions, SystemConfiguratorError};
 
 const SHELL_NAME: &str = "org.gnome.Shell";
 const SHELL_PATH: &str = "/org/gnome/Shell";
 const EXTENSIONS_INTERFACE: &str = "org.gnome.Shell.Extensions";
 /// A shell that does not answer within this is treated as absent.
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// gnome-shell starts an extension once its `enabled-extensions` setting
+/// changes, after `EnableExtension` returns.
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(5);
+const SETTLE_POLL: Duration = Duration::from_millis(100);
 
 /// `ExtensionType.SYSTEM` in gnome-shell's `extensionUtils.js`.
 const TYPE_SYSTEM: f64 = 1.0;
+/// `ExtensionState.ACTIVE` and `ACTIVATING`.
+const STATE_ENABLED: i64 = 1;
+const STATE_ACTIVATING: i64 = 8;
 
 pub struct GnomeShellExtensions {
     connection: Option<gio::DBusConnection>,
     data_dirs: Vec<PathBuf>,
     user_data_dir: PathBuf,
+    settle_timeout: Duration,
 }
 
 impl GnomeShellExtensions {
@@ -39,7 +47,14 @@ impl GnomeShellExtensions {
             connection: None,
             data_dirs: glib::system_data_dirs(),
             user_data_dir: glib::user_data_dir(),
+            settle_timeout: SETTLE_TIMEOUT,
         }
+    }
+
+    /// How long enabling waits for gnome-shell to run the extension.
+    pub fn with_settle_timeout(mut self, timeout: Duration) -> Self {
+        self.settle_timeout = timeout;
+        self
     }
 
     pub fn with_connection(
@@ -51,15 +66,27 @@ impl GnomeShellExtensions {
             connection: Some(connection),
             data_dirs,
             user_data_dir,
+            settle_timeout: SETTLE_TIMEOUT,
         }
     }
 
-    async fn info(&self, uuid: &str) -> Option<ExtensionInfo> {
+    async fn call(&self, method: &str, uuid: &str, reply: &str) -> Result<Variant, glib::Error> {
+        self.call_on(EXTENSIONS_INTERFACE, method, (uuid,).to_variant(), reply)
+            .await
+    }
+
+    async fn call_on(
+        &self,
+        interface: &str,
+        method: &str,
+        parameters: Variant,
+        reply: &str,
+    ) -> Result<Variant, glib::Error> {
         let connection = match &self.connection {
             Some(connection) => connection.clone(),
-            None => gio::bus_get_future(gio::BusType::Session).await.ok()?,
+            None => gio::bus_get_future(gio::BusType::Session).await?,
         };
-        let reply = connection
+        connection
             .call_future(
                 // A peer-to-peer connection has no bus to route by name.
                 connection
@@ -67,19 +94,44 @@ impl GnomeShellExtensions {
                     .contains(gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION)
                     .then_some(SHELL_NAME),
                 SHELL_PATH,
-                EXTENSIONS_INTERFACE,
-                "GetExtensionInfo",
-                Some(&(uuid,).to_variant()),
-                Some(VariantTy::new("(a{sv})").expect("valid type")),
+                interface,
+                method,
+                Some(&parameters),
+                Some(VariantTy::new(reply).expect("valid type")),
                 gio::DBusCallFlags::NO_AUTO_START,
                 CALL_TIMEOUT.as_millis() as i32,
             )
             .await
+    }
+
+    async fn raw_info(&self, uuid: &str) -> Option<Variant> {
+        self.call("GetExtensionInfo", uuid, "(a{sv})")
+            .await
             .map_err(|error| {
                 glib::g_debug!(crate::LOG_DOMAIN, "no extension info for {uuid}: {error}");
             })
-            .ok()?;
-        parse_info(&reply.child_value(0))
+            .ok()
+            .map(|reply| reply.child_value(0))
+    }
+
+    async fn info(&self, uuid: &str) -> Option<ExtensionInfo> {
+        let info = self.raw_info(uuid).await?;
+        parse_info(&info, self.user_extensions_enabled().await)
+    }
+
+    /// The Extensions app's switch. A shell that does not say is taken as
+    /// running extensions.
+    async fn user_extensions_enabled(&self) -> bool {
+        self.call_on(
+            "org.freedesktop.DBus.Properties",
+            "Get",
+            (EXTENSIONS_INTERFACE, "UserExtensionsEnabled").to_variant(),
+            "(v)",
+        )
+        .await
+        .ok()
+        .and_then(|reply| reply.child_value(0).as_variant()?.get::<bool>())
+        .unwrap_or(true)
     }
 
     fn copies_on_disk(&self, uuid: &str) -> ExtensionCopies {
@@ -108,19 +160,75 @@ impl ShellExtensions for GnomeShellExtensions {
         let info = self.info(uuid).await;
         extension_state(info, self.copies_on_disk(uuid))
     }
+
+    async fn enable_extension(&self, uuid: &str) -> Result<(), SystemConfiguratorError> {
+        let failed =
+            |message: String| SystemConfiguratorError::dbus_execution(enable_call(uuid), message);
+        let reply = self
+            .call("EnableExtension", uuid, "(b)")
+            .await
+            .map_err(|error| failed(error.message().to_owned()))?;
+        if !reply.child_value(0).get::<bool>().unwrap_or(false) {
+            return Err(failed(format!("gnome-shell does not know {uuid}")));
+        }
+        let deadline = std::time::Instant::now() + self.settle_timeout;
+        loop {
+            let reply = self.raw_info(uuid).await;
+            // Only a running extension counts: one still activating may yet
+            // error.
+            let run = match reply.as_ref().and_then(raw_state) {
+                Some(STATE_ENABLED) => Some(ExtensionRun::Enabled),
+                Some(STATE_ACTIVATING) => None,
+                _ => reply
+                    .as_ref()
+                    .and_then(|info| parse_info(info, true))
+                    .map(|info| info.run),
+            };
+            match run {
+                Some(ExtensionRun::Enabled) => return Ok(()),
+                Some(ExtensionRun::Broken | ExtensionRun::TurnedOff) => {
+                    let error = reply
+                        .as_ref()
+                        .and_then(|info| {
+                            VariantDict::new(Some(info))
+                                .lookup::<String>("error")
+                                .ok()
+                                .flatten()
+                        })
+                        .filter(|error| !error.is_empty())
+                        .unwrap_or_else(|| "no reason given".to_owned());
+                    return Err(failed(format!("gnome-shell could not run {uuid}: {error}")));
+                }
+                _ if std::time::Instant::now() >= deadline => {
+                    return Err(failed(format!(
+                        "gnome-shell did not start {uuid} within {} s",
+                        self.settle_timeout.as_secs_f32()
+                    )));
+                }
+                _ => glib::timeout_future(SETTLE_POLL).await,
+            }
+        }
+    }
 }
 
 /// One `GetExtensionInfo` reply. An unknown uuid is an empty dictionary.
 /// gnome-shell sends `type` and `state` as doubles.
-pub fn parse_info(info: &Variant) -> Option<ExtensionInfo> {
-    let info = VariantDict::new(Some(info));
-    let kind = info.lookup::<f64>("type").ok()??;
-    let state = info.lookup::<f64>("state").ok()??;
+pub fn parse_info(info: &Variant, user_extensions_enabled: bool) -> Option<ExtensionInfo> {
+    let kind = VariantDict::new(Some(info)).lookup::<f64>("type").ok()??;
+    let state = raw_state(info)?;
+    // gnome-shell's `_updateCanChange`: false when the administrator locks
+    // `enabled-extensions`, or when the user turned extensions off.
+    let can_change = VariantDict::new(Some(info))
+        .lookup::<bool>("canChange")
+        .ok()
+        .flatten()
+        .unwrap_or(true);
     // `ExtensionState` in gnome-shell's `extensionUtils.js`.
-    let run = match state as i64 {
+    let run = match state {
         // 8 and 7 are ACTIVATING and DEACTIVATING: read where it is heading.
-        1 | 8 => ExtensionRun::Enabled,
-        2 | 6 | 7 => ExtensionRun::Disabled,
+        STATE_ENABLED | STATE_ACTIVATING => ExtensionRun::Enabled,
+        2 | 6 | 7 if can_change => ExtensionRun::Disabled,
+        2 | 6 | 7 if !user_extensions_enabled => ExtensionRun::TurnedOff,
         _ => ExtensionRun::Broken,
     };
     Some(ExtensionInfo {
@@ -129,9 +237,59 @@ pub fn parse_info(info: &Variant) -> Option<ExtensionInfo> {
     })
 }
 
+fn raw_state(info: &Variant) -> Option<i64> {
+    let state = VariantDict::new(Some(info)).lookup::<f64>("state").ok()??;
+    Some(state as i64)
+}
+
+/// The call as a failure report names it.
+fn enable_call(uuid: &str) -> String {
+    format!("{EXTENSIONS_INTERFACE}.EnableExtension({uuid:?})")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_call_is_reported_as_the_call() {
+        let error = SystemConfiguratorError::dbus_execution(
+            enable_call(crate::onboarding::SHELL_EXTENSION_UUID),
+            "gnome-shell did not start it",
+        );
+        assert_eq!(
+            crate::backend_ui::system_error_details(&error),
+            "D-Bus call: org.gnome.Shell.Extensions.EnableExtension(\"myna-shell@canonical.com\")\n\
+             Message:\ngnome-shell did not start it"
+        );
+    }
+
+    #[test]
+    fn an_extension_the_user_may_not_change_is_locked_or_turned_off() {
+        let locked = reply(&[
+            ("type", 1.0.to_variant()),
+            ("state", 2.0.to_variant()),
+            ("canChange", false.to_variant()),
+        ]);
+        assert_eq!(
+            parse_info(&locked, true).map(|info| info.run),
+            Some(ExtensionRun::Broken)
+        );
+        // Extensions switched off by the user, not locked down.
+        assert_eq!(
+            parse_info(&locked, false).map(|info| info.run),
+            Some(ExtensionRun::TurnedOff)
+        );
+        let running = reply(&[
+            ("type", 1.0.to_variant()),
+            ("state", 1.0.to_variant()),
+            ("canChange", false.to_variant()),
+        ]);
+        assert_eq!(
+            parse_info(&running, false).map(|info| info.run),
+            Some(ExtensionRun::Enabled)
+        );
+    }
 
     fn reply(entries: &[(&str, Variant)]) -> Variant {
         let dict = VariantDict::new(None);
@@ -143,17 +301,20 @@ mod tests {
 
     #[test]
     fn an_unknown_uuid_is_no_info() {
-        assert_eq!(parse_info(&reply(&[])), None);
+        assert_eq!(parse_info(&reply(&[]), true), None);
     }
 
     #[test]
     fn type_and_state_are_read_as_doubles() {
         let info = |kind: f64, state: f64| {
-            parse_info(&reply(&[
-                ("type", kind.to_variant()),
-                ("state", state.to_variant()),
-                ("uuid", "myna-shell@canonical.com".to_variant()),
-            ]))
+            parse_info(
+                &reply(&[
+                    ("type", kind.to_variant()),
+                    ("state", state.to_variant()),
+                    ("uuid", "myna-shell@canonical.com".to_variant()),
+                ]),
+                true,
+            )
         };
         assert_eq!(
             info(1.0, 1.0),
@@ -193,6 +354,6 @@ mod tests {
     #[test]
     fn integer_fields_are_not_gnome_shells() {
         let info = reply(&[("type", 1i32.to_variant()), ("state", 1i32.to_variant())]);
-        assert_eq!(parse_info(&info), None);
+        assert_eq!(parse_info(&info, true), None);
     }
 }

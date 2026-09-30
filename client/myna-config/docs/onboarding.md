@@ -51,13 +51,28 @@ Its state is one of:
   directory first and skips a uuid it already has, so the system copy never
   runs and a re-login does not help; removing the user copy does. Checked on
   disk, since gnome-shell keeps listing a user copy deleted after login;
+- turned off: the user switched all extensions off in the Extensions app
+  (gnome-shell's `UserExtensionsEnabled` false, `disable-user-extensions`
+  true), which holds the system copy off and makes its `canChange` false. The
+  row says so; the wizard does not flip that switch, which would turn every
+  one of the user's extensions back on. On the Ubuntu session this does not
+  arise where the session mode (`/usr/share/gnome-shell/modes/ubuntu.json`)
+  lists myna-shell, as Stonking's does: a mode extension runs and stays
+  changeable whatever that switch says. It does on a series or session whose
+  mode does not list it (measured on Noble's gnome-shell 46 with a system
+  copy: `state` 6, `canChange` false, `UserExtensionsEnabled` false);
 - unavailable: no system copy, one gnome-shell cannot run (error, out of
-  date), or no gnome-shell answering on the session bus within 2 s.
+  date), one the administrator locked (`canChange` false with extensions on:
+  `enabled-extensions` is not writable), or no gnome-shell answering on the
+  session bus within 2 s. A shell that does not report
+  `UserExtensionsEnabled` is taken as having extensions on.
 
 gnome-shell sends `type` and `state` as doubles; `type` 1 is a system copy,
 `state` 1 enabled, 2 and 6 disabled and never enabled. The transient 8
 (activating) and 7 (deactivating) read as the state they are heading for, so
 a re-read right after `EnableExtension` does not flash the row unavailable.
+Enabling itself waits past 8 for 1, since an activating extension may still
+error.
 
 The settings window's main menu reopens the wizard (Set Up Dictation), modal
 over the window. It refuses while a backend operation is in flight: the wizard
@@ -123,6 +138,23 @@ its install hook's engine choice, so the model row follows it to the end,
 the percentage resuming where the snap's own download left it. A download
 served from snapd's cache reports no bytes, so a cached install shows no
 percentage.
+
+Enable asks the user's own gnome-shell over the session bus
+(`org.gnome.Shell.Extensions.EnableExtension`): no polkit, no prompt. The
+call only adds the uuid to `enabled-extensions`; gnome-shell starts the
+extension once that setting changes, so the row shows a spinner and
+"Enabling…" until `GetExtensionInfo` reports it running, for up to 5 s.
+A system copy gnome-shell already lists runs at once on X11 and Wayland
+alike, so no re-login is asked for; the only re-login cases are the copy
+installed after login and the shadowed one above, which offer no button.
+gnome-shell refusing (`false`, an unknown uuid), the extension erroring
+(gnome-shell's own `error` text) or not starting in time puts Enable back
+with a toast whose Details name the D-Bus call. An extension with
+`canChange` false is not offered: it is turned off or unavailable, as
+above. Enabling it is the last missing piece on a machine with the rest
+installed, so it moves the step on like an install. Enable runs beside a
+snapd install, since it asks no prompt; only the snap rows wait for one
+another.
 
 A row snapd is still installing counts as missing (`onboarding::while_installing`)
 whatever a read finds half-way: the backend's slot is published, and
