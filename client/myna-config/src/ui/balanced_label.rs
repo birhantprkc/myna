@@ -122,7 +122,8 @@ impl BalancedLabel {
 mod tests {
     use super::*;
 
-    const PARAGRAPH: &str = "Copy the command below and enter them in the Terminal to install all necessary components.";
+    const PARAGRAPH: &str =
+        "Set up a keyboard shortcut to trigger Dictation. You will be asked to confirm it.";
 
     /// Greedy word wrap at one unit per character: the line count's height.
     fn height(text: &str, width: i32) -> i32 {

@@ -196,15 +196,21 @@ required is missing. Next stays insensitive until the required components are
 found; then the footer shows a success checkmark and "All required components
 installed" left of it.
 
-The store commands the diagnostics page suggests (`MYNA_INSTALL_COMMAND`,
-`MODEL_INSTALL_COMMAND`) ask for `edge`, the only channel both snaps are
-published to, and set the flag first: snapd refuses to install a snap
-declaring a user daemon unless `experimental.user-daemons` is set or its
-snap-id is on the hardcoded allowlist in snapd's
-`overlord/snapstate/snapstate.go`, so an App Center install of Myna fails on
-every stock machine. A plain install of the model is a working backend: the
-install hook selects an engine, and selecting one installs its model
-component.
+Both installs ask for `edge`, the only channel both snaps are published to,
+and wait for the flag: snapd refuses to install a snap declaring a user
+daemon unless `experimental.user-daemons` is set or its snap-id is on the
+hardcoded allowlist in snapd's `overlord/snapstate/snapstate.go`, so an App
+Center install of Myna fails on every stock machine. A plain install of the
+model is a working backend: the install hook selects an engine, and selecting
+one installs its model component.
+
+The settings window never shows an install command either. When its
+Diagnostics page finds Myna or every model missing (removed while the window
+was open), it names what is missing over a "Set up Dictation" row whose suggested
+"Set up" button opens this wizard (`win.setup`); the button marks the row as
+the way on, and the whole row activates it. That group comes first on the page, above the
+performance warnings and the report, since it is the only thing there to act
+on; the copied report states the missing component without a command.
 
 ## Finishing setup
 

@@ -3879,6 +3879,106 @@ fn backends_probe() -> glib::ExitCode {
     }
     println!("setup: reopens the wizard");
 
+    // A model removed behind the window's back: Diagnostics points at the
+    // wizard, never at a command to paste.
+    machine
+        .myna_only
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    view_stack.set_visible_child_name("diagnostics");
+    quiesce();
+    std::thread::sleep(crate::diagnostics::REFRESH_DEBOUNCE);
+    ActionGroupExt::activate_action(&window, "refresh", None);
+    let diagnostics_widget = || {
+        diagnostics_nav
+            .visible_page()
+            .map(|page| page.upcast::<gtk::Widget>())
+    };
+    let leads_to_setup = || {
+        diagnostics_widget().is_some_and(|page| {
+            find_descendant(&page, &|widget| {
+                widget
+                    .dynamic_cast_ref::<gtk::Actionable>()
+                    .and_then(|actionable| actionable.action_name())
+                    .as_deref()
+                    == Some("win.setup")
+            })
+            .is_some()
+        })
+    };
+    if !settles(&|| !report().contains("myna-parakeet") && leads_to_setup()) {
+        eprintln!(
+            "diagnostics of a machine with no model do not lead to Set Up Dictation:\n{}",
+            report()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    if diagnostics_widget().is_some_and(|page| {
+        find_descendant(&page, &|widget| {
+            widget.is::<adw::ActionRow>() && widget.has_css_class("monospace")
+        })
+        .is_some()
+    }) {
+        eprintln!("diagnostics still show a command to paste");
+        return glib::ExitCode::FAILURE;
+    }
+    let first_group = diagnostics_widget().and_then(|page| {
+        descendants(&page, &|widget| {
+            widget.is::<adw::PreferencesGroup>() && widget.is_visible()
+        })
+        .into_iter()
+        .next()
+        .and_then(|group| group.downcast::<adw::PreferencesGroup>().ok())
+    });
+    let Some(first_group) = first_group else {
+        eprintln!("diagnostics page has no visible group");
+        return glib::ExitCode::FAILURE;
+    };
+    let setup_button = find_descendant(first_group.upcast_ref(), &|widget| {
+        widget.is::<gtk::Button>()
+            && widget
+                .dynamic_cast_ref::<gtk::Actionable>()
+                .and_then(|actionable| actionable.action_name())
+                .as_deref()
+                == Some("win.setup")
+    });
+    let setup_row = find_descendant(first_group.upcast_ref(), &|widget| {
+        widget.is::<adw::ActionRow>()
+    })
+    .and_then(|row| row.downcast::<adw::ActionRow>().ok());
+    if setup_row.is_none() || first_group.title() != "No speech model installed" {
+        eprintln!(
+            "the setup group is not the first group on Diagnostics: {:?}",
+            first_group.title()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    let marked = setup_button.as_ref().is_some_and(|button| {
+        button.has_css_class("suggested-action")
+            && setup_row
+                .as_ref()
+                .and_then(|row| row.activatable_widget())
+                .as_ref()
+                == Some(button)
+    });
+    if !marked {
+        eprintln!("the setup row has no Set up button to mark it as the way on");
+        return glib::ExitCode::FAILURE;
+    }
+    if setup_row.is_some_and(|row| {
+        find_descendant(row.upcast_ref(), &|widget| {
+            widget
+                .downcast_ref::<gtk::Image>()
+                .and_then(|image| image.icon_name())
+                .as_deref()
+                == Some("go-next-symbolic")
+        })
+        .is_some()
+    }) {
+        eprintln!("the setup row promises a subpage it does not push");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("diagnostics-onboarding: leads to setup");
+
     ui.shutdown();
     window.close();
     glib::ExitCode::SUCCESS

@@ -8,9 +8,29 @@ template $DiagnosticsPage: Adw.NavigationPage {
     title: _("About and Diagnostics");
     icon-name: "dialog-information-symbolic";
 
+    Adw.PreferencesGroup setup_group {
+      visible: false;
+
+      Adw.ActionRow setup_row {
+        title: _("Set up Dictation");
+        activatable-widget: setup_button;
+
+        [suffix]
+        Gtk.Button setup_button {
+          label: _("Set up");
+          action-name: "win.setup";
+          valign: center;
+
+          styles [
+            "suggested-action",
+          ]
+        }
+      }
+    }
+
     Adw.PreferencesGroup warnings_group {
       title: _("Performance warnings");
-      description: _("This machine is set up, but it is not currently delivering the CPU that dictation needs.");
+      description: _("This machine is not currently delivering the CPU that dictation needs.");
       visible: false;
     }
 

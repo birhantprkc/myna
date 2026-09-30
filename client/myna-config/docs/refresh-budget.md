@@ -16,8 +16,8 @@ exists, to decide between the settings window and the onboarding wizard
 (`docs/onboarding.md`). The result is handed to the wizard rather than
 re-read there. The wizard re-assesses, at the same cost, each time it regains
 focus on its component step, and every 2 s while that step shows and something
-is still missing, because the user installs in another window that the wizard
-may never lose focus to. Setting up from that step reads snapd's changes
+is still missing, because an install may also run outside it (a terminal, a
+wizard since closed) while it keeps the focus. Setting up from that step reads snapd's changes
 over its socket, spawning nothing, and again every 2 s, for at most 15 min, while snapd still has a change in
 progress on Myna or a backend.
 

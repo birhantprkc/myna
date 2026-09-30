@@ -19,15 +19,6 @@ pub const RECOMMENDED_BACKEND_SNAP: &str = "myna-parakeet";
 /// The GNOME Shell extension, as `gnome-shell-ubuntu-extensions` ships it.
 pub const SHELL_EXTENSION_UUID: &str = "myna-shell@canonical.com";
 
-/// Installs Myna from a terminal. The flag comes first: snapd refuses a snap
-/// declaring a user daemon unless `experimental.user-daemons` is set or its
-/// snap-id is on snapd's hardcoded allowlist.
-pub const MYNA_INSTALL_COMMAND: &str =
-    "sudo snap set system experimental.user-daemons=true\nsudo snap install --edge myna";
-
-/// Installs the recommended backend from a terminal.
-pub const MODEL_INSTALL_COMMAND: &str = "sudo snap install --edge myna-parakeet";
-
 /// One thing onboarding checks for, in the order the component step lists
 /// them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

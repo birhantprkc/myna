@@ -475,6 +475,7 @@ fn backend_pages_discover_and_apply_against_a_fixture_machine() {
         "diagnostics-report: lists backends",
         "refresh-accelerator: refreshes the tab",
         "setup: reopens the wizard",
+        "diagnostics-onboarding: leads to setup",
     ] {
         assert!(stdout.contains(line), "backends probe missing: {line}");
     }

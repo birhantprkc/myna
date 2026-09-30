@@ -10,11 +10,15 @@ bird that listens to and reproduces human speech with striking clarity.
 
 ## Install
 
-Myna is a client snap plus one inference snap per model family.
-[`myna-snap/README.md`](myna-snap/README.md) is the setup path; pick a backend
-from the `*-snap/` directories, with whisper as the reference. Myna Settings,
-the configuration app, ships as a deb:
-[`myna-config-deb/README.md`](myna-config-deb/README.md).
+Myna is a client snap plus one inference snap per model family. Myna
+Settings, the configuration app, ships as a deb
+([`myna-config-deb/README.md`](myna-config-deb/README.md)); on a machine
+without Myna it opens a setup wizard that turns on snapd's user daemons
+support, installs the client and a model from the store, and enables the
+Shell extension where Ubuntu ships it, asking for authorization rather than
+for commands in a terminal. [`myna-snap/README.md`](myna-snap/README.md) is
+the manual path for a snap built from the tree; pick a backend from the
+`*-snap/` directories, with whisper as the reference.
 
 ## Develop
 

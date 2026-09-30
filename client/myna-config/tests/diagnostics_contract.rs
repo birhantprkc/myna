@@ -1,6 +1,6 @@
 use myna_config::diagnostics::{
     parse_snap_list, present_diagnostics, BackendDiagnostic, DiagnosticConnection, DiagnosticInput,
-    OnboardingState, NO_BACKEND_COMMAND, NO_MYNA_COMMAND,
+    OnboardingState,
 };
 
 #[test]
@@ -10,7 +10,6 @@ fn presenter_distinguishes_no_myna_and_no_backend_onboarding() {
         ..DiagnosticInput::default()
     });
     assert_eq!(no_myna.onboarding(), OnboardingState::NoMyna);
-    assert_eq!(no_myna.onboarding_command(), Some(NO_MYNA_COMMAND));
 
     let no_backend = present_diagnostics(DiagnosticInput {
         installed_snaps: parse_snap_list(
@@ -21,7 +20,6 @@ fn presenter_distinguishes_no_myna_and_no_backend_onboarding() {
         ..DiagnosticInput::default()
     });
     assert_eq!(no_backend.onboarding(), OnboardingState::NoBackend);
-    assert_eq!(no_backend.onboarding_command(), Some(NO_BACKEND_COMMAND));
 }
 
 #[test]
@@ -109,7 +107,6 @@ fn inventory_error_does_not_claim_myna_is_absent() {
         ..DiagnosticInput::default()
     });
     assert_eq!(report.onboarding(), OnboardingState::Unavailable);
-    assert_eq!(report.onboarding_command(), None);
 }
 
 #[test]
@@ -176,7 +173,6 @@ fn failed_backend_discovery_does_not_claim_onboarding_is_complete() {
         ..DiagnosticInput::default()
     });
     assert_eq!(report.onboarding(), OnboardingState::Unavailable);
-    assert_eq!(report.onboarding_command(), None);
 }
 
 mod performance_warnings {

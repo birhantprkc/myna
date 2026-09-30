@@ -13,6 +13,8 @@ mod imp {
         #[template_child]
         pub preferences_page: gtk::TemplateChild<adw::PreferencesPage>,
         #[template_child]
+        pub setup_group: gtk::TemplateChild<adw::PreferencesGroup>,
+        #[template_child]
         pub warnings_group: gtk::TemplateChild<adw::PreferencesGroup>,
         #[template_child]
         pub report_group: gtk::TemplateChild<adw::PreferencesGroup>,
@@ -58,6 +60,10 @@ impl DiagnosticsPage {
 
     pub fn preferences_page(&self) -> adw::PreferencesPage {
         self.imp().preferences_page.get()
+    }
+
+    pub fn setup_group(&self) -> adw::PreferencesGroup {
+        self.imp().setup_group.get()
     }
 
     pub fn warnings_group(&self) -> adw::PreferencesGroup {

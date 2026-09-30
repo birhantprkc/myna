@@ -286,8 +286,8 @@ impl OnboardingUi {
                 }
             }
         });
-        // Installing happens in App Center or a terminal, so coming back to
-        // the window is the moment to look again.
+        // What changes outside the wizard (the Extensions app, a terminal)
+        // shows once the window regains focus.
         window.connect_is_active_notify({
             let ui = Rc::downgrade(&ui);
             move |window| {

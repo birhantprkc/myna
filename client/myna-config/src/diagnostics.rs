@@ -14,12 +14,6 @@ use crate::performance::{
     assess_clock, assess_pressure, ClockClass, ClockVerdict, PerformanceFacts, PressureWarning,
 };
 
-/// Copy-safe onboarding instructions surfaced when Myna itself is missing.
-pub const NO_MYNA_COMMAND: &str = crate::onboarding::MYNA_INSTALL_COMMAND;
-/// Copy-safe onboarding instructions surfaced when Myna is installed but no
-/// backend has been chosen yet.
-pub const NO_BACKEND_COMMAND: &str = crate::onboarding::MODEL_INSTALL_COMMAND;
-
 /// Upper bound on subprocess spawns required to refresh a single backend
 /// snapshot: `snap info`, at most four prioritized modelctl candidate probes,
 /// and the four modelctl data commands (status, get, list-models,
@@ -141,14 +135,6 @@ impl DiagnosticReport {
 
     pub fn warnings(&self) -> &[Warning] {
         &self.warnings
-    }
-
-    pub fn onboarding_command(&self) -> Option<&'static str> {
-        match self.onboarding {
-            OnboardingState::NoMyna => Some(NO_MYNA_COMMAND),
-            OnboardingState::NoBackend => Some(NO_BACKEND_COMMAND),
-            OnboardingState::Ready | OnboardingState::Unavailable => None,
-        }
     }
 
     pub fn copy_text(&self) -> String {
@@ -390,12 +376,6 @@ fn render_body(
     out.push_str(": ");
     out.push_str(&onboarding_state_label(onboarding));
     out.push('\n');
-    if let Some(command) = onboarding_command(onboarding) {
-        out.push_str(&gettextrs::gettext("Suggested command"));
-        out.push_str(": ");
-        out.push_str(command);
-        out.push('\n');
-    }
 
     out.push('\n');
     out.push_str(&gettextrs::gettext("Machine"));
@@ -657,14 +637,6 @@ fn memory_summary(memory: ProcessMemory) -> String {
     )
 }
 
-fn onboarding_command(state: OnboardingState) -> Option<&'static str> {
-    match state {
-        OnboardingState::NoMyna => Some(NO_MYNA_COMMAND),
-        OnboardingState::NoBackend => Some(NO_BACKEND_COMMAND),
-        OnboardingState::Ready | OnboardingState::Unavailable => None,
-    }
-}
-
 /// Redact a single-line value: strip filesystem paths and any embedded
 /// `key=value` pairs whose key looks sensitive.
 pub fn redact_text(value: &str) -> String {
@@ -776,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_state_still_reports_versions_and_onboarding_hint() {
+    fn empty_state_still_reports_versions_and_onboarding_state() {
         let report = present_diagnostics(DiagnosticInput {
             inventory_complete: true,
             ..DiagnosticInput::default()
@@ -784,7 +756,7 @@ mod tests {
         let text = report.copy_text();
         assert!(text.contains("Myna Settings "));
         assert!(text.contains("Onboarding: Myna is not installed"));
-        assert!(text.contains(&format!("Suggested command: {NO_MYNA_COMMAND}")));
+        assert!(!text.contains("snap install"));
         assert!(text.contains("Models:\n  (none discovered)"));
         assert!(text.contains("Problems:\n  (none)"));
     }

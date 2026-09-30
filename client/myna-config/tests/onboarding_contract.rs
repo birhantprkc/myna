@@ -4,8 +4,7 @@
 use myna_config::diagnostics::InstalledSnap;
 use myna_config::onboarding::{
     assess, can_advance, completes, needs_onboarding, row_action, ComponentId, ExtensionState,
-    Machine, RowAction, Step, MODEL_INSTALL_COMMAND, MYNA_INSTALL_COMMAND, MYNA_SNAP,
-    RECOMMENDED_BACKEND_SNAP,
+    Machine, RowAction, Step, MYNA_SNAP,
 };
 
 fn snap(name: &str) -> InstalledSnap {
@@ -31,16 +30,6 @@ fn a_ready_machine_never_opens_the_wizard() {
         ..Machine::new(&[snap(MYNA_SNAP)], 1)
     };
     assert!(!needs_onboarding(&assess(machine)));
-}
-
-/// snapd refuses to install a snap declaring a user daemon on a stock machine,
-/// so the diagnostics' suggested command sets the flag first.
-#[test]
-fn the_suggested_myna_command_enables_user_daemons_first() {
-    let flag = MYNA_INSTALL_COMMAND
-        .find("experimental.user-daemons=true")
-        .expect("the command enables user daemons");
-    assert!(flag < MYNA_INSTALL_COMMAND.find("snap install").unwrap());
 }
 
 /// The wizard installs from its rows; nothing is left for a terminal.
@@ -103,20 +92,4 @@ fn the_component_step_is_the_only_gate() {
     assert!(can_advance(Step::Welcome, &bare));
     assert!(!can_advance(Step::Components, &bare));
     assert!(can_advance(Step::Shortcut, &bare));
-}
-
-/// Both snaps are published to edge only; a command without the channel
-/// fails with "no stable revision".
-#[test]
-fn every_suggested_install_command_asks_for_edge() {
-    let installs: Vec<&str> = [MYNA_INSTALL_COMMAND, MODEL_INSTALL_COMMAND]
-        .iter()
-        .flat_map(|command| command.lines())
-        .filter(|line| line.contains("snap install"))
-        .collect();
-    assert_eq!(
-        installs,
-        [MYNA_SNAP, RECOMMENDED_BACKEND_SNAP]
-            .map(|name| format!("sudo snap install --edge {name}"))
-    );
 }

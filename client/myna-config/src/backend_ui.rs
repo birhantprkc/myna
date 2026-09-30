@@ -1618,7 +1618,6 @@ impl BackendUi {
 
     fn build_diagnostics_page(self: &Rc<Self>) -> adw::NavigationPage {
         let widget = ui::DiagnosticsPage::new();
-        let preferences = widget.preferences_page();
 
         let pages = self.controller.pages();
         let discovery_error = self.controller.last_discovery_error();
@@ -1702,54 +1701,16 @@ impl BackendUi {
             "Diagnostic report",
         ))]);
 
-        // Onboarding surface, using structured, translated strings.
-        if let Some(command) = report.onboarding_command() {
-            let (title, description) = match report.onboarding() {
-                OnboardingState::NoMyna => (
-                    gettextrs::gettext("Install Myna to get started"),
-                    gettextrs::gettext(
-                        "The Myna snap is not installed. Copy this command and run it in a terminal.",
-                    ),
-                ),
-                OnboardingState::NoBackend => (
-                    gettextrs::gettext("Install a speech model to use dictation"),
-                    gettextrs::gettext(
-                        "No speech model is installed. Copy this command and run it in a terminal.",
-                    ),
-                ),
-                OnboardingState::Ready => (String::new(), String::new()),
-                OnboardingState::Unavailable => (String::new(), String::new()),
-            };
-            let group = adw::PreferencesGroup::builder()
-                .title(title)
-                .description(description)
-                .build();
-            let row = adw::ActionRow::builder()
-                .title(command)
-                .subtitle(gettextrs::gettext("Copy and run in a terminal"))
-                .build();
-            row.add_css_class("monospace");
-            let copy = gtk::Button::builder()
-                .icon_name("edit-copy-symbolic")
-                .valign(gtk::Align::Center)
-                .tooltip_text(gettextrs::gettext("Copy install command"))
-                .build();
-            copy.update_property(&[gtk::accessible::Property::Label(&gettextrs::gettext(
-                "Copy install command",
-            ))]);
-            let command_owned = command.to_owned();
-            let overlay = self.overlay.clone();
-            copy.connect_clicked(move |button| {
-                let display = button.display();
-                display.clipboard().set_text(&command_owned);
-                overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
-                    "Install command copied to clipboard",
-                )));
-            });
-            row.add_suffix(&copy);
-            row.set_activatable_widget(Some(&copy));
-            group.add(&row);
-            preferences.add(&group);
+        // What is missing installs from the wizard, never from a terminal.
+        let missing = match report.onboarding() {
+            OnboardingState::NoMyna => Some(gettextrs::gettext("Dictation is not installed")),
+            OnboardingState::NoBackend => Some(gettextrs::gettext("No speech model installed")),
+            OnboardingState::Ready | OnboardingState::Unavailable => None,
+        };
+        let setup_group = widget.setup_group();
+        setup_group.set_visible(missing.is_some());
+        if let Some(title) = missing {
+            setup_group.set_title(&title);
         }
 
         widget.upcast()
