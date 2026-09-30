@@ -3893,14 +3893,17 @@ fn backends_probe() -> glib::ExitCode {
             .visible_page()
             .map(|page| page.upcast::<gtk::Widget>())
     };
+    // Mapped, not merely present: a refresh in flight rebuilds the page with
+    // its setup group hidden.
     let leads_to_setup = || {
         diagnostics_widget().is_some_and(|page| {
             find_descendant(&page, &|widget| {
-                widget
-                    .dynamic_cast_ref::<gtk::Actionable>()
-                    .and_then(|actionable| actionable.action_name())
-                    .as_deref()
-                    == Some("win.setup")
+                widget.is_mapped()
+                    && widget
+                        .dynamic_cast_ref::<gtk::Actionable>()
+                        .and_then(|actionable| actionable.action_name())
+                        .as_deref()
+                        == Some("win.setup")
             })
             .is_some()
         })
