@@ -19,7 +19,7 @@ use myna_config::adapters::snapd_client::{
 use myna_config::adapters::system_configurator::PkexecSystemConfigurator;
 use myna_config::command::{CancellationToken, CommandOutput, FakeCommandRunner};
 use myna_config::domain::{parse_connections, BackendIdentity};
-use myna_config::ports::SystemConfigurator;
+use myna_config::ports::{FailedStep, SystemConfigurator, SystemConfiguratorError};
 use myna_config::snap_changes::ApplyProgress;
 
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -134,6 +134,7 @@ impl FakeSnapd {
     fn client(&self) -> UnixSocketSnapdClient {
         UnixSocketSnapdClient::with_socket(self.path.clone()).with_timeouts(SnapdTimeouts {
             per_request: Duration::from_secs(2),
+            authorization: Duration::from_secs(2),
             poll_interval: Duration::from_millis(20),
             total: Duration::from_secs(4),
         })
@@ -297,6 +298,7 @@ fn per_call_timeout_is_reported() {
     let client =
         UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
             per_request: Duration::from_millis(200),
+            authorization: Duration::from_millis(200),
             poll_interval: Duration::from_millis(20),
             total: Duration::from_millis(400),
         });
@@ -575,6 +577,7 @@ fn timeout_message_reports_a_positive_elapsed_duration() {
     let client =
         UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
             per_request: Duration::from_millis(150),
+            authorization: Duration::from_millis(150),
             poll_interval: Duration::from_millis(20),
             total: Duration::from_millis(300),
         });
@@ -629,6 +632,7 @@ fn backend_switch_requests_disconnect_connect_then_restarts_the_user_service() {
     let client = Arc::new(
         UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
             per_request: Duration::from_secs(2),
+            authorization: Duration::from_secs(2),
             poll_interval: Duration::from_millis(20),
             total: Duration::from_secs(4),
         }),
@@ -666,6 +670,7 @@ fn noop_backend_switch_makes_no_snapd_requests() {
     let client = Arc::new(
         UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
             per_request: Duration::from_millis(100),
+            authorization: Duration::from_millis(100),
             poll_interval: Duration::from_millis(20),
             total: Duration::from_millis(200),
         }),
@@ -800,4 +805,188 @@ fn an_unreadable_system_information_is_an_error() {
             ..
         })
     ));
+}
+
+fn step(request: &str, response: String, delay: Option<Duration>) -> Step {
+    Step {
+        request_path_contains: request.to_owned(),
+        response,
+        delay,
+        close_early: false,
+    }
+}
+
+const CHANGE_9_ACCEPTED: &str = r#"{"type":"async","status-code":202,"change":"9"}"#;
+const CHANGE_9_DONE: &str =
+    r#"{"type":"sync","status-code":200,"result":{"ready":true,"status":"Done"}}"#;
+
+/// snapd asks polkit for `manage-configuration`, and the change is done once
+/// the core snap's configure hook ran.
+#[test]
+fn turning_user_daemons_on_puts_the_flag_and_follows_its_change() {
+    let fake = FakeSnapd::start(vec![
+        step(
+            "PUT /v2/snaps/system/conf ",
+            http_body(202, "Accepted", CHANGE_9_ACCEPTED),
+            None,
+        ),
+        step(
+            "GET /v2/changes/9 ",
+            http_body(
+                200,
+                "OK",
+                r#"{"type":"sync","status-code":200,"result":{"ready":false,"status":"Doing"}}"#,
+            ),
+            None,
+        ),
+        step(
+            "GET /v2/changes/9 ",
+            http_body(200, "OK", CHANGE_9_DONE),
+            None,
+        ),
+    ]);
+
+    let outcome = block_on(fake.client().enable_user_daemons(CancellationToken::new()));
+
+    assert_eq!(outcome, Ok(()));
+    let calls = fake.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert!(calls[0].starts_with("PUT /v2/snaps/system/conf HTTP/1.1\r\n"));
+    assert!(calls[0].contains("X-Allow-Interaction: true\r\n"));
+    assert!(calls[0].ends_with("\r\n\r\n{\"experimental.user-daemons\":true}"));
+}
+
+/// snapd answers only once the user has answered polkit, which may take
+/// longer than any read: measured 40 s on Noble for a prompt left open.
+#[test]
+fn the_authorization_prompt_may_outlast_a_request() {
+    let fake = FakeSnapd::start(vec![
+        step(
+            "PUT /v2/snaps/system/conf ",
+            http_body(202, "Accepted", CHANGE_9_ACCEPTED),
+            Some(Duration::from_millis(600)),
+        ),
+        step(
+            "GET /v2/changes/9 ",
+            http_body(200, "OK", CHANGE_9_DONE),
+            None,
+        ),
+    ]);
+    let client =
+        UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
+            per_request: Duration::from_millis(200),
+            authorization: Duration::from_secs(3),
+            poll_interval: Duration::from_millis(20),
+            total: Duration::from_millis(400),
+        });
+
+    assert_eq!(
+        block_on(client.enable_user_daemons(CancellationToken::new())),
+        Ok(())
+    );
+}
+
+#[test]
+fn a_connect_prompt_may_outlast_a_request() {
+    let fake = FakeSnapd::start(vec![step(
+        "POST /v2/interfaces ",
+        http_body(
+            200,
+            "OK",
+            r#"{"type":"sync","status-code":200,"result":{}}"#,
+        ),
+        Some(Duration::from_millis(600)),
+    )]);
+    let client =
+        UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
+            per_request: Duration::from_millis(200),
+            authorization: Duration::from_secs(3),
+            poll_interval: Duration::from_millis(20),
+            total: Duration::from_millis(400),
+        });
+
+    let outcome = block_on(client.apply_interface_action(
+        InterfaceAction::Connect {
+            backend_snap: "backend".into(),
+            backend_slot: "provider".into(),
+        },
+        CancellationToken::new(),
+    ));
+
+    assert_eq!(outcome, Ok(SnapdOutcome::Sync));
+}
+
+fn enable_user_daemons_answered(response: String) -> Result<(), SystemConfiguratorError> {
+    let fake = FakeSnapd::start(vec![step("PUT /v2/snaps/system/conf ", response, None)]);
+    let configurator = PkexecSystemConfigurator::with_snapd_client(
+        Arc::new(FakeCommandRunner::default()),
+        Arc::new(fake.client()),
+    );
+    block_on(configurator.enable_user_daemons(CancellationToken::new()))
+}
+
+#[test]
+fn a_dismissed_prompt_cancels_turning_user_daemons_on() {
+    assert_eq!(
+        enable_user_daemons_answered(http_body(
+            403,
+            "Forbidden",
+            r#"{"type":"error","status-code":403,"result":{"message":"cancelled","kind":"auth-cancelled"}}"#,
+        )),
+        Err(SystemConfiguratorError::Cancelled)
+    );
+}
+
+#[test]
+fn a_refused_prompt_denies_turning_user_daemons_on() {
+    let refused = enable_user_daemons_answered(http_body(
+        401,
+        "Unauthorized",
+        r#"{"type":"error","status-code":401,"result":{"message":"access denied","kind":"login-required"}}"#,
+    ));
+    match refused {
+        Err(SystemConfiguratorError::AuthorizationDenied { step, message }) => {
+            assert_eq!(
+                step,
+                FailedStep::Snapd {
+                    request: "PUT /v2/snaps/system/conf (experimental.user-daemons=true)"
+                        .to_owned(),
+                    http_status: Some(401),
+                }
+            );
+            assert_eq!(message, "access denied");
+        }
+        other => panic!("expected an authorization denial, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_failed_configuration_change_is_reported() {
+    let fake = FakeSnapd::start(vec![
+        step(
+            "PUT /v2/snaps/system/conf ",
+            http_body(202, "Accepted", CHANGE_9_ACCEPTED),
+            None,
+        ),
+        step(
+            "GET /v2/changes/9 ",
+            http_body(
+                200,
+                "OK",
+                r#"{"type":"sync","status-code":200,"result":{"ready":true,"status":"Error","err":"cannot run hook"}}"#,
+            ),
+            None,
+        ),
+    ]);
+    let configurator = PkexecSystemConfigurator::with_snapd_client(
+        Arc::new(FakeCommandRunner::default()),
+        Arc::new(fake.client()),
+    );
+
+    let failed = block_on(configurator.enable_user_daemons(CancellationToken::new()));
+
+    assert!(
+        matches!(&failed, Err(SystemConfiguratorError::Execution { message, .. }) if message == "cannot run hook"),
+        "{failed:?}"
+    );
 }

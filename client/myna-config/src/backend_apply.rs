@@ -6,7 +6,7 @@ use crate::domain::{
     BackendIdentity, BackendSnapshot, BackendSurface, CommandResult, ConfigValue, ServiceState,
     StagedChange,
 };
-use crate::ports::{BackendRepository, SystemConfigurator, SystemConfiguratorError};
+use crate::ports::{BackendRepository, FailedStep, SystemConfigurator, SystemConfiguratorError};
 use crate::presentation::RestartBehavior;
 
 const READINESS_ATTEMPTS: usize = 30;
@@ -184,28 +184,13 @@ impl ReadBackMismatch {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivilegedFailure {
-    executable: String,
-    arguments: Vec<String>,
-    exit_status: Option<i32>,
-    stderr: String,
+    step: FailedStep,
     message: String,
 }
 
 impl PrivilegedFailure {
-    pub fn executable(&self) -> &str {
-        &self.executable
-    }
-
-    pub fn arguments(&self) -> &[String] {
-        &self.arguments
-    }
-
-    pub fn exit_status(&self) -> Option<i32> {
-        self.exit_status
-    }
-
-    pub fn stderr(&self) -> &str {
-        &self.stderr
+    pub fn step(&self) -> &FailedStep {
+        &self.step
     }
 
     pub fn message(&self) -> &str {
@@ -551,50 +536,16 @@ fn restart_impact_from_behaviors(behaviors: &[RestartBehavior]) -> RestartImpact
 fn map_system_error(error: SystemConfiguratorError) -> ApplyFailure {
     match error {
         SystemConfiguratorError::Cancelled => ApplyFailure::CancelledExecution,
-        SystemConfiguratorError::AuthorizationDenied {
-            executable,
-            arguments,
-            exit_status,
-            stderr,
-            message,
-        } => ApplyFailure::AuthorizationDenied {
-            details: PrivilegedFailure {
-                executable,
-                arguments,
-                exit_status,
-                stderr,
-                message,
-            },
+        SystemConfiguratorError::AuthorizationDenied { step, message } => {
+            ApplyFailure::AuthorizationDenied {
+                details: PrivilegedFailure { step, message },
+            }
+        }
+        SystemConfiguratorError::ValuesRejected { step, message } => ApplyFailure::ValuesRejected {
+            details: PrivilegedFailure { step, message },
         },
-        SystemConfiguratorError::ValuesRejected {
-            executable,
-            arguments,
-            exit_status,
-            stderr,
-            message,
-        } => ApplyFailure::ValuesRejected {
-            details: PrivilegedFailure {
-                executable,
-                arguments,
-                exit_status,
-                stderr,
-                message,
-            },
-        },
-        SystemConfiguratorError::Execution {
-            executable,
-            arguments,
-            exit_status,
-            stderr,
-            message,
-        } => ApplyFailure::Execution {
-            details: PrivilegedFailure {
-                executable,
-                arguments,
-                exit_status,
-                stderr,
-                message,
-            },
+        SystemConfiguratorError::Execution { step, message } => ApplyFailure::Execution {
+            details: PrivilegedFailure { step, message },
         },
     }
 }
@@ -775,6 +726,13 @@ mod tests {
             _cancellation: CancellationToken,
         ) -> Result<bool, String> {
             Ok(true)
+        }
+
+        async fn enable_user_daemons(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<(), SystemConfiguratorError> {
+            unreachable!("the settings window never turns the flag on")
         }
 
         async fn restart_myna(
@@ -1715,8 +1673,11 @@ mod tests {
         assert!(matches!(
             *failure,
             SystemConfiguratorError::Execution {
-                exit_status: Some(1),
-                ref arguments,
+                step: FailedStep::Command {
+                    exit_status: Some(1),
+                    ref arguments,
+                    ..
+                },
                 ..
             } if arguments == &["restart", "myna-parakeet"]
         ));
@@ -1788,8 +1749,11 @@ mod tests {
         assert!(matches!(
             error.error(),
             SystemConfiguratorError::Execution {
-                arguments,
-                stderr,
+                step: FailedStep::Command {
+                    arguments,
+                    stderr,
+                    ..
+                },
                 ..
             } if arguments == &["restart", "myna-parakeet"]
                 && stderr == "restart failed"

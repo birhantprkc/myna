@@ -26,7 +26,9 @@ use crate::onboarding::{
     unlocked, Component, ComponentId, ComponentState, Machine, ModelOffer, RowAction, Step,
     Unavailable, MYNA_DOWNLOAD_BYTES, RECOMMENDED_BACKEND_SNAP, SHELL_EXTENSION_UUID,
 };
-use crate::ports::{BackendRepository, ShellExtensions, SystemConfigurator};
+use crate::ports::{
+    BackendRepository, ShellExtensions, SystemConfigurator, SystemConfiguratorError,
+};
 use crate::snap_changes::ApplyProgress;
 use crate::ui;
 
@@ -39,6 +41,16 @@ const SNAPD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// How long "All required components installed" shows before the wizard moves on by
 /// itself.
 const BEAT: Duration = Duration::from_secs(1);
+
+/// Where turning snapd's flag on stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FlagWrite {
+    Idle,
+    /// snapd has not answered: polkit's prompt may be open.
+    Asking,
+    /// snapd turned it on; the switch waits for a read that shows it.
+    Confirming,
+}
 
 pub struct OnboardingUi {
     window: ui::OnboardingWindow,
@@ -54,6 +66,11 @@ pub struct OnboardingUi {
     /// Why the last assessment could not read the machine.
     problem: RefCell<Option<String>>,
     busy: Cell<bool>,
+    flag_write: Cell<FlagWrite>,
+    flag_cancellation: RefCell<Option<CancellationToken>>,
+    /// Bumped by every flag write, so a read that started before one is not
+    /// taken for the machine after it.
+    epoch: Cell<u64>,
     stage: RefCell<Option<SetupStage>>,
     setup_cancellation: RefCell<Option<CancellationToken>>,
     /// The last line logged, so a poll repeats none.
@@ -151,6 +168,9 @@ impl OnboardingUi {
             })),
             problem: RefCell::default(),
             busy: Cell::new(false),
+            flag_write: Cell::new(FlagWrite::Idle),
+            flag_cancellation: RefCell::default(),
+            epoch: Cell::new(0),
             stage: RefCell::default(),
             setup_cancellation: RefCell::default(),
             logged: RefCell::default(),
@@ -162,16 +182,22 @@ impl OnboardingUi {
             finished: RefCell::new(Some(finished)),
         });
 
-        // Turning the flag on is not wired yet, so the switch only shows what
-        // snapd reports.
+        // The switch turns the flag on and never off: snapd refuses Myna's
+        // refreshes without it. Its state is only ever what snapd reports.
         components_page.flag_switch().connect_state_set({
             let ui = Rc::downgrade(&ui);
             move |switch, requested| {
-                if let Some(ui) = ui.upgrade() {
-                    if requested != flag_enabled(&ui.components.borrow()) {
-                        let switch = switch.clone();
-                        glib::idle_add_local_once(move || switch.set_active(switch.state()));
-                    }
+                let Some(ui) = ui.upgrade() else {
+                    return glib::Propagation::Stop;
+                };
+                let flag = flag_enabled(&ui.components.borrow());
+                // A pending write shows the switch on until snapd answers.
+                let shown = flag || ui.flag_write.get() != FlagWrite::Idle;
+                if requested && !shown {
+                    ui.enable_flag();
+                } else if requested != shown {
+                    let switch = switch.clone();
+                    glib::idle_add_local_once(move || switch.set_active(shown));
                 }
                 glib::Propagation::Stop
             }
@@ -222,6 +248,9 @@ impl OnboardingUi {
             let held = RefCell::new(Some(ui.clone()));
             move |_| {
                 if let Some(ui) = held.borrow_mut().take() {
+                    if let Some(cancellation) = ui.flag_cancellation.take() {
+                        cancellation.cancel();
+                    }
                     if let Some(cancellation) = ui.setup_cancellation.take() {
                         ui.log("setup: cancelled, the wizard closed");
                         cancellation.cancel();
@@ -244,6 +273,7 @@ impl OnboardingUi {
         if self.assessing.replace(true) {
             return;
         }
+        let epoch = self.epoch.get();
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
         let configurator = self.configurator.clone();
@@ -258,8 +288,15 @@ impl OnboardingUi {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
-            ui.offer.set(offer);
             ui.assessing.set(false);
+            if ui.epoch.get() != epoch {
+                ui.refresh_assessment();
+                return;
+            }
+            if ui.flag_write.get() == FlagWrite::Confirming {
+                ui.flag_write.set(FlagWrite::Idle);
+            }
+            ui.offer.set(offer);
             match &problem {
                 Some(problem) => ui.log(&format!("assessment: {problem}")),
                 None => ui.log(&format!("assessment: {}", describe(&components))),
@@ -277,6 +314,62 @@ impl OnboardingUi {
                 ui.render();
             }
         });
+    }
+
+    /// Ask snapd to turn the flag on. Its polkit prompt is the only
+    /// question; dismissing it puts the switch back silently, a refusal or
+    /// failure with a toast whose Details open the report.
+    fn enable_flag(self: &Rc<Self>) {
+        let cancellation = CancellationToken::new();
+        self.flag_cancellation.replace(Some(cancellation.clone()));
+        self.flag_write.set(FlagWrite::Asking);
+        self.epoch.set(self.epoch.get() + 1);
+        self.log("flag: enabling user daemons");
+        self.render();
+        let ui = Rc::downgrade(self);
+        let configurator = self.configurator.clone();
+        glib::spawn_future_local(async move {
+            let outcome = configurator.enable_user_daemons(cancellation).await;
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.flag_cancellation.take();
+            ui.epoch.set(ui.epoch.get() + 1);
+            match outcome {
+                Ok(()) => {
+                    ui.log("flag: enabled");
+                    ui.flag_write.set(FlagWrite::Confirming);
+                    ui.refresh_assessment();
+                }
+                Err(SystemConfiguratorError::Cancelled) => {
+                    ui.log("flag: the prompt was dismissed");
+                    ui.flag_write.set(FlagWrite::Idle);
+                }
+                Err(error) => {
+                    ui.log(&format!("flag: failed: {error}"));
+                    ui.flag_write.set(FlagWrite::Idle);
+                    ui.announce_flag_failure(&error);
+                }
+            }
+            ui.render();
+        });
+    }
+
+    fn announce_flag_failure(&self, error: &SystemConfiguratorError) {
+        let heading = gettextrs::gettext("Enabling user daemons failed");
+        let summary = crate::backend_ui::system_failure_summary(error);
+        let details = crate::backend_ui::system_error_details(error);
+        let toast = adw::Toast::builder()
+            .title(crate::markup::escape_markup(&heading))
+            .button_label(gettextrs::gettext("Details"))
+            .build();
+        toast.connect_button_clicked({
+            let window = self.window.clone();
+            move |_| {
+                ui::OperationErrorDialog::new(&heading, &summary, &details).present(Some(&window));
+            }
+        });
+        self.window.overlay().add_toast(toast);
     }
 
     fn advance(self: &Rc<Self>) {
@@ -462,9 +555,27 @@ impl OnboardingUi {
     fn render_components(&self, components: &[Component]) {
         let page = &self.components_page;
         let flag = flag_enabled(components);
+        let pending = self.flag_write.get() != FlagWrite::Idle;
         let switch = page.flag_switch();
-        switch.set_active(flag);
+        switch.set_active(flag || pending);
         switch.set_state(flag);
+        let flag_row = page.flag_row();
+        // Busy, not insensitive: an insensitive row dims its subtitle.
+        for widget in [flag_row.upcast_ref::<gtk::Widget>(), switch.upcast_ref()] {
+            widget.set_can_target(!pending);
+            widget.set_can_focus(!pending);
+        }
+        let spinner = page.flag_spinner();
+        spinner.set_visible(pending);
+        spinner.set_spinning(pending);
+        let flag_subtitle = if pending {
+            gettextrs::gettext("Enabling…")
+        } else {
+            gettextrs::gettext("Required by the Dictation app")
+        };
+        flag_row.set_subtitle(&flag_subtitle);
+        flag_row.update_property(&[gtk::accessible::Property::Description(&flag_subtitle)]);
+        flag_row.update_state(&[gtk::accessible::State::Busy(pending)]);
         page.component_list()
             .set_sensitive(unlocked(ComponentId::Myna, components));
         for component in components {

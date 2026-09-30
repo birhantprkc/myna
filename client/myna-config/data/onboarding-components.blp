@@ -42,6 +42,16 @@ template $OnboardingComponents: Adw.Bin {
             activatable-widget: flag_switch;
 
             [suffix]
+            Gtk.Spinner flag_spinner {
+              visible: false;
+              valign: center;
+
+              accessibility {
+                label: _("Enabling user daemons");
+              }
+            }
+
+            [suffix]
             Gtk.Switch flag_switch {
               valign: center;
             }
@@ -53,6 +63,7 @@ template $OnboardingComponents: Adw.Bin {
 
           styles [
             "boxed-list",
+            "onboarding-components",
           ]
 
           Adw.ActionRow myna_row {

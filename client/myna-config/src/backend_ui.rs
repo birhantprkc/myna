@@ -1976,7 +1976,7 @@ fn apply_report(
     }
 }
 
-fn system_failure_summary(error: &crate::ports::SystemConfiguratorError) -> String {
+pub(crate) fn system_failure_summary(error: &crate::ports::SystemConfiguratorError) -> String {
     match error {
         crate::ports::SystemConfiguratorError::Cancelled => {
             gettextrs::gettext("The change was interrupted after it started.")
@@ -1993,115 +1993,79 @@ fn system_failure_summary(error: &crate::ports::SystemConfiguratorError) -> Stri
     }
 }
 
-/// Redact-and-format the full details for a privileged failure that carries
-/// the executable/argv/exit-status/stderr/message the adapter retained. Every
-/// field flows through [`diagnostics::redact_text`] before being rendered.
 fn privileged_failure_details(details: &crate::backend_apply::PrivilegedFailure) -> String {
-    let mut out = String::new();
-    out.push_str(&gettextrs::gettext("Executable:"));
-    out.push(' ');
-    out.push_str(&diagnostics::redact_text(details.executable()));
-    out.push('\n');
-    out.push_str(&gettextrs::gettext("Arguments:"));
-    if details.arguments().is_empty() {
-        out.push_str(" -");
-    } else {
-        for argument in details.arguments() {
-            out.push(' ');
-            out.push_str(&diagnostics::redact_text(argument));
-        }
-    }
-    out.push('\n');
-    out.push_str(&gettextrs::gettext("Exit status:"));
-    out.push(' ');
-    match details.exit_status() {
-        Some(code) => out.push_str(&code.to_string()),
-        None => out.push('-'),
-    }
-    out.push('\n');
-    if !details.stderr().trim().is_empty() {
-        out.push_str(&gettextrs::gettext("Standard error:"));
-        out.push('\n');
-        out.push_str(&diagnostics::redact_text(details.stderr()));
-        out.push('\n');
-    }
-    out.push_str(&gettextrs::gettext("Message:"));
-    out.push('\n');
-    out.push_str(&diagnostics::redact_text(details.message()));
-    out
+    failure_details(Some(details.step()), details.message())
 }
 
-/// Format the executable, argv, exit status, stderr, and message retained on
-/// a [`SystemConfiguratorError`]. Every field flows through
-/// [`diagnostics::redact_text`] first.
-fn system_error_details(error: &crate::ports::SystemConfiguratorError) -> String {
-    let (executable, arguments, exit_status, stderr, message) = match error {
-        crate::ports::SystemConfiguratorError::Cancelled => (
-            "",
-            &[] as &[String],
-            None,
-            "",
-            "privileged configuration was cancelled",
-        ),
-        crate::ports::SystemConfiguratorError::AuthorizationDenied {
-            executable,
-            arguments,
-            exit_status,
-            stderr,
-            message,
+pub(crate) fn system_error_details(error: &crate::ports::SystemConfiguratorError) -> String {
+    let message = match error {
+        crate::ports::SystemConfiguratorError::Cancelled => {
+            "privileged configuration was cancelled"
         }
-        | crate::ports::SystemConfiguratorError::ValuesRejected {
-            executable,
-            arguments,
-            exit_status,
-            stderr,
-            message,
-        }
-        | crate::ports::SystemConfiguratorError::Execution {
-            executable,
-            arguments,
-            exit_status,
-            stderr,
-            message,
-        } => (
-            executable.as_str(),
-            arguments.as_slice(),
-            *exit_status,
-            stderr.as_str(),
-            message.as_str(),
-        ),
+        crate::ports::SystemConfiguratorError::AuthorizationDenied { message, .. }
+        | crate::ports::SystemConfiguratorError::ValuesRejected { message, .. }
+        | crate::ports::SystemConfiguratorError::Execution { message, .. } => message,
     };
+    failure_details(error.step(), message)
+}
+
+/// Name the failed step as what it was, a command or a snapd request, then
+/// the message. Every field but the snapd request flows through
+/// [`diagnostics::redact_text`].
+fn failure_details(step: Option<&crate::ports::FailedStep>, message: &str) -> String {
     let mut out = String::new();
-    out.push_str(&gettextrs::gettext("Executable:"));
-    out.push(' ');
-    if executable.is_empty() {
-        out.push('-');
-    } else {
-        out.push_str(&diagnostics::redact_text(executable));
-    }
-    out.push('\n');
-    out.push_str(&gettextrs::gettext("Arguments:"));
-    if arguments.is_empty() {
-        out.push_str(" -");
-    } else {
-        for argument in arguments {
+    match step {
+        Some(crate::ports::FailedStep::Command {
+            executable,
+            arguments,
+            exit_status,
+            stderr,
+        }) => {
+            out.push_str(&gettextrs::gettext("Executable:"));
             out.push(' ');
-            out.push_str(&diagnostics::redact_text(argument));
+            out.push_str(&diagnostics::redact_text(executable));
+            out.push('\n');
+            out.push_str(&gettextrs::gettext("Arguments:"));
+            if arguments.is_empty() {
+                out.push_str(" -");
+            }
+            for argument in arguments {
+                out.push(' ');
+                out.push_str(&diagnostics::redact_text(argument));
+            }
+            out.push('\n');
+            out.push_str(&gettextrs::gettext("Exit status:"));
+            out.push(' ');
+            match exit_status {
+                Some(code) => out.push_str(&code.to_string()),
+                None => out.push('-'),
+            }
+            out.push('\n');
+            if !stderr.trim().is_empty() && stderr.trim() != message.trim() {
+                out.push_str(&gettextrs::gettext("Standard error:"));
+                out.push('\n');
+                out.push_str(&diagnostics::redact_text(stderr));
+                out.push('\n');
+            }
         }
-    }
-    out.push('\n');
-    out.push_str(&gettextrs::gettext("Exit status:"));
-    out.push(' ');
-    match exit_status {
-        Some(code) => out.push_str(&code.to_string()),
-        None => out.push('-'),
-    }
-    out.push('\n');
-    if !stderr.trim().is_empty() {
-        out.push_str(&gettextrs::gettext("Standard error:"));
-        out.push('\n');
-        out.push_str(&diagnostics::redact_text(stderr));
-        out.push('\n');
+        Some(crate::ports::FailedStep::Snapd {
+            request,
+            http_status,
+        }) => {
+            out.push_str(&gettextrs::gettext("Request:"));
+            out.push(' ');
+            // Built from API paths and snap names, which the redactor would
+            // mistake for private file paths.
+            out.push_str(request);
+            out.push('\n');
+            if let Some(status) = http_status {
+                out.push_str(&gettextrs::gettext("HTTP status:"));
+                out.push(' ');
+                out.push_str(&status.to_string());
+                out.push('\n');
+            }
+        }
+        None => {}
     }
     out.push_str(&gettextrs::gettext("Message:"));
     out.push('\n');
@@ -4573,6 +4537,13 @@ mod tests {
             _cancellation: CancellationToken,
         ) -> Result<bool, String> {
             Ok(true)
+        }
+
+        async fn enable_user_daemons(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<(), crate::ports::SystemConfiguratorError> {
+            unreachable!("the settings window never turns the flag on")
         }
 
         async fn execute_backend_switch(

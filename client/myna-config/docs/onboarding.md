@@ -85,9 +85,26 @@ Each row ends in what the wizard can do about it (`onboarding::row_action`):
   shows its status in notifications), installed after login (log out and back
   in), or hidden by a copy in `~/.local/share/gnome-shell/extensions`.
 
-The switch shows snapd's flag and nothing else: toggling it springs back
-until turning the flag on is wired, so it never claims a state snapd does not
-report. The Install and Enable buttons do not act yet either.
+The switch turns the flag on through snapd's REST API as the user
+(`PUT /v2/snaps/system/conf`), and snapd raises polkit's prompt for
+`io.snapcraft.snapd.manage-configuration` itself: no root code of ours, one
+prompt. The prompt therefore shows snapd's wording ("access or modify snap
+configuration"), not a Myna one. While snapd has not answered, the switch
+shows on but not yet active, a spinner sits beside it and the subtitle reads
+"Enabling…"; the row stops taking input but stays sensitive, as the settings
+window's busy rows do. snapd answers only once the prompt is, 40 s for one
+left open on Noble, so the write waits up to 10 min for that answer
+(`SnapdTimeouts::authorization`) before following the change; interface
+connects wait the same way. Dismissing the prompt puts the switch back
+silently; a refusal or a failed change puts it back with a toast whose
+Details open the report, which names the snapd request and its HTTP
+status rather than a command. Success keeps the switch pending until a fresh read
+shows the flag, then unlocks the list. A read that started before the write
+is discarded rather than taken for the machine after it. The switch never
+turns the flag off: activating it again springs back, since snapd refuses
+Myna's refreshes without the flag.
+
+The Install and Enable buttons do not act yet.
 
 The subtitles size the download. The app's is the store's size of the `myna`
 snap. The model's names the family and the size of what its install fetches:

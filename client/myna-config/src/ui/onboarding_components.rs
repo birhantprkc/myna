@@ -15,6 +15,8 @@ mod imp {
         #[template_child]
         pub flag_row: gtk::TemplateChild<adw::ActionRow>,
         #[template_child]
+        pub flag_spinner: gtk::TemplateChild<gtk::Spinner>,
+        #[template_child]
         pub flag_switch: gtk::TemplateChild<gtk::Switch>,
         #[template_child]
         pub component_list: gtk::TemplateChild<gtk::ListBox>,
@@ -81,6 +83,10 @@ impl OnboardingComponents {
 
     pub fn flag_row(&self) -> adw::ActionRow {
         self.imp().flag_row.get()
+    }
+
+    pub fn flag_spinner(&self) -> gtk::Spinner {
+        self.imp().flag_spinner.get()
     }
 
     pub fn flag_switch(&self) -> gtk::Switch {

@@ -16,19 +16,13 @@ template $OperationErrorDialog: Adw.AlertDialog {
     orientation: vertical;
     spacing: 12;
 
-    Gtk.ScrolledWindow scroller {
-      min-content-height: 320;
-      propagate-natural-height: true;
-      hexpand: true;
-
-      child: Gtk.Label details_label {
-        wrap: true;
-        wrap-mode: word_char;
-        selectable: true;
-        xalign: 0;
-        yalign: 0;
-        use-markup: false;
-      };
+    Gtk.Label details_label {
+      wrap: true;
+      wrap-mode: word_char;
+      selectable: true;
+      xalign: 0;
+      yalign: 0;
+      use-markup: false;
     }
 
     Gtk.Button copy_button {

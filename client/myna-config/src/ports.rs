@@ -88,6 +88,13 @@ pub trait SystemConfigurator {
     /// user.
     async fn user_daemons_enabled(&self, cancellation: CancellationToken) -> Result<bool, String>;
 
+    /// Turn snapd's `experimental.user-daemons` flag on, as the user: snapd
+    /// raises polkit's prompt itself.
+    async fn enable_user_daemons(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<(), SystemConfiguratorError>;
+
     /// What snapd is doing on `backend_snap` now, while an apply runs; none
     /// when it is doing nothing there or cannot be read.
     async fn apply_progress(
@@ -148,34 +155,35 @@ pub enum ClientSettingsError {
     StoreUnavailable { message: String },
 }
 
+/// The privileged step a failure report names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FailedStep {
+    /// A process run directly or under `pkexec`.
+    Command {
+        executable: String,
+        arguments: Vec<String>,
+        exit_status: Option<i32>,
+        stderr: String,
+    },
+    /// A request to snapd's REST API made as the user, such as
+    /// `PUT /v2/snaps/system/conf (experimental.user-daemons=true)`; no
+    /// status when snapd never answered.
+    Snapd {
+        request: String,
+        http_status: Option<u16>,
+    },
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum SystemConfiguratorError {
     #[error("privileged configuration was cancelled")]
     Cancelled,
     #[error("authorization denied: {message}")]
-    AuthorizationDenied {
-        executable: String,
-        arguments: Vec<String>,
-        exit_status: Option<i32>,
-        stderr: String,
-        message: String,
-    },
+    AuthorizationDenied { step: FailedStep, message: String },
     #[error("the model rejected the requested values: {message}")]
-    ValuesRejected {
-        executable: String,
-        arguments: Vec<String>,
-        exit_status: Option<i32>,
-        stderr: String,
-        message: String,
-    },
+    ValuesRejected { step: FailedStep, message: String },
     #[error("privileged configuration failed: {message}")]
-    Execution {
-        executable: String,
-        arguments: Vec<String>,
-        exit_status: Option<i32>,
-        stderr: String,
-        message: String,
-    },
+    Execution { step: FailedStep, message: String },
 }
 
 impl SystemConfiguratorError {
@@ -185,18 +193,14 @@ impl SystemConfiguratorError {
         exit_status: Option<i32>,
         stderr: impl Into<String>,
     ) -> Self {
-        let stderr = stderr.into();
-        Self::AuthorizationDenied {
-            executable: executable.into(),
+        let (step, message) = command_failure(
+            executable,
             arguments,
             exit_status,
-            message: if stderr.trim().is_empty() {
-                "authorization denied".to_owned()
-            } else {
-                stderr.trim().to_owned()
-            },
             stderr,
-        }
+            "authorization denied",
+        );
+        Self::AuthorizationDenied { step, message }
     }
 
     pub fn values_rejected(
@@ -205,18 +209,14 @@ impl SystemConfiguratorError {
         exit_status: Option<i32>,
         stderr: impl Into<String>,
     ) -> Self {
-        let stderr = stderr.into();
-        Self::ValuesRejected {
-            executable: executable.into(),
+        let (step, message) = command_failure(
+            executable,
             arguments,
             exit_status,
-            message: if stderr.trim().is_empty() {
-                "the model rejected the requested values".to_owned()
-            } else {
-                stderr.trim().to_owned()
-            },
             stderr,
-        }
+            "the model rejected the requested values",
+        );
+        Self::ValuesRejected { step, message }
     }
 
     pub fn execution(
@@ -227,11 +227,77 @@ impl SystemConfiguratorError {
         message: impl Into<String>,
     ) -> Self {
         Self::Execution {
-            executable: executable.into(),
-            arguments,
-            exit_status,
-            stderr: stderr.into(),
+            step: FailedStep::Command {
+                executable: executable.into(),
+                arguments,
+                exit_status,
+                stderr: stderr.into(),
+            },
             message: message.into(),
         }
     }
+
+    pub fn snapd_authorization_denied(
+        request: impl Into<String>,
+        http_status: u16,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::AuthorizationDenied {
+            step: FailedStep::Snapd {
+                request: request.into(),
+                http_status: Some(http_status),
+            },
+            message: message.into(),
+        }
+    }
+
+    pub fn snapd_execution(
+        request: impl Into<String>,
+        http_status: Option<u16>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::Execution {
+            step: FailedStep::Snapd {
+                request: request.into(),
+                http_status,
+            },
+            message: message.into(),
+        }
+    }
+
+    /// The step that failed; none for a cancellation.
+    pub fn step(&self) -> Option<&FailedStep> {
+        match self {
+            Self::Cancelled => None,
+            Self::AuthorizationDenied { step, .. }
+            | Self::ValuesRejected { step, .. }
+            | Self::Execution { step, .. } => Some(step),
+        }
+    }
+}
+
+/// A failed command whose message is its stderr, or `fallback` when it
+/// printed nothing.
+fn command_failure(
+    executable: impl Into<String>,
+    arguments: Vec<String>,
+    exit_status: Option<i32>,
+    stderr: impl Into<String>,
+    fallback: &str,
+) -> (FailedStep, String) {
+    let stderr = stderr.into();
+    let message = if stderr.trim().is_empty() {
+        fallback.to_owned()
+    } else {
+        stderr.trim().to_owned()
+    };
+    (
+        FailedStep::Command {
+            executable: executable.into(),
+            arguments,
+            exit_status,
+            stderr,
+        },
+        message,
+    )
 }

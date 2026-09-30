@@ -260,6 +260,13 @@ impl SystemConfigurator for FakeConfigurator {
         Ok(true)
     }
 
+    async fn enable_user_daemons(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> Result<(), SystemConfiguratorError> {
+        unreachable!("a backend switch never turns the flag on")
+    }
+
     async fn execute_backend_switch(
         &self,
         plan: &SwitchPlan,
@@ -886,7 +893,11 @@ fn a_failed_or_contradicted_switch_is_reported() {
         SwitchPlan::new(&initial, BackendIdentity::new("myna-parakeet", "provider")).unwrap();
     let denied = FakeConfigurator::returning(Err(SystemConfiguratorFailure::new(
         Vec::new(),
-        SystemConfiguratorError::authorization_denied("snapd", vec![], Some(403), "cancelled"),
+        SystemConfiguratorError::snapd_authorization_denied(
+            "POST /v2/interfaces",
+            403,
+            "cancelled",
+        ),
     )));
     let repository = FakeRepository::new([
         Ok(initial.clone()),

@@ -540,15 +540,6 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-rows: locked until the flag");
-    // Nothing turns the flag on yet, so the switch cannot claim it.
-    flag.activate();
-    settle_gtk();
-    settle_gtk();
-    if flag.state() || flag.is_active() {
-        eprintln!("the switch claims the flag with snapd not setting it");
-        return glib::ExitCode::FAILURE;
-    }
-    println!("onboarding-flag: follows snapd");
 
     // Installing happens in another window; coming back re-reads the machine.
     let elsewhere = gtk::Window::new();
@@ -593,6 +584,11 @@ fn onboarding_probe() -> glib::ExitCode {
     println!("onboarding-unreadable: said why");
     window.close();
     settle_gtk();
+
+    if let Err(failure) = probe_flag_switch(&application) {
+        eprintln!("{failure}");
+        return glib::ExitCode::FAILURE;
+    }
 
     // With the flag on, the list takes input: each snap offers Install, and
     // a disabled extension Enable.
@@ -2228,6 +2224,18 @@ struct ProbeMachine {
     /// polkit refuses every privileged apply.
     refusing_applies: std::sync::Arc<std::sync::atomic::AtomicBool>,
     switches_attempted: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// How snapd answers the next writes of the flag; success once empty.
+    flag_answers: std::sync::Arc<
+        std::sync::Mutex<
+            std::collections::VecDeque<Result<(), crate::ports::SystemConfiguratorError>>,
+        >,
+    >,
+    /// A flag write waits while this is set, as while polkit's prompt is open.
+    holding_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    flag_writes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// A flag read answers what it read only once this is cleared.
+    holding_reads: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    flag_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ProbeMachine {
@@ -2253,7 +2261,37 @@ impl ProbeMachine {
             denying: std::sync::Arc::default(),
             refusing_applies: std::sync::Arc::default(),
             switches_attempted: std::sync::Arc::default(),
+            flag_answers: std::sync::Arc::default(),
+            holding_flag: std::sync::Arc::default(),
+            flag_writes: std::sync::Arc::default(),
+            holding_reads: std::sync::Arc::default(),
+            flag_reads: std::sync::Arc::default(),
         }
+    }
+
+    fn answer_flag(&self, answer: Result<(), crate::ports::SystemConfiguratorError>) {
+        self.flag_answers
+            .lock()
+            .expect("probe machine lock")
+            .push_back(answer);
+    }
+
+    fn hold_flag(&self, holding: bool) {
+        self.holding_flag
+            .store(holding, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn hold_reads(&self, holding: bool) {
+        self.holding_reads
+            .store(holding, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn flag_reads(&self) -> usize {
+        self.flag_reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn flag_writes(&self) -> usize {
+        self.flag_writes.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn dismiss_authorization(&self, dismissing: bool) {
@@ -2429,8 +2467,36 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
         &self,
         _cancellation: crate::command::CancellationToken,
     ) -> Result<bool, String> {
-        Ok(!self.bare.load(std::sync::atomic::Ordering::SeqCst)
-            || self.flagged.load(std::sync::atomic::Ordering::SeqCst))
+        self.flag_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let enabled = !self.bare.load(std::sync::atomic::Ordering::SeqCst)
+            || self.flagged.load(std::sync::atomic::Ordering::SeqCst);
+        while self.holding_reads.load(std::sync::atomic::Ordering::SeqCst) {
+            glib::timeout_future(Duration::from_millis(10)).await;
+        }
+        Ok(enabled)
+    }
+
+    async fn enable_user_daemons(
+        &self,
+        _cancellation: crate::command::CancellationToken,
+    ) -> Result<(), crate::ports::SystemConfiguratorError> {
+        self.flag_writes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        while self.holding_flag.load(std::sync::atomic::Ordering::SeqCst) {
+            glib::timeout_future(Duration::from_millis(10)).await;
+        }
+        let answer = self
+            .flag_answers
+            .lock()
+            .expect("probe machine lock")
+            .pop_front()
+            .unwrap_or(Ok(()));
+        if answer.is_ok() {
+            self.flagged
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        answer
     }
 
     async fn changes_in_progress(
@@ -3260,6 +3326,292 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
         gettextrs::gettext("You need to install some components for Dictation to work."),
         None,
     )
+}
+
+/// The flag's switch asks snapd, whose polkit prompt is the only question:
+/// dismissing it reverts silently, a refusal with a toast, and success
+/// unlocks the list. It never turns the flag off.
+fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
+    use crate::onboarding::{assess, Machine};
+
+    let machine = ProbeMachine::bare();
+    let window = crate::onboarding_ui::OnboardingUi::present_with_ports(
+        application,
+        assess(Machine::default()),
+        Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+            std::sync::Arc::new(machine.clone()),
+        )),
+        Rc::new(machine.clone()),
+        ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
+        None,
+        Box::new(|| {}),
+    )
+    .window();
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    let page = components_page(&window).ok_or("the component step shows no component page")?;
+    let flag = page.flag_switch();
+    let list = page.component_list();
+    let toast_texts = || {
+        descendants(window.upcast_ref(), &|widget| {
+            widget.type_().name() == "AdwToastWidget"
+        })
+        .iter()
+        .flat_map(|toast| {
+            descendants(toast, &|widget| widget.is::<gtk::Label>())
+                .into_iter()
+                .filter_map(|label| label.downcast::<gtk::Label>().ok())
+                .map(|label| label.label().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+    };
+    let until = |done: &dyn Fn() -> bool| {
+        for _ in 0..100 {
+            if done() {
+                break;
+            }
+            settle_gtk();
+        }
+        done()
+    };
+    let off = || !flag.is_active() && !flag.state() && !list.is_sensitive();
+
+    machine.answer_flag(Err(crate::ports::SystemConfiguratorError::Cancelled));
+    flag.activate();
+    if !until(&|| machine.flag_writes() == 1 && off()) || !toast_texts().is_empty() {
+        return Err(format!(
+            "a dismissed prompt left the switch active {} state {} after {} writes, toasts {:?}",
+            flag.is_active(),
+            flag.state(),
+            machine.flag_writes(),
+            toast_texts()
+        ));
+    }
+    println!("onboarding-flag: a dismissed prompt reverts silently");
+
+    machine.answer_flag(Err(
+        crate::ports::SystemConfiguratorError::snapd_authorization_denied(
+            "PUT /v2/snaps/system/conf (experimental.user-daemons=true)",
+            401,
+            "access denied",
+        ),
+    ));
+    flag.activate();
+    let announced = || {
+        toast_texts()
+            == [
+                gettextrs::gettext("Enabling user daemons failed"),
+                gettextrs::gettext("Details"),
+            ]
+    };
+    if !until(&|| announced() && off()) || machine.flag_writes() != 2 {
+        return Err(format!(
+            "a refused prompt left the switch active {} state {} with toasts {:?}",
+            flag.is_active(),
+            flag.state(),
+            toast_texts()
+        ));
+    }
+    println!("onboarding-flag: a refused prompt reverts with a toast");
+
+    let details = gettextrs::gettext("Details");
+    let details_button = descendants(window.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::Button>()
+            .is_some_and(|button| button.label().as_deref() == Some(details.as_str()))
+    })
+    .into_iter()
+    .next()
+    .and_then(|button| button.downcast::<gtk::Button>().ok())
+    .ok_or("the refusal toast has no Details button")?;
+    details_button.emit_clicked();
+    let report = || {
+        window
+            .visible_dialog()
+            .and_then(|dialog| dialog.downcast::<ui::OperationErrorDialog>().ok())
+    };
+    // libadwaita 1.5 ignores a close that lands during the open animation.
+    for _ in 0..8 {
+        settle_gtk();
+    }
+    let dialog = report().ok_or("Details opened no failure report")?;
+    let text = dialog.details_text();
+    let expected = format!(
+        "{} PUT /v2/snaps/system/conf (experimental.user-daemons=true)\n{} 401\n{}\naccess denied",
+        gettextrs::gettext("Request:"),
+        gettextrs::gettext("HTTP status:"),
+        gettextrs::gettext("Message:"),
+    );
+    if text != expected {
+        return Err(format!("the refusal's report reads {text:?}"));
+    }
+    let label = |text: &str| {
+        find_descendant(dialog.upcast_ref(), &|widget| {
+            widget
+                .downcast_ref::<gtk::Label>()
+                .is_some_and(|label| label.label() == text)
+        })
+    };
+    let (Some(details), Some(copy)) = (label(&text), label(&gettextrs::gettext("Copy Details")))
+    else {
+        return Err("the failure report lacks its text or Copy Details".to_owned());
+    };
+    let top = |widget: &gtk::Widget| {
+        widget
+            .compute_point(&dialog, &gtk::graphene::Point::zero())
+            .map_or(0.0, |point| point.y())
+    };
+    let gap = top(&copy) - top(&details) - details.height() as f32;
+    if gap > 24.0 {
+        return Err(format!(
+            "the report leaves {gap} px between its text and Copy Details"
+        ));
+    }
+    dialog.force_close();
+    if !until(&|| window.visible_dialog().is_none()) {
+        return Err("the failure report did not close".to_owned());
+    }
+    println!("onboarding-flag: a refusal's report names the snapd request");
+
+    let long = ui::OperationErrorDialog::new("heading", "summary", &"line\n".repeat(200));
+    long.present(Some(&window));
+    for _ in 0..8 {
+        settle_gtk();
+    }
+    let scrolls = find_descendant(long.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::Label>()
+            .is_some_and(|label| label.label().starts_with("line\nline"))
+    })
+    .and_then(|details| details.ancestor(gtk::ScrolledWindow::static_type()))
+    .is_some();
+    if !scrolls || long.height() > window.height() {
+        return Err(format!(
+            "a long report is {} px tall in a {} px window, scrolling {scrolls}",
+            long.height(),
+            window.height()
+        ));
+    }
+    long.force_close();
+    if !until(&|| window.visible_dialog().is_none()) {
+        return Err("the long report did not close".to_owned());
+    }
+    println!("onboarding-flag: a long report scrolls inside the window");
+
+    machine.hold_flag(true);
+    flag.activate();
+    let row = page.flag_row();
+    let spinner = page.flag_spinner();
+    let pending = || {
+        flag.is_active()
+            && !flag.state()
+            && spinner.is_mapped()
+            && spinner.is_spinning()
+            && row.is_sensitive()
+            && !row.can_target()
+            && !flag.can_target()
+            && row.subtitle().as_deref() == Some(gettextrs::gettext("Enabling…").as_str())
+            && !list.is_sensitive()
+    };
+    if !until(&pending) || machine.flag_writes() != 3 {
+        return Err(format!(
+            "while snapd asks, the switch is active {} state {}, spinner {}, subtitle {:?}",
+            flag.is_active(),
+            flag.state(),
+            spinner.is_mapped(),
+            row.subtitle()
+        ));
+    }
+    // Activating the row again asks nothing more.
+    adw::prelude::ActionRowExt::activate(&row);
+    settle_gtk();
+    if !pending() || machine.flag_writes() != 3 {
+        return Err("activating the pending row asked snapd again".to_owned());
+    }
+    println!("onboarding-flag: pending while snapd asks");
+
+    machine.hold_flag(false);
+    let on = || {
+        flag.is_active()
+            && flag.state()
+            && !spinner.is_visible()
+            && row.can_target()
+            && list.is_sensitive()
+            && row.subtitle().as_deref()
+                == Some(gettextrs::gettext("Required by the Dictation app").as_str())
+    };
+    if !until(&on) || rows_offer(&page) != ["Install", "Install", "Installed"] {
+        return Err(format!(
+            "turning the flag on left the switch state {}, the list sensitive {}, rows {:?}",
+            flag.state(),
+            list.is_sensitive(),
+            rows_offer(&page)
+        ));
+    }
+    println!("onboarding-flag: on, the list unlocked");
+
+    flag.activate();
+    settle_gtk();
+    settle_gtk();
+    if !on() || machine.flag_writes() != 3 {
+        return Err("the switch turned the flag off".to_owned());
+    }
+    println!("onboarding-flag: stays on");
+    window.close();
+    settle_gtk();
+
+    // A read that began before the flag was turned on answers after it.
+    let machine = ProbeMachine::bare();
+    let window = crate::onboarding_ui::OnboardingUi::present_with_ports(
+        application,
+        assess(Machine::default()),
+        Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+            std::sync::Arc::new(machine.clone()),
+        )),
+        Rc::new(machine.clone()),
+        ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
+        None,
+        Box::new(|| {}),
+    )
+    .window();
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    let page = components_page(&window).ok_or("the component step shows no component page")?;
+    let flag = page.flag_switch();
+    machine.hold_reads(true);
+    let elsewhere = gtk::Window::new();
+    elsewhere.present();
+    settle_gtk();
+    elsewhere.close();
+    window.present();
+    if !until(&|| machine.flag_reads() == 1) {
+        return Err("regaining focus did not read the flag".to_owned());
+    }
+    flag.activate();
+    if !until(&|| machine.flag_writes() == 1) {
+        return Err("the switch did not ask snapd".to_owned());
+    }
+    settle_gtk();
+    machine.hold_reads(false);
+    for _ in 0..40 {
+        if !flag.is_active() {
+            return Err("a read from before the flag turned the switch back off".to_owned());
+        }
+        if flag.state() {
+            break;
+        }
+        settle_gtk();
+    }
+    if !flag.state() || !page.component_list().is_sensitive() {
+        return Err("the read after the flag did not turn the switch on".to_owned());
+    }
+    println!("onboarding-flag: a stale read does not undo it");
+    window.close();
+    settle_gtk();
+    Ok(())
 }
 
 fn components_page(window: &ui::OnboardingWindow) -> Option<ui::OnboardingComponents> {

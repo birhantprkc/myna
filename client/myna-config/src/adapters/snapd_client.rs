@@ -12,6 +12,8 @@
 //! * `GET  /v2/changes/{id}` to poll async changes to completion.
 //! * `GET  /v2/changes?select=in-progress` to show what an apply waits on.
 //! * `GET  /v2/system-info` to read whether `experimental.user-daemons` is on.
+//! * `PUT  /v2/snaps/system/conf` with exactly
+//!   `{"experimental.user-daemons":true}` to turn it on.
 //!
 //! There is deliberately no way to send an arbitrary path, method, body, or
 //! header through this module. Snap names are re-validated against the strict
@@ -41,6 +43,10 @@ const CHANGES_IN_PROGRESS: &str = "/v2/changes?select=in-progress";
 /// Unlike `/v2/snaps/system/conf`, which answers a user 401, this lists the
 /// experimental flags to anyone.
 const SYSTEM_INFO: &str = "/v2/system-info";
+
+pub(crate) const SYSTEM_CONF: &str = "/v2/snaps/system/conf";
+pub(crate) const INTERFACES: &str = "/v2/interfaces";
+const USER_DAEMONS_ON: &str = r#"{"experimental.user-daemons":true}"#;
 
 /// Default host location of the snapd socket. The value is deliberately a
 /// constant, not user configurable, so an attacker cannot redirect the client.
@@ -310,6 +316,9 @@ pub enum SnapdOutcome {
 #[derive(Clone, Copy, Debug)]
 pub struct SnapdTimeouts {
     pub per_request: Duration,
+    /// How long a write may wait for its answer: snapd answers only once the
+    /// user has answered its polkit prompt.
+    pub authorization: Duration,
     pub poll_interval: Duration,
     pub total: Duration,
 }
@@ -318,6 +327,7 @@ impl Default for SnapdTimeouts {
     fn default() -> Self {
         Self {
             per_request: Duration::from_secs(30),
+            authorization: Duration::from_secs(10 * 60),
             poll_interval: Duration::from_millis(500),
             total: Duration::from_secs(120),
         }
@@ -346,6 +356,10 @@ pub trait SnapdClient {
         &self,
         cancellation: CancellationToken,
     ) -> Result<bool, SnapdError>;
+
+    /// Turn `experimental.user-daemons` on; snapd asks polkit for
+    /// `manage-configuration`.
+    async fn enable_user_daemons(&self, cancellation: CancellationToken) -> Result<(), SnapdError>;
 }
 
 /// Real snapd client. Runs blocking Unix-socket I/O off the GTK main loop via
@@ -420,6 +434,25 @@ impl SnapdClient for UnixSocketSnapdClient {
         let timeouts = self.timeouts;
         let handle = gio::spawn_blocking(move || {
             blocking_user_daemons_enabled(&socket_path, timeouts, cancellation)
+        });
+        handle.await.map_err(|error| SnapdError::Transport {
+            message: format!("snapd worker join failed: {error:?}"),
+        })?
+    }
+
+    async fn enable_user_daemons(&self, cancellation: CancellationToken) -> Result<(), SnapdError> {
+        let socket_path = self.socket_path.clone();
+        let timeouts = self.timeouts;
+        let handle = gio::spawn_blocking(move || {
+            blocking_write(
+                &socket_path,
+                timeouts,
+                "PUT",
+                SYSTEM_CONF,
+                USER_DAEMONS_ON,
+                cancellation,
+            )
+            .map(|_| ())
         });
         handle.await.map_err(|error| SnapdError::Transport {
             message: format!("snapd worker join failed: {error:?}"),
@@ -507,22 +540,45 @@ fn blocking_apply_interface_action(
     action: InterfaceAction,
     cancellation: CancellationToken,
 ) -> Result<SnapdOutcome, SnapdError> {
-    let start = Instant::now();
-    let deadline = start + timeouts.total;
     if cancellation.is_cancelled() {
         return Err(SnapdError::Cancelled);
     }
     let body = action.to_request_body()?;
+    blocking_write(
+        socket_path,
+        timeouts,
+        "POST",
+        INTERFACES,
+        &body,
+        cancellation,
+    )
+}
+
+/// Send one privileged write and follow its change. The request may wait
+/// out the user's polkit prompt; the change then gets the total budget.
+fn blocking_write(
+    socket_path: &Path,
+    timeouts: SnapdTimeouts,
+    method: &str,
+    path: &str,
+    body: &str,
+    cancellation: CancellationToken,
+) -> Result<SnapdOutcome, SnapdError> {
+    let start = Instant::now();
+    let answering = SnapdTimeouts {
+        per_request: timeouts.authorization,
+        ..timeouts
+    };
     let response = do_request(
         socket_path,
-        "POST",
-        "/v2/interfaces",
-        Some(&body),
+        method,
+        path,
+        Some(body),
         SnapdTimeoutContext::Request,
-        &timeouts,
+        &answering,
         &cancellation,
         start,
-        deadline,
+        start + timeouts.authorization,
     )?;
 
     match parse_envelope(&response)? {
@@ -534,13 +590,14 @@ fn blocking_apply_interface_action(
                     body: truncate(&response, 512),
                 });
             }
+            let answered = Instant::now();
             poll_change(
                 socket_path,
                 &change_id,
                 &timeouts,
                 &cancellation,
                 start,
-                deadline,
+                answered + timeouts.total,
             )
             .map(SnapdOutcome::Async)
         }

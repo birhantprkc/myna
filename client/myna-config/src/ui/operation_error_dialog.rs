@@ -16,8 +16,6 @@ mod imp {
         pub details_label: gtk::TemplateChild<gtk::Label>,
         #[template_child]
         pub copy_button: gtk::TemplateChild<gtk::Button>,
-        #[template_child]
-        pub scroller: gtk::TemplateChild<gtk::ScrolledWindow>,
         pub details_text: RefCell<String>,
     }
 
@@ -45,7 +43,8 @@ mod imp {
 glib::wrapper! {
     /// Reusable presenter for full operation error details.
     ///
-    /// * Body wraps and is selectable so users can read every character.
+    /// * Body wraps and is selectable so users can read every character; the
+    ///   alert's own message area scrolls a long report.
     /// * `Copy Details` puts the full plain text on the clipboard.
     /// * The dialog itself only displays plain text (`use-markup: false`) so
     ///   backend-provided content can never inject Pango markup.

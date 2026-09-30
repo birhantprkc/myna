@@ -7,12 +7,14 @@ use async_trait::async_trait;
 use crate::active_backend::{myna_restart_request, SwitchPlan};
 use crate::adapters::snapd_client::{
     is_valid_slot_name, is_valid_snap_name, InterfaceAction, SnapdClient, SnapdError,
-    UnixSocketSnapdClient,
+    UnixSocketSnapdClient, INTERFACES, SYSTEM_CONF,
 };
 use crate::apply_plan::{self, APPLY_PLAN_FLAG};
 use crate::backend_apply::ApplyPreview;
 use crate::command::{CancellationToken, CommandError, CommandRequest, CommandRunner};
 use crate::domain::CommandResult;
+#[cfg(test)]
+use crate::ports::FailedStep;
 use crate::ports::{SystemConfigurator, SystemConfiguratorError, SystemConfiguratorFailure};
 use crate::snap_changes::ChangeInProgress;
 
@@ -102,7 +104,9 @@ impl SystemConfigurator for PkexecSystemConfigurator {
                     .apply_interface_action(action, cancellation.clone())
                     .await
                     .map(|_| ())
-                    .map_err(|error| snapd_error_to_system_error(request.clone(), error)),
+                    .map_err(|error| {
+                        snapd_error_to_system_error(interface_request(&request), error)
+                    }),
                 SwitchStep::Restart { .. } => self.restart_myna(cancellation.clone()).await,
             };
             match outcome {
@@ -165,6 +169,29 @@ impl SystemConfigurator for PkexecSystemConfigurator {
             .await
             .map_err(|error| error.to_string())
     }
+
+    async fn enable_user_daemons(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<(), SystemConfiguratorError> {
+        self.snapd
+            .enable_user_daemons(cancellation)
+            .await
+            .map_err(|error| snapd_error_to_system_error(user_daemons_on_request(), error))
+    }
+}
+
+/// How a report names a snapd request: method, path and what it asks for.
+fn snapd_request(method: &str, path: &str, what: &str) -> String {
+    format!("{method} {path} ({what})")
+}
+
+fn user_daemons_on_request() -> String {
+    snapd_request("PUT", SYSTEM_CONF, "experimental.user-daemons=true")
+}
+
+fn interface_request(request: &CommandRequest) -> String {
+    snapd_request("POST", INTERFACES, &request.arguments().join(" "))
 }
 
 /// Ensure every operation matches the exact allowlist for the direct snapd
@@ -182,13 +209,7 @@ fn validate_switch_plan(plan: &SwitchPlan) -> Result<Vec<SwitchStep>, SystemConf
         let step = validate_operation(request).map_err(|message| {
             SystemConfiguratorFailure::new(
                 Vec::new(),
-                SystemConfiguratorError::execution(
-                    "snapd",
-                    request.arguments().to_vec(),
-                    None,
-                    String::new(),
-                    message,
-                ),
+                SystemConfiguratorError::snapd_execution(interface_request(request), None, message),
             )
         })?;
         result.push(step);
@@ -340,13 +361,7 @@ fn validate_operation(request: &CommandRequest) -> Result<SwitchStep, String> {
 fn invalid_switch_plan(request: &CommandRequest, message: &str) -> SystemConfiguratorFailure {
     SystemConfiguratorFailure::new(
         Vec::new(),
-        SystemConfiguratorError::execution(
-            "snapd",
-            request.arguments().to_vec(),
-            None,
-            String::new(),
-            message,
-        ),
+        SystemConfiguratorError::snapd_execution(interface_request(request), None, message),
     )
 }
 
@@ -364,61 +379,41 @@ fn snapd_timeout_message(
 }
 
 pub(crate) fn snapd_error_to_system_error(
-    request: CommandRequest,
+    request: String,
     error: SnapdError,
 ) -> SystemConfiguratorError {
-    let arguments = request.arguments().to_vec();
     match error {
         SnapdError::Cancelled => SystemConfiguratorError::Cancelled,
         SnapdError::AuthorizationDenied {
             status_code,
             message,
             ..
-        } => SystemConfiguratorError::authorization_denied(
-            "snapd",
-            arguments,
-            Some(status_code as i32),
-            message,
-        ),
-        SnapdError::Timeout { elapsed, context } => SystemConfiguratorError::execution(
-            "snapd",
-            arguments,
+        } => SystemConfiguratorError::snapd_authorization_denied(request, status_code, message),
+        SnapdError::Timeout { elapsed, context } => SystemConfiguratorError::snapd_execution(
+            request,
             None,
-            String::new(),
             snapd_timeout_message(elapsed, context),
         ),
-        SnapdError::ResponseTooLarge => SystemConfiguratorError::execution(
-            "snapd",
-            arguments,
+        SnapdError::ResponseTooLarge => SystemConfiguratorError::snapd_execution(
+            request,
             None,
-            String::new(),
             "snapd response exceeded the client size limit",
         ),
-        SnapdError::Transport { message } => SystemConfiguratorError::execution(
-            "snapd",
-            arguments,
+        SnapdError::Transport { message } => SystemConfiguratorError::snapd_execution(
+            request,
             None,
-            String::new(),
             format!("snapd transport error: {message}"),
         ),
-        SnapdError::Protocol { message, .. } => SystemConfiguratorError::execution(
-            "snapd",
-            arguments,
+        SnapdError::Protocol { message, .. } => SystemConfiguratorError::snapd_execution(
+            request,
             None,
-            String::new(),
             format!("snapd protocol error: {message}"),
         ),
         SnapdError::Snapd {
             status_code,
             message,
             ..
-        } => SystemConfiguratorError::execution(
-            "snapd",
-            arguments,
-            Some(status_code as i32),
-            String::new(),
-            message,
-        ),
+        } => SystemConfiguratorError::snapd_execution(request, Some(status_code), message),
     }
 }
 
@@ -702,8 +697,11 @@ mod tests {
             assert!(matches!(
                 error.error(),
                 SystemConfiguratorError::AuthorizationDenied {
-                    exit_status: Some(127),
-                    stderr,
+                    step: FailedStep::Command {
+                        exit_status: Some(127),
+                        stderr,
+                        ..
+                    },
                     ..
                 } if stderr == message
             ));
@@ -775,10 +773,12 @@ mod tests {
         assert!(matches!(
             error.error(),
             SystemConfiguratorError::ValuesRejected {
-                executable,
-                arguments,
-                exit_status: Some(1),
-                stderr,
+                step: FailedStep::Command {
+                    executable,
+                    arguments,
+                    exit_status: Some(1),
+                    stderr,
+                },
                 message,
             } if executable == "snap"
                 && arguments == preview.operations()[0].arguments()
@@ -808,8 +808,11 @@ mod tests {
         assert!(matches!(
             error.error(),
             SystemConfiguratorError::Execution {
-                arguments,
-                stderr,
+                step: FailedStep::Command {
+                    arguments,
+                    stderr,
+                    ..
+                },
                 ..
             } if arguments == &["restart", "myna-parakeet"] && stderr == "restart failed"
         ));
@@ -831,12 +834,65 @@ mod tests {
         assert!(matches!(
             error.error(),
             SystemConfiguratorError::Execution {
-                executable,
-                exit_status: Some(2),
+                step: FailedStep::Command {
+                    executable,
+                    exit_status: Some(2),
+                    ..
+                },
                 message,
-                ..
             } if executable == "pkexec" && message.contains("unexpected executable sh")
         ));
+    }
+
+    #[test]
+    fn a_refused_snapd_request_is_reported_as_the_request_not_a_command() {
+        let error = snapd_error_to_system_error(
+            user_daemons_on_request(),
+            SnapdError::AuthorizationDenied {
+                status_code: 401,
+                kind: Some("login-required".to_owned()),
+                message: "access denied".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            crate::backend_ui::system_error_details(&error),
+            "Request: PUT /v2/snaps/system/conf (experimental.user-daemons=true)\n\
+             HTTP status: 401\n\
+             Message:\naccess denied"
+        );
+    }
+
+    #[test]
+    fn a_snapd_failure_without_an_answer_has_no_http_status() {
+        let error = snapd_error_to_system_error(
+            user_daemons_on_request(),
+            SnapdError::Transport {
+                message: "connection refused".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            crate::backend_ui::system_error_details(&error),
+            "Request: PUT /v2/snaps/system/conf (experimental.user-daemons=true)\n\
+             Message:\nsnapd transport error: connection refused"
+        );
+    }
+
+    #[test]
+    fn a_command_failure_whose_message_is_its_stderr_says_it_once() {
+        let error = SystemConfiguratorError::authorization_denied(
+            "pkexec",
+            vec!["snap".to_owned(), "restart".to_owned()],
+            Some(126),
+            "Not authorized",
+        );
+
+        assert_eq!(
+            crate::backend_ui::system_error_details(&error),
+            "Executable: pkexec\nArguments: snap restart\nExit status: 126\n\
+             Message:\nNot authorized"
+        );
     }
 
     #[test]
@@ -854,8 +910,11 @@ mod tests {
         assert!(matches!(
             error,
             SystemConfiguratorError::Execution {
-                exit_status: Some(126),
-                ref stderr,
+                step: FailedStep::Command {
+                    exit_status: Some(126),
+                    ref stderr,
+                    ..
+                },
                 ..
             } if stderr == "permission denied"
         ));
@@ -882,8 +941,11 @@ mod tests {
         assert!(matches!(
             error,
             SystemConfiguratorError::Execution {
-                exit_status: Some(1),
-                ref stderr,
+                step: FailedStep::Command {
+                    exit_status: Some(1),
+                    ref stderr,
+                    ..
+                },
                 ..
             } if stderr == "permission denied"
         ));
@@ -933,6 +995,13 @@ mod tests {
             _cancellation: CancellationToken,
         ) -> Result<bool, SnapdError> {
             unreachable!("no switch reads the flag")
+        }
+
+        async fn enable_user_daemons(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<(), SnapdError> {
+            unreachable!("no switch turns the flag on")
         }
     }
 
