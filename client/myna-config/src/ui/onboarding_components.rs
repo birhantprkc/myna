@@ -23,39 +23,15 @@ mod imp {
         #[template_child]
         pub myna_row: gtk::TemplateChild<adw::ActionRow>,
         #[template_child]
-        pub myna_button: gtk::TemplateChild<gtk::Button>,
-        #[template_child]
-        pub myna_installed: gtk::TemplateChild<gtk::Box>,
-        #[template_child]
-        pub myna_installing: gtk::TemplateChild<gtk::Box>,
-        #[template_child]
-        pub myna_spinner: gtk::TemplateChild<gtk::Spinner>,
-        #[template_child]
-        pub myna_progress: gtk::TemplateChild<gtk::Label>,
+        pub myna_control: gtk::TemplateChild<crate::ui::InstallControl>,
         #[template_child]
         pub model_row: gtk::TemplateChild<adw::ActionRow>,
         #[template_child]
-        pub model_button: gtk::TemplateChild<gtk::Button>,
-        #[template_child]
-        pub model_installed: gtk::TemplateChild<gtk::Box>,
-        #[template_child]
-        pub model_installing: gtk::TemplateChild<gtk::Box>,
-        #[template_child]
-        pub model_spinner: gtk::TemplateChild<gtk::Spinner>,
-        #[template_child]
-        pub model_progress: gtk::TemplateChild<gtk::Label>,
+        pub model_control: gtk::TemplateChild<crate::ui::InstallControl>,
         #[template_child]
         pub extension_row: gtk::TemplateChild<adw::ActionRow>,
         #[template_child]
-        pub extension_button: gtk::TemplateChild<gtk::Button>,
-        #[template_child]
-        pub extension_installed: gtk::TemplateChild<gtk::Box>,
-        #[template_child]
-        pub extension_installing: gtk::TemplateChild<gtk::Box>,
-        #[template_child]
-        pub extension_spinner: gtk::TemplateChild<gtk::Spinner>,
-        #[template_child]
-        pub extension_progress: gtk::TemplateChild<gtk::Label>,
+        pub extension_control: gtk::TemplateChild<crate::ui::InstallControl>,
     }
 
     #[glib::object_subclass]
@@ -66,6 +42,7 @@ mod imp {
 
         fn class_init(klass: &mut Self::Class) {
             <crate::ui::BalancedLabel as glib::prelude::StaticTypeExt>::ensure_type();
+            <crate::ui::InstallControl as glib::prelude::StaticTypeExt>::ensure_type();
             klass.bind_template();
         }
 
@@ -85,23 +62,16 @@ glib::wrapper! {
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
-/// One installable component's row: its button, or the check that replaces it.
+/// One installable component's row and its install control.
 #[derive(Clone)]
 pub struct ComponentRow {
     pub row: adw::ActionRow,
+    pub control: crate::ui::InstallControl,
     pub button: gtk::Button,
     pub installed: gtk::Box,
     /// What replaces the button while snapd installs it, or gnome-shell
     /// enables the extension.
-    pub installing: RowProgress,
-}
-
-/// A spinner and how far the install or enable has come.
-#[derive(Clone)]
-pub struct RowProgress {
-    pub container: gtk::Box,
-    pub spinner: gtk::Spinner,
-    pub label: gtk::Label,
+    pub installing: crate::ui::RowProgress,
 }
 
 impl OnboardingComponents {
@@ -129,49 +99,19 @@ impl OnboardingComponents {
     /// The row of `id`; the flag has a switch row of its own instead.
     pub fn row(&self, id: ComponentId) -> Option<ComponentRow> {
         let imp = self.imp();
-        let progress = |container: &gtk::TemplateChild<gtk::Box>,
-                        spinner: &gtk::TemplateChild<gtk::Spinner>,
-                        label: &gtk::TemplateChild<gtk::Label>| {
-            RowProgress {
-                container: container.get(),
-                spinner: spinner.get(),
-                label: label.get(),
-            }
-        };
-        let (row, button, installed, installing) = match id {
+        let (row, control) = match id {
             ComponentId::UserDaemons => return None,
-            ComponentId::Myna => (
-                &imp.myna_row,
-                &imp.myna_button,
-                &imp.myna_installed,
-                progress(&imp.myna_installing, &imp.myna_spinner, &imp.myna_progress),
-            ),
-            ComponentId::Model => (
-                &imp.model_row,
-                &imp.model_button,
-                &imp.model_installed,
-                progress(
-                    &imp.model_installing,
-                    &imp.model_spinner,
-                    &imp.model_progress,
-                ),
-            ),
-            ComponentId::ShellExtension => (
-                &imp.extension_row,
-                &imp.extension_button,
-                &imp.extension_installed,
-                progress(
-                    &imp.extension_installing,
-                    &imp.extension_spinner,
-                    &imp.extension_progress,
-                ),
-            ),
+            ComponentId::Myna => (&imp.myna_row, &imp.myna_control),
+            ComponentId::Model => (&imp.model_row, &imp.model_control),
+            ComponentId::ShellExtension => (&imp.extension_row, &imp.extension_control),
         };
+        let control = control.get();
         Some(ComponentRow {
             row: row.get(),
-            button: button.get(),
-            installed: installed.get(),
-            installing,
+            button: control.button(),
+            installed: control.installed(),
+            installing: control.progress(),
+            control,
         })
     }
 }

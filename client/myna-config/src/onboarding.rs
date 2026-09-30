@@ -201,23 +201,48 @@ pub enum ModelSize {
 /// What installing Myna downloads.
 pub const MYNA_DOWNLOAD_BYTES: u64 = 10_133_504;
 
+// What each family's store install downloads on latest/edge, snap and the
+// components its install hook fetches, as the store listed them on
+// 2026-09-30.
 const PARAKEET_SNAP_BYTES: u64 = 46_194_688;
 const PARAKEET_INT8_BYTES: u64 = 729_399_296;
 const PARAKEET_FP32_BYTES: u64 = 2_549_030_912;
 const ONNXRUNTIME_CUDA_BYTES: u64 = 1_577_467_904;
+const WHISPER_SNAP_BYTES: u64 = 121_798_656;
+const WHISPER_TINY_BYTES: u64 = 76_279_808;
+const WHISPER_SMALL_BYTES: u64 = 483_966_976;
+const WHISPER_CUDA_BYTES: u64 = 795_668_480;
+const FUNASR_SNAP_BYTES: u64 = 70_057_984;
+const SENSEVOICE_BYTES: u64 = 239_083_520;
 
-/// Parakeet, sized for the engine its install hook will pick: with an
-/// NVIDIA GPU it fetches the CUDA runtime and the fp32 model instead of int8.
+/// Parakeet, the model the wizard installs, sized for the machine.
 pub fn model_offer(machine: &Machine) -> ModelOffer {
-    let components = if machine.nvidia_gpu {
-        ONNXRUNTIME_CUDA_BYTES + PARAKEET_FP32_BYTES
-    } else {
-        PARAKEET_INT8_BYTES
+    family_offer(ModelFamily::Parakeet, machine.nvidia_gpu)
+}
+
+/// `family`, sized for the engine its install hook will pick: with an
+/// NVIDIA GPU, Parakeet fetches the CUDA runtime and the fp32 model instead
+/// of int8, and Whisper its CUDA runtime and the small model instead of tiny.
+/// FunASR has one CPU engine.
+pub fn family_offer(family: ModelFamily, nvidia_gpu: bool) -> ModelOffer {
+    let (snap, cpu, gpu) = match family {
+        ModelFamily::Parakeet => (
+            PARAKEET_SNAP_BYTES,
+            PARAKEET_INT8_BYTES,
+            Some(ONNXRUNTIME_CUDA_BYTES + PARAKEET_FP32_BYTES),
+        ),
+        ModelFamily::Whisper => (
+            WHISPER_SNAP_BYTES,
+            WHISPER_TINY_BYTES,
+            Some(WHISPER_CUDA_BYTES + WHISPER_SMALL_BYTES),
+        ),
+        ModelFamily::FunAsr => (FUNASR_SNAP_BYTES, SENSEVOICE_BYTES, None),
     };
+    let gpu = gpu.filter(|_| nvidia_gpu);
     ModelOffer {
-        family: ModelFamily::Parakeet,
-        download_bytes: PARAKEET_SNAP_BYTES + components,
-        upper_bound: machine.nvidia_gpu,
+        family,
+        download_bytes: snap + gpu.unwrap_or(cpu),
+        upper_bound: gpu.is_some(),
     }
 }
 
@@ -726,6 +751,31 @@ mod tests {
             ..Machine::default()
         });
         assert_eq!(gpu.download_bytes, 4_172_693_504);
+    }
+
+    #[test]
+    fn every_family_is_sized_for_the_engine_it_will_pick() {
+        let sizes = |family| {
+            let (cpu, gpu) = (family_offer(family, false), family_offer(family, true));
+            assert_eq!((cpu.family, gpu.family), (family, family));
+            (
+                (cpu.download_bytes, cpu.upper_bound),
+                (gpu.download_bytes, gpu.upper_bound),
+            )
+        };
+        assert_eq!(
+            sizes(ModelFamily::Parakeet),
+            ((775_593_984, false), (4_172_693_504, true))
+        );
+        assert_eq!(
+            sizes(ModelFamily::Whisper),
+            ((198_078_464, false), (1_401_434_112, true))
+        );
+        assert_eq!(
+            sizes(ModelFamily::FunAsr),
+            ((309_141_504, false), (309_141_504, false)),
+            "FunASR runs on the CPU alone"
+        );
     }
 
     #[test]

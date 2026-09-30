@@ -36,9 +36,10 @@ use crate::domain::{ActiveBackendState, BackendIdentity, ConfigValue, ServiceSta
 use crate::markup::escape_markup;
 use crate::model_family::{
     better_model_hint, coverage, coverage_cell, coverage_columns, coverage_count, coverage_summary,
-    installable_families, is_recommended, model_family, recommendation, recommendation_label,
-    recommended_first, store_uri, Coverage, Named, Recommendation,
+    installable_families, installing_hint, is_recommended, model_family, recommendation,
+    recommendation_label, recommended_first, Coverage, Named, Recommendation,
 };
+use crate::onboarding::{family_offer, ModelOffer};
 use crate::operation_gate::{OperationCoordinator, OperationKind};
 use crate::performance::PerformanceFacts;
 use crate::ports::{BackendRepository, SystemConfigurator};
@@ -195,10 +196,7 @@ fn languages_popover(coverage: &Coverage) -> gtk::Popover {
     gtk::Popover::builder().child(&content).build()
 }
 
-/// Longer than any dialog's opening animation.
-const DIALOG_OPENED: std::time::Duration = std::time::Duration::from_secs(1);
-
-type ChooseFamily = Rc<dyn Fn(&ui::InstallModelsDialog, myna_core::language::ModelFamily)>;
+type InstallFamily = Rc<dyn Fn(myna_core::language::ModelFamily)>;
 
 /// What the Install more models dialog lists: the families, the recommended
 /// one and the language it is recommended for.
@@ -209,26 +207,66 @@ struct InstallOffer {
     user_language: Option<String>,
 }
 
-/// One activatable row per family, `recommended` with its pill; activating a
-/// row hands its family to `choose`.
-fn offer_install(dialog: &ui::InstallModelsDialog, offer: &InstallOffer, choose: ChooseFamily) {
+/// An offered family's row and its install control.
+struct OfferedRow {
+    family: myna_core::language::ModelFamily,
+    row: adw::ActionRow,
+    control: ui::InstallControl,
+}
+
+/// The Install more models dialog while it is open.
+struct OpenInstallDialog {
+    dialog: glib::WeakRef<ui::InstallModelsDialog>,
+    /// What its rows show.
+    shown: InstallOffer,
+    rows: Vec<OfferedRow>,
+}
+
+/// Where installing a family from Install more models stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModelInstall {
+    /// snapd is installing it: its polkit prompt may still be open, and the
+    /// percentage appears once a download announces its size.
+    Running(Option<u8>),
+    /// snapd is done; the row waits for a discovery that shows it.
+    Confirming,
+}
+
+/// How often an install's change is read for its progress.
+const FOLLOW_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn glib_sleep(
+    interval: std::time::Duration,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> {
+    Box::pin(glib::timeout_future(interval))
+}
+
+/// One row per family, `recommended` with its pill, each with its download
+/// size and an install control whose button hands its family to `install`.
+fn offer_install(
+    dialog: &ui::InstallModelsDialog,
+    offer: &InstallOffer,
+    nvidia_gpu: bool,
+    install: InstallFamily,
+) -> Vec<OfferedRow> {
     let InstallOffer {
         families,
         recommended,
         user_language,
     } = offer;
     let recommended = *recommended;
-    let mut rows = Vec::new();
+    let mut offered = Vec::new();
     for &family in families {
         let shown = model_family(family.snap_name());
         let row = adw::ActionRow::builder()
             .title(&shown.name)
             .use_markup(false)
-            .activatable(true)
             .build();
-        if let Some(description) = &shown.description {
-            row.set_subtitle(description);
-        }
+        let subtitle = offer_subtitle(
+            shown.description.as_deref(),
+            family_offer(family, nvidia_gpu),
+        );
+        row.set_subtitle(&subtitle);
         let pill = (recommended == Some(family)).then(|| {
             let pill = recommended_pill();
             set_named(
@@ -246,44 +284,59 @@ fn offer_install(dialog: &ui::InstallModelsDialog, offer: &InstallOffer, choose:
         });
         show_languages(&languages, family, user_language.as_deref());
         row.add_suffix(&languages);
-        row.add_suffix(&gtk::Image::from_icon_name("adw-external-link-symbolic"));
+        let control = ui::InstallControl::new();
+        row.add_suffix(&control);
+        control.button().connect_clicked({
+            let install = Rc::clone(&install);
+            move |_| install(family)
+        });
         row.reset_relation(gtk::AccessibleRelation::DescribedBy);
         let pill_text = pill.as_ref().map(gtk::Label::label);
-        if let Some(description) =
-            model_description(shown.description.as_deref(), pill_text.as_deref())
-        {
+        if let Some(description) = model_description(Some(&subtitle), pill_text.as_deref()) {
             row.update_property(&[gtk::accessible::Property::Description(&description)]);
         }
-        row.connect_activated({
-            let dialog = dialog.downgrade();
-            let choose = Rc::clone(&choose);
-            move |_| {
-                if let Some(dialog) = dialog.upgrade() {
-                    choose(&dialog, family);
-                }
-            }
+        offered.push(OfferedRow {
+            family,
+            row,
+            control,
         });
-        rows.push(row);
     }
-    dialog.replace_rows(rows);
+    dialog.replace_rows(offered.iter().map(|offered| offered.row.clone()).collect());
+    offered
 }
 
-fn open_in_app_center(overlay: &adw::ToastOverlay, family: myna_core::language::ModelFamily) {
-    let parent = overlay.root().and_downcast::<gtk::Window>();
-    let overlay = overlay.clone();
-    gtk::UriLauncher::new(&store_uri(family)).launch(
-        parent.as_ref(),
-        gio::Cancellable::NONE,
-        move |result| {
-            if let Err(error) = result {
-                if !error.matches(gtk::DialogError::Dismissed) {
-                    overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
-                        "App Center could not be opened",
-                    )));
-                }
-            }
-        },
-    );
+/// An offered family's subtitle: what it is good at, then what installing it
+/// downloads.
+fn offer_subtitle(description: Option<&str>, offer: ModelOffer) -> String {
+    let size = crate::onboarding_ui::download_size(offer.download_bytes);
+    let size = if offer.upper_bound {
+        // TRANSLATORS: an upper bound on a download size, such as "up to 1.4 GB": it is less on a machine whose GPU cannot be used.
+        gettextrs::gettext("up to {size}").replace("{size}", &size)
+    } else {
+        size
+    };
+    match description {
+        // TRANSLATORS: {description} says what a model is good at, such as "Widest language support", and {size} what installing it downloads, such as "198 MB" or "up to 1.4 GB". The spaces around the dot are no-break spaces, so the size never starts a line of its own.
+        Some(description) => gettextrs::gettext("{description}\u{a0}·\u{a0}{size}")
+            .replace("{description}", description)
+            .replace("{size}", &size),
+        None => size,
+    }
+}
+
+/// The families the open dialog lists: the ones it opened with, since an
+/// installed one stays to show it is, and any missing since, the
+/// recommended one first.
+fn listed_families(
+    shown: &[myna_core::language::ModelFamily],
+    missing: &[myna_core::language::ModelFamily],
+    recommended: Option<myna_core::language::ModelFamily>,
+) -> Vec<myna_core::language::ModelFamily> {
+    let (first, rest): (Vec<_>, Vec<_>) = myna_core::language::ModelFamily::ALL
+        .into_iter()
+        .filter(|family| shown.contains(family) || missing.contains(family))
+        .partition(|family| Some(*family) == recommended);
+    first.into_iter().chain(rest).collect()
 }
 
 /// Runtime coordinator that keeps the Backend/Diagnostics tabs in sync with a
@@ -329,8 +382,16 @@ pub struct BackendUi {
     /// discovery, off the main thread, so the page never spins a core itself.
     performance: RefCell<Option<PerformanceFacts>>,
     last_diagnostics_refresh: std::cell::Cell<Option<Instant>>,
-    /// The Install more models dialog while it is open, and what it lists.
-    install_dialog: RefCell<Option<(glib::WeakRef<ui::InstallModelsDialog>, InstallOffer)>>,
+    /// The Install more models dialog while it is open.
+    install_dialog: RefCell<Option<OpenInstallDialog>>,
+    /// Families being installed from it, which outlive the dialog.
+    model_installs:
+        RefCell<std::collections::HashMap<myna_core::language::ModelFamily, ModelInstall>>,
+    /// Stop following installs when the window closes; snapd carries on.
+    install_cancellation: CancellationToken,
+    follow_interval: std::cell::Cell<std::time::Duration>,
+    /// Sizes each family's download for the engine its install hook picks.
+    nvidia_gpu: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -500,6 +561,10 @@ impl BackendUi {
             performance: RefCell::new(None),
             last_diagnostics_refresh: std::cell::Cell::new(None),
             install_dialog: RefCell::new(None),
+            model_installs: RefCell::default(),
+            install_cancellation: CancellationToken::new(),
+            follow_interval: std::cell::Cell::new(FOLLOW_INTERVAL),
+            nvidia_gpu: crate::machine::has_nvidia_gpu(),
         });
 
         ui.connect_view_stack_selection();
@@ -605,18 +670,7 @@ impl BackendUi {
         }
         .replace("{model}", &model);
         let (summary, details) = switch_report(outcome);
-        let toast = adw::Toast::builder()
-            .title(escape_markup(&heading))
-            .button_label(gettextrs::gettext("Details"))
-            .build();
-        toast.connect_button_clicked({
-            let overlay = self.overlay.clone();
-            move |_| {
-                ui::OperationErrorDialog::new(&heading, &summary, &details)
-                    .present(Some(overlay.upcast_ref::<gtk::Widget>()));
-            }
-        });
-        self.overlay.add_toast(toast);
+        self.toast_report(heading, summary, details);
     }
 
     fn sync_active_backend(self: &Rc<Self>) {
@@ -825,8 +879,9 @@ impl BackendUi {
             .map(|preferred| recommendation(preferred, snapshot.backends()))
     }
 
-    /// Hints on Install more models that `better` would serve the user's
-    /// language better than anything installed.
+    /// The second line of Install more models: the install running from its
+    /// dialog, else that `better` would serve the user's language better
+    /// than anything installed.
     fn show_install_hint(
         &self,
         page: &ui::MynaPage,
@@ -834,17 +889,29 @@ impl BackendUi {
     ) {
         let button = page.install_button();
         let hint = page.install_hint();
-        match better {
-            Some(family) => {
-                set_named(
-                    &hint,
-                    &better_model_hint(family, self.user_language().as_deref()),
-                );
+        let running =
+            self.model_installs
+                .borrow()
+                .iter()
+                .find_map(|(family, install)| match install {
+                    ModelInstall::Running(percent) => Some((*family, *percent)),
+                    ModelInstall::Confirming => None,
+                });
+        let text = match (running, better) {
+            (Some((family, percent)), _) => Some(installing_hint(family, percent)),
+            (None, Some(family)) => {
+                Some(better_model_hint(family, self.user_language().as_deref()))
+            }
+            (None, None) => None,
+        };
+        match &text {
+            Some(named) => {
+                set_named(&hint, named);
                 button.update_property(&[gtk::accessible::Property::Description(&hint.label())]);
             }
             None => button.reset_property(gtk::AccessibleProperty::Description),
         }
-        hint.set_visible(better.is_some());
+        hint.set_visible(text.is_some());
     }
 
     /// The language the recommendation is for, once it is known.
@@ -878,76 +945,304 @@ impl BackendUi {
         }
     }
 
-    fn choose_family(&self) -> ChooseFamily {
-        let overlay = self.overlay.clone();
-        Rc::new(move |dialog, family| {
-            open_in_app_center(&overlay, family);
-            dialog.close();
+    fn install_callback(&self) -> InstallFamily {
+        let ui = self.this.clone();
+        Rc::new(move |family| {
+            if let Some(ui) = ui.upgrade() {
+                ui.install_family(family);
+            }
         })
     }
 
     fn install_models(&self) -> ui::InstallModelsDialog {
         let dialog = ui::InstallModelsDialog::new();
-        offer_install(&dialog, &self.install_offer(), self.choose_family());
+        let shown = self.install_offer();
+        let rows = offer_install(&dialog, &shown, self.nvidia_gpu, self.install_callback());
+        *self.install_dialog.borrow_mut() = Some(OpenInstallDialog {
+            dialog: dialog.downgrade(),
+            shown,
+            rows,
+        });
+        self.render_installs();
         dialog
     }
 
-    fn present_install_models(&self) {
+    fn present_install_models(self: &Rc<Self>) {
         let dialog = self.install_models();
-        *self.install_dialog.borrow_mut() = Some((dialog.downgrade(), self.install_offer()));
         dialog.connect_closed({
             let ui = self.this.clone();
-            move |_| {
-                if let Some(ui) = ui.upgrade() {
-                    ui.install_dialog.borrow_mut().take();
+            move |closed| {
+                let Some(ui) = ui.upgrade() else {
+                    return;
+                };
+                let mut open = ui.install_dialog.borrow_mut();
+                if open
+                    .as_ref()
+                    .is_some_and(|open| open.dialog.upgrade().as_ref() == Some(closed))
+                {
+                    open.take();
                 }
             }
         });
         dialog.present(Some(self.overlay.upcast_ref::<gtk::Widget>()));
+        self.follow_installs_elsewhere();
     }
 
-    /// Keeps an open Install more models dialog to what is still missing,
-    /// closing it once nothing is.
+    /// Keeps an open Install more models dialog listing what it opened with
+    /// and anything missing since, with the recommendation's pill where it
+    /// now belongs.
     fn sync_install_dialog(&self) {
         let offer = self.install_offer();
-        let dialog = {
+        let rebuild = {
             let mut open = self.install_dialog.borrow_mut();
-            let Some((dialog, shown)) = open.as_mut() else {
+            let Some(open) = open.as_mut() else {
                 return;
             };
-            if *shown == offer {
-                return;
+            let wanted = InstallOffer {
+                families: listed_families(&open.shown.families, &offer.families, offer.recommended),
+                ..offer
+            };
+            if open.shown == wanted {
+                None
+            } else {
+                open.shown = wanted.clone();
+                open.dialog.upgrade().map(|dialog| (dialog, wanted))
             }
-            *shown = offer.clone();
-            dialog.upgrade()
         };
-        let Some(dialog) = dialog else {
+        if let Some((dialog, wanted)) = rebuild {
+            let rows = offer_install(&dialog, &wanted, self.nvidia_gpu, self.install_callback());
+            if let Some(open) = self.install_dialog.borrow_mut().as_mut() {
+                open.rows = rows;
+            }
+        }
+        self.render_installs();
+    }
+
+    /// Show where each install stands: on its row in the open dialog, and on
+    /// Install more models, which says what is installing while it runs.
+    fn render_installs(&self) {
+        if let Some(page) = self.myna_selector.as_ref() {
+            let better = self.recommendation().and_then(|found| found.better);
+            self.show_install_hint(page, better);
+        }
+        let open = self.install_dialog.borrow();
+        let Some(open) = open.as_ref() else {
             return;
         };
-        if offer.families.is_empty() {
-            dialog.close();
-            // libadwaita 1.5 drops a close that lands while the dialog is
-            // still animating open, so close again once it surely is open.
-            glib::timeout_add_local_once(DIALOG_OPENED, {
-                let ui = self.this.clone();
-                let dialog = dialog.downgrade();
-                move || {
-                    let (Some(ui), Some(dialog)) = (ui.upgrade(), dialog.upgrade()) else {
-                        return;
-                    };
-                    let open = ui
-                        .install_dialog
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|(open, _)| open.upgrade().as_ref() == Some(&dialog));
-                    if open {
-                        dialog.close();
-                    }
+        let installs = self.model_installs.borrow();
+        let running = installs
+            .values()
+            .any(|install| matches!(install, ModelInstall::Running(_)));
+        let snapshot = self.active_backend.snapshot();
+        for offered in &open.rows {
+            let install = installs.get(&offered.family).copied();
+            offered
+                .row
+                .update_state(&[gtk::accessible::State::Busy(install.is_some())]);
+            let installed = snapshot
+                .backends()
+                .iter()
+                .any(|backend| backend.snap_name() == offered.family.snap_name());
+            match install {
+                Some(ModelInstall::Running(percent)) => offered.control.show_installing(percent),
+                Some(ModelInstall::Confirming) => offered.control.show_installing(None),
+                None if installed => offered.control.show_installed(),
+                None => {
+                    let name = model_family(offered.family.snap_name()).name;
+                    offered.control.show_offer(
+                        &gettextrs::gettext("Install"),
+                        // TRANSLATORS: the Install button's name to assistive technology; {model} is a model family, such as "Whisper".
+                        &gettextrs::gettext("Install {model}").replace("{model}", &name),
+                    );
+                    // One snapd install at a time: its prompt covers one request.
+                    offered.control.button().set_sensitive(!running);
                 }
-            });
-        } else {
-            offer_install(&dialog, &offer, self.choose_family());
+            }
         }
+    }
+
+    /// Install `family` through snapd as the user, one at a time, as the
+    /// onboarding rows do. Its polkit prompt is the only question:
+    /// dismissing it puts the button back silently, a refusal or a failed
+    /// change with a toast whose Details open the report.
+    fn install_family(self: &Rc<Self>, family: myna_core::language::ModelFamily) {
+        let busy = self
+            .model_installs
+            .borrow()
+            .values()
+            .any(|install| matches!(install, ModelInstall::Running(_)));
+        if busy {
+            return;
+        }
+        self.model_installs
+            .borrow_mut()
+            .insert(family, ModelInstall::Running(None));
+        self.render_installs();
+        let offer = family_offer(family, self.nvidia_gpu);
+        self.follow_install(family, move |configurator, follow, report| {
+            Box::pin(async move {
+                crate::snap_install::install(
+                    configurator.as_ref(),
+                    family.snap_name(),
+                    offer.download_bytes,
+                    &follow,
+                    &report,
+                )
+                .await
+            })
+        });
+    }
+
+    /// Follow an install of an offered family that snapd is already running,
+    /// started in App Center or a terminal, rather than offer to start it
+    /// again. One read of snapd's changes each time the dialog opens.
+    fn follow_installs_elsewhere(self: &Rc<Self>) {
+        let offered: Vec<_> = self
+            .install_dialog
+            .borrow()
+            .as_ref()
+            .map(|open| open.shown.families.clone())
+            .unwrap_or_default();
+        if offered.is_empty() {
+            return;
+        }
+        let ui = Rc::downgrade(self);
+        let configurator = self.configurator.clone();
+        glib::spawn_future_local(async move {
+            let Ok(changes) = configurator
+                .changes_in_progress(CancellationToken::new())
+                .await
+            else {
+                return;
+            };
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            for family in offered {
+                if ui.model_installs.borrow().contains_key(&family) {
+                    continue;
+                }
+                let Some(change) =
+                    crate::snap_changes::pending_install(&changes, family.snap_name())
+                else {
+                    continue;
+                };
+                let change_id = change.id().to_owned();
+                ui.model_installs
+                    .borrow_mut()
+                    .insert(family, ModelInstall::Running(None));
+                let offer = family_offer(family, ui.nvidia_gpu);
+                ui.follow_install(family, move |configurator, follow, report| {
+                    Box::pin(async move {
+                        crate::snap_install::follow_change(
+                            configurator.as_ref(),
+                            &change_id,
+                            offer.download_bytes,
+                            &follow,
+                            &report,
+                        )
+                        .await
+                        // Not the user's action, so a failure only puts
+                        // Install back.
+                        .map_err(|_| crate::ports::SystemConfiguratorError::Cancelled)
+                    })
+                });
+            }
+            ui.render_installs();
+        });
+    }
+
+    /// Run `run`, an install or the following of one, reporting its progress
+    /// on `family`'s row, then rediscover so the model lists.
+    fn follow_install<F>(self: &Rc<Self>, family: myna_core::language::ModelFamily, run: F)
+    where
+        F: FnOnce(
+                Rc<dyn SystemConfigurator>,
+                crate::snap_install::Follow<'static>,
+                Box<dyn Fn(Option<u8>)>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                        Output = Result<(), crate::ports::SystemConfiguratorError>,
+                    >,
+                >,
+            > + 'static,
+    {
+        let ui = Rc::downgrade(self);
+        let follow = crate::snap_install::Follow {
+            interval: self.follow_interval.get(),
+            sleep: &glib_sleep,
+            cancellation: self.install_cancellation.clone(),
+        };
+        let report: Box<dyn Fn(Option<u8>)> = Box::new({
+            let ui = ui.clone();
+            move |percent| {
+                if let Some(ui) = ui.upgrade() {
+                    ui.model_installs
+                        .borrow_mut()
+                        .insert(family, ModelInstall::Running(percent));
+                    ui.render_installs();
+                }
+            }
+        });
+        let outcome = run(self.configurator.clone(), follow, report);
+        glib::spawn_future_local(async move {
+            let outcome = outcome.await;
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            let name = model_family(family.snap_name()).name;
+            match outcome {
+                Ok(()) => {
+                    glib::g_message!(
+                        crate::LOG_DOMAIN,
+                        "install: {} installed",
+                        family.snap_name()
+                    );
+                    ui.model_installs
+                        .borrow_mut()
+                        .insert(family, ModelInstall::Confirming);
+                    ui.trigger_discovery();
+                }
+                Err(crate::ports::SystemConfiguratorError::Cancelled) => {
+                    ui.model_installs.borrow_mut().remove(&family);
+                }
+                Err(error) => {
+                    glib::g_message!(
+                        crate::LOG_DOMAIN,
+                        "install: {} failed: {}",
+                        family.snap_name(),
+                        error
+                    );
+                    ui.model_installs.borrow_mut().remove(&family);
+                    // TRANSLATORS: {model} is a model family, such as "Whisper".
+                    let heading =
+                        gettextrs::gettext("Installing {model} failed").replace("{model}", &name);
+                    ui.toast_report(
+                        heading,
+                        system_failure_summary(&error),
+                        system_error_details(&error),
+                    );
+                }
+            }
+            ui.render_installs();
+        });
+    }
+
+    /// A toast whose Details button opens the full report.
+    fn toast_report(&self, heading: String, summary: String, details: String) {
+        let toast = adw::Toast::builder()
+            .title(escape_markup(&heading))
+            .button_label(gettextrs::gettext("Details"))
+            .build();
+        toast.connect_button_clicked({
+            let overlay = self.overlay.clone();
+            move |_| {
+                ui::OperationErrorDialog::new(&heading, &summary, &details)
+                    .present(Some(overlay.upcast_ref::<gtk::Widget>()));
+            }
+        });
+        self.overlay.add_toast(toast);
     }
 
     fn connect_view_stack_selection(self: &Rc<Self>) {
@@ -1328,18 +1623,7 @@ impl BackendUi {
             gettextrs::gettext("Changing “{setting}” could not be confirmed")
         };
         let heading = frame.replace("{setting}", setting);
-        let toast = adw::Toast::builder()
-            .title(escape_markup(&heading))
-            .button_label(gettextrs::gettext("Details"))
-            .build();
-        toast.connect_button_clicked({
-            let overlay = self.overlay.clone();
-            move |_| {
-                ui::OperationErrorDialog::new(&heading, &notice.summary, &notice.details)
-                    .present(Some(overlay.upcast_ref::<gtk::Widget>()));
-            }
-        });
-        self.overlay.add_toast(toast);
+        self.toast_report(heading, notice.summary, notice.details);
     }
 
     fn on_controller_event(self: &Rc<Self>, event: &ControllerEvent) {
@@ -1755,6 +2039,11 @@ impl BackendUi {
                 if !accepted {
                     return;
                 }
+                // Started after snapd was done, so what it found stands.
+                ui.model_installs
+                    .borrow_mut()
+                    .retain(|_, install| *install != ModelInstall::Confirming);
+                ui.render_installs();
                 if performance.is_some() {
                     *ui.performance.borrow_mut() = performance;
                 }
@@ -1833,6 +2122,7 @@ impl BackendUi {
         );
         self.active_backend.abandon();
         self.controller.cancel_all();
+        self.install_cancellation.cancel();
     }
 }
 
@@ -3004,6 +3294,10 @@ mod tests {
             performance: RefCell::new(None),
             last_diagnostics_refresh: std::cell::Cell::new(None),
             install_dialog: RefCell::new(None),
+            model_installs: RefCell::default(),
+            install_cancellation: CancellationToken::new(),
+            follow_interval: std::cell::Cell::new(std::time::Duration::from_millis(5)),
+            nvidia_gpu: false,
         });
         ui.connect_view_stack_selection();
         ui.connect_install_button();
@@ -3794,9 +4088,14 @@ mod tests {
     #[test]
     fn the_install_dialog_offers_the_missing_families_recommended_first() {
         on_gtk_thread(|| {
-            let whisper = gettextrs::gettext("Widest language support");
-            let funasr =
-                gettextrs::gettext("Good support for English, Chinese, Japanese and Korean");
+            let whisper = format!(
+                "{}\u{a0}·\u{a0}198\u{a0}MB",
+                gettextrs::gettext("Widest language support")
+            );
+            let funasr = format!(
+                "{}\u{a0}·\u{a0}309\u{a0}MB",
+                gettextrs::gettext("Good support for English, Chinese, Japanese and Korean")
+            );
             let ui = general_ui(PARAKEET_CONNECTED);
             assert_eq!(
                 offered(&ui.install_models()),
@@ -3829,20 +4128,8 @@ mod tests {
     #[test]
     fn install_more_models_opens_the_dialog() {
         on_gtk_thread(|| {
-            let ui = general_ui(PARAKEET_CONNECTED);
-            let window = adw::Window::builder()
-                .default_width(800)
-                .default_height(600)
-                .content(&ui.overlay)
-                .build();
-            window.present();
-            let opened = || {
-                gtk::Window::list_toplevels()
-                    .into_iter()
-                    .flat_map(|window| descendants(&window))
-                    .filter_map(|widget| widget.downcast::<ui::InstallModelsDialog>().ok())
-                    .collect::<Vec<_>>()
-            };
+            let (ui, _, window) = refocusable_ui();
+            let opened = open_install_dialogs;
             assert!(opened().is_empty());
             ui.myna_selector
                 .as_ref()
@@ -3858,7 +4145,7 @@ mod tests {
     }
 
     #[test]
-    fn activating_an_offered_family_chooses_it() {
+    fn install_hands_its_row_family_over() {
         on_gtk_thread(|| {
             use myna_core::language::ModelFamily as Family;
             let chosen = Rc::new(RefCell::new(Vec::new()));
@@ -3868,18 +4155,25 @@ mod tests {
                 recommended: None,
                 user_language: None,
             };
-            offer_install(&dialog, &offer, {
+            let rows = offer_install(&dialog, &offer, false, {
                 let chosen = Rc::clone(&chosen);
-                Rc::new(move |_, family| chosen.borrow_mut().push(family))
+                Rc::new(move |family| chosen.borrow_mut().push(family))
             });
-            let rows: Vec<adw::ActionRow> = descendants(dialog.families().upcast_ref())
-                .into_iter()
-                .filter_map(|widget| widget.downcast::<adw::ActionRow>().ok())
-                .collect();
-            assert!(rows.iter().all(|row| row.is_activatable()));
-            adw::prelude::ActionRowExt::activate(&rows[1]);
+            assert!(rows.iter().all(|offered| !offered.row.is_activatable()));
+            rows[1].control.button().emit_clicked();
             assert_eq!(*chosen.borrow(), [Family::FunAsr]);
         });
+    }
+
+    #[test]
+    fn an_offer_says_what_it_downloads() {
+        let whisper = family_offer(myna_core::language::ModelFamily::Whisper, false);
+        assert_eq!(
+            offer_subtitle(Some("Widest language support"), whisper),
+            "Widest language support\u{a0}·\u{a0}198\u{a0}MB"
+        );
+        let gpu = family_offer(myna_core::language::ModelFamily::Whisper, true);
+        assert_eq!(offer_subtitle(None, gpu), "up to 1.4\u{a0}GB");
     }
 
     #[test]
@@ -4175,7 +4469,8 @@ mod tests {
             reads: std::cell::Cell::new(0),
         });
         let controller = BackendController::new(repository.clone());
-        let TestUi { ui, .. } = test_ui_with(controller, Some(ui::MynaPage::new()));
+        let snapd = Rc::new(InstallMachine::new(Rc::clone(&repository)));
+        let TestUi { ui, .. } = test_ui_ports(controller, Some(ui::MynaPage::new()), None, snapd);
         ui.controller.observe({
             let ui = Rc::downgrade(&ui);
             move |event| {
@@ -4208,6 +4503,335 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         }
+    }
+
+    /// snapd as Install more models sees it: each install a change that
+    /// downloads while `downloading` holds a percentage, then is done and
+    /// leaves Whisper installed, unless the test gives `install_snap` an
+    /// answer; `pending` are changes someone else started.
+    struct InstallMachine {
+        repository: Rc<ChangingRepository>,
+        answers: RefCell<
+            std::collections::VecDeque<
+                Result<Option<String>, crate::ports::SystemConfiguratorError>,
+            >,
+        >,
+        downloading: std::cell::Cell<Option<u64>>,
+        pending: RefCell<Vec<String>>,
+        installs: RefCell<Vec<String>>,
+    }
+
+    impl InstallMachine {
+        fn new(repository: Rc<ChangingRepository>) -> Self {
+            Self {
+                repository,
+                answers: RefCell::default(),
+                downloading: std::cell::Cell::new(None),
+                pending: RefCell::default(),
+                installs: RefCell::default(),
+            }
+        }
+    }
+
+    /// A download far larger than any offer, so percentages are snapd's own.
+    const DOWNLOAD_UNIT: u64 = 1 << 32;
+
+    #[async_trait::async_trait(?Send)]
+    impl SystemConfigurator for InstallMachine {
+        async fn user_daemons_enabled(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<bool, String> {
+            Ok(true)
+        }
+
+        async fn enable_user_daemons(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<(), crate::ports::SystemConfiguratorError> {
+            unreachable!("the settings window never turns the flag on")
+        }
+
+        async fn install_snap(
+            &self,
+            snap: &str,
+            _cancellation: CancellationToken,
+        ) -> Result<Option<String>, crate::ports::SystemConfiguratorError> {
+            self.installs.borrow_mut().push(snap.to_owned());
+            self.answers
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_else(|| Ok(Some(format!("change-{snap}"))))
+        }
+
+        async fn snap_change(
+            &self,
+            change_id: &str,
+            _cancellation: CancellationToken,
+        ) -> Result<crate::snap_changes::ChangeInProgress, String> {
+            let snap = change_id.trim_start_matches("change-");
+            let change = match self.downloading.get() {
+                Some(done) => serde_json::json!({"id": change_id, "kind": "install-snap",
+                    "ready": false, "status": "Doing", "summary": format!("Install \"{snap}\" snap"),
+                    "tasks": [{"kind": "download-snap", "status": "Doing",
+                        "progress": {"label": snap, "done": done * DOWNLOAD_UNIT, "total": 100 * DOWNLOAD_UNIT}}]}),
+                None => {
+                    self.pending.borrow_mut().retain(|pending| pending != snap);
+                    *self.repository.machine.borrow_mut() = (
+                        PARAKEET_CONNECTED_WHISPER_INSTALLED,
+                        PARAKEET_AND_WHISPER_SLOTS,
+                    );
+                    serde_json::json!({"id": change_id, "kind": "install-snap",
+                        "ready": true, "status": "Done", "summary": format!("Install \"{snap}\" snap")})
+                }
+            };
+            crate::snap_changes::parse_change(change)
+        }
+
+        async fn changes_in_progress(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<Vec<crate::snap_changes::ChangeInProgress>, String> {
+            crate::snap_changes::parse_changes(serde_json::Value::Array(
+                self.pending
+                    .borrow()
+                    .iter()
+                    .map(|snap| {
+                        serde_json::json!({"id": format!("change-{snap}"), "kind": "install-snap",
+                            "ready": false, "status": "Doing",
+                            "summary": format!("Install \"{snap}\" snap from \"latest/edge\" channel")})
+                    })
+                    .collect(),
+            ))
+        }
+
+        async fn execute_backend_switch(
+            &self,
+            _plan: &crate::active_backend::SwitchPlan,
+            _cancellation: CancellationToken,
+        ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure>
+        {
+            unreachable!("installing never switches models")
+        }
+
+        async fn restart_myna(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<(), crate::ports::SystemConfiguratorError> {
+            unreachable!("installing never restarts Myna")
+        }
+
+        async fn apply_backend_config(
+            &self,
+            _preview: &ApplyPreview,
+            _cancellation: CancellationToken,
+        ) -> Result<Vec<crate::domain::CommandResult>, crate::ports::SystemConfiguratorFailure>
+        {
+            unreachable!("installing never configures a model")
+        }
+    }
+
+    /// General over a Parakeet-only machine whose snapd installs, with the
+    /// dialog open.
+    fn installing_ui() -> (
+        Rc<BackendUi>,
+        Rc<InstallMachine>,
+        ui::InstallModelsDialog,
+        adw::Window,
+    ) {
+        ui::register_resources();
+        let repository = Rc::new(ChangingRepository {
+            machine: RefCell::new((PARAKEET_CONNECTED, PARAKEET_SLOT)),
+            reads: std::cell::Cell::new(0),
+        });
+        let snapd = Rc::new(InstallMachine::new(Rc::clone(&repository)));
+        let controller = BackendController::new(repository);
+        let TestUi { ui, .. } =
+            test_ui_ports(controller, Some(ui::MynaPage::new()), None, snapd.clone());
+        ui.controller.observe({
+            let ui = Rc::downgrade(&ui);
+            move |event| {
+                if let Some(ui) = ui.upgrade() {
+                    ui.on_controller_event(event);
+                }
+            }
+        });
+        let window = adw::Window::builder()
+            .default_width(800)
+            .default_height(600)
+            .content(&ui.overlay)
+            .build();
+        window.present();
+        ui.trigger_discovery();
+        settle(|| model_titles(&ui) == ["Parakeet"]);
+        ui.present_install_models();
+        let dialog = open_install_dialogs().pop().expect("dialog open");
+        (ui, snapd, dialog, window)
+    }
+
+    /// Each offered row's title and what its install control shows: the
+    /// button's label (bracketed while insensitive), the progress beside
+    /// the spinner, or "Installed".
+    fn offer_states(dialog: &ui::InstallModelsDialog) -> Vec<(String, String)> {
+        offered_rows(dialog)
+            .iter()
+            .map(|row| {
+                let control = descendants(row.upcast_ref())
+                    .into_iter()
+                    .find_map(|widget| widget.downcast::<ui::InstallControl>().ok())
+                    .expect("an install control");
+                let button = control.button();
+                let progress = control.progress();
+                let state = if button.is_visible() {
+                    let label = button.label().unwrap_or_default().to_string();
+                    if button.is_sensitive() {
+                        label
+                    } else {
+                        format!("[{label}]")
+                    }
+                } else if progress.container.is_visible() {
+                    assert!(progress.spinner.is_spinning());
+                    progress.label.label().to_string()
+                } else if control.installed().is_visible() {
+                    "Installed".to_owned()
+                } else {
+                    String::new()
+                };
+                (row.title().to_string(), state)
+            })
+            .collect()
+    }
+
+    fn click_install(dialog: &ui::InstallModelsDialog, title: &str) {
+        let row = offered_rows(dialog)
+            .into_iter()
+            .find(|row| row.title() == title)
+            .expect("an offered row");
+        descendants(row.upcast_ref())
+            .into_iter()
+            .find_map(|widget| widget.downcast::<ui::InstallControl>().ok())
+            .expect("an install control")
+            .button()
+            .emit_clicked();
+    }
+
+    fn states(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(title, state)| ((*title).to_owned(), (*state).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn installing_a_model_shows_its_progress_then_lists_it() {
+        on_gtk_thread(|| {
+            let (ui, snapd, dialog, window) = installing_ui();
+            assert_eq!(
+                offer_states(&dialog),
+                states(&[("Whisper", "Install"), ("FunASR", "Install")])
+            );
+            snapd.downloading.set(Some(42));
+            click_install(&dialog, "Whisper");
+            settle(|| offer_states(&dialog)[0].1 == "Installing 42%");
+            assert_eq!(
+                offer_states(&dialog),
+                states(&[("Whisper", "Installing 42%"), ("FunASR", "[Install]")]),
+                "one install at a time"
+            );
+            assert_eq!(install_hint(&ui).as_deref(), Some("Installing Whisper 42%"));
+            assert_eq!(*snapd.installs.borrow(), ["myna-whisper"]);
+
+            snapd.downloading.set(None);
+            settle(|| offer_states(&dialog)[0].1 == "Installed");
+            assert_eq!(
+                offer_states(&dialog),
+                states(&[("Whisper", "Installed"), ("FunASR", "Install")])
+            );
+            assert_eq!(model_titles(&ui), ["Parakeet", "Whisper"]);
+            assert_eq!(install_hint(&ui), None);
+            assert!(toasts(&ui).is_empty(), "a success says nothing");
+            dialog.force_close();
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn a_dismissed_prompt_puts_install_back_silently() {
+        on_gtk_thread(|| {
+            let (ui, snapd, dialog, window) = installing_ui();
+            snapd
+                .answers
+                .borrow_mut()
+                .push_back(Err(crate::ports::SystemConfiguratorError::Cancelled));
+            click_install(&dialog, "FunASR");
+            settle(|| ui.model_installs.borrow().is_empty());
+            assert_eq!(
+                offer_states(&dialog),
+                states(&[("Whisper", "Install"), ("FunASR", "Install")])
+            );
+            assert!(toasts(&ui).is_empty());
+            dialog.force_close();
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn a_refused_install_says_so_with_details() {
+        on_gtk_thread(|| {
+            let (ui, snapd, dialog, window) = installing_ui();
+            snapd.answers.borrow_mut().push_back(Err(
+                crate::ports::SystemConfiguratorError::snapd_execution(
+                    crate::snap_install::install_request("myna-funasr"),
+                    Some(401),
+                    "access denied",
+                ),
+            ));
+            click_install(&dialog, "FunASR");
+            settle(|| !toasts(&ui).is_empty());
+            assert_eq!(toasts(&ui), ["Installing FunASR failed", "Details"]);
+            assert_eq!(
+                offer_states(&dialog),
+                states(&[("Whisper", "Install"), ("FunASR", "Install")])
+            );
+            dialog.force_close();
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn an_install_started_elsewhere_is_followed_not_offered() {
+        on_gtk_thread(|| {
+            let (ui, snapd, first, window) = installing_ui();
+            first.force_close();
+            snapd.pending.borrow_mut().push("myna-whisper".to_owned());
+            snapd.downloading.set(Some(7));
+            ui.present_install_models();
+            let dialog = open_install_dialogs().pop().expect("dialog open");
+            settle(|| offer_states(&dialog)[0].1 == "Installing 7%");
+            assert!(snapd.installs.borrow().is_empty(), "nothing installs twice");
+            snapd.downloading.set(None);
+            settle(|| offer_states(&dialog)[0].1 == "Installed");
+            dialog.force_close();
+            window.destroy();
+        });
+    }
+
+    #[test]
+    fn an_install_outlives_its_dialog() {
+        on_gtk_thread(|| {
+            let (ui, snapd, dialog, window) = installing_ui();
+            snapd.downloading.set(Some(3));
+            click_install(&dialog, "Whisper");
+            settle(|| install_hint(&ui).as_deref() == Some("Installing Whisper 3%"));
+            dialog.force_close();
+            ui.present_install_models();
+            let reopened = open_install_dialogs().pop().expect("dialog open");
+            assert_eq!(offer_states(&reopened)[0].1, "Installing 3%");
+            snapd.downloading.set(None);
+            settle(|| model_titles(&ui) == ["Parakeet", "Whisper"]);
+            reopened.force_close();
+            window.destroy();
+        });
     }
 
     fn model_titles(ui: &BackendUi) -> Vec<String> {
@@ -4243,11 +4867,6 @@ mod tests {
                     .collect::<Vec<_>>()
             };
             assert_eq!(offered_titles(&dialog), ["Whisper", "FunASR"]);
-            let closed = Rc::new(std::cell::Cell::new(false));
-            dialog.connect_closed({
-                let closed = Rc::clone(&closed);
-                move |_| closed.set(true)
-            });
 
             *repository.machine.borrow_mut() = (
                 PARAKEET_CONNECTED_WHISPER_INSTALLED,
@@ -4263,7 +4882,14 @@ mod tests {
                 std::slice::from_ref(&dialog),
                 "the open dialog stays open"
             );
-            assert_eq!(offered_titles(&dialog), ["FunASR"]);
+            assert_eq!(
+                offer_states(&dialog),
+                [
+                    ("Whisper".to_owned(), "Installed".to_owned()),
+                    ("FunASR".to_owned(), "Install".to_owned()),
+                ],
+                "an installed family stays, saying so"
+            );
 
             *repository.machine.borrow_mut() = (
                 PARAKEET_CONNECTED_EVERY_FAMILY_INSTALLED,
@@ -4273,8 +4899,19 @@ mod tests {
                 after_the_interval() + crate::backend_controller::FOCUS_REDISCOVERY_INTERVAL,
             );
             settle(|| model_titles(&ui).len() == 3);
-            settle(|| closed.get());
-            assert!(closed.get(), "nothing is left to install");
+            assert_eq!(
+                offer_states(&dialog),
+                [
+                    ("Whisper".to_owned(), "Installed".to_owned()),
+                    ("FunASR".to_owned(), "Installed".to_owned()),
+                ]
+            );
+            assert_eq!(
+                open_install_dialogs().len(),
+                1,
+                "closing is the user's call"
+            );
+            dialog.force_close();
             window.destroy();
         });
     }

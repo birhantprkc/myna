@@ -932,41 +932,23 @@ impl OnboardingUi {
             let install = installs.get(&component.id).copied();
             row.row
                 .update_state(&[gtk::accessible::State::Busy(install.is_some())]);
-            let progress = &row.installing;
-            progress.container.set_visible(install.is_some());
-            progress.spinner.set_spinning(install.is_some());
             if let Some(install) = install {
-                progress
-                    .label
-                    .set_label(&install_text(component.id, install));
-            }
-            if install.is_some() {
-                row.installed.set_visible(false);
-                row.button.set_visible(false);
+                row.control.show_busy(&install_text(component.id, install));
                 continue;
             }
             // One snapd install at a time: its prompt covers one request.
             row.button
                 .set_sensitive(component.id == ComponentId::ShellExtension || !snap_installing);
-            row.installed.set_visible(action == RowAction::Installed);
-            let label = match action {
-                RowAction::Install => {
-                    Some((gettextrs::gettext("Install"), install_label(component.id)))
-                }
-                RowAction::Enable => Some((
-                    gettextrs::gettext("Enable"),
-                    gettextrs::gettext("Enable the shell extension"),
-                )),
-                RowAction::Installed | RowAction::Unavailable(_) => None,
-            };
-            row.button.set_visible(label.is_some());
-            if let Some((label, accessible)) = label {
-                row.button.set_label(&label);
-                // A button is labelled by its label child, over any name set.
-                row.button
-                    .reset_relation(gtk::AccessibleRelation::LabelledBy);
-                row.button
-                    .update_property(&[gtk::accessible::Property::Label(&accessible)]);
+            match action {
+                RowAction::Install => row
+                    .control
+                    .show_offer(&gettextrs::gettext("Install"), &install_label(component.id)),
+                RowAction::Enable => row.control.show_offer(
+                    &gettextrs::gettext("Enable"),
+                    &gettextrs::gettext("Enable the shell extension"),
+                ),
+                RowAction::Installed => row.control.show_installed(),
+                RowAction::Unavailable(_) => row.control.show_nothing(),
             }
         }
     }
@@ -1118,12 +1100,8 @@ fn progress_reporter(ui: std::rc::Weak<OnboardingUi>, id: ComponentId) -> impl F
 fn install_text(id: ComponentId, install: Install) -> String {
     match install {
         _ if id == ComponentId::ShellExtension => gettextrs::gettext("Enabling…"),
-        Install::Running(Some(percent)) => {
-            // TRANSLATORS: {percent} is how much of the download has arrived, a number from 0 to 100.
-            let frame = gettextrs::gettext("Installing {percent}%");
-            frame.replace("{percent}", &percent.to_string())
-        }
-        Install::Running(None) | Install::Confirming => gettextrs::gettext("Installing…"),
+        Install::Running(percent) => ui::installing_text(percent),
+        Install::Confirming => ui::installing_text(None),
     }
 }
 
@@ -1231,7 +1209,7 @@ fn describe(components: &[Component]) -> String {
 
 /// A download's size as the rows show it: in whole megabytes from 100 MB to
 /// 1 GB, where a decimal only adds noise.
-fn download_size(bytes: u64) -> String {
+pub(crate) fn download_size(bytes: u64) -> String {
     if !(100_000_000..999_500_000).contains(&bytes) {
         return glib::format_size(bytes).to_string();
     }

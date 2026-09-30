@@ -79,11 +79,6 @@ pub fn recommendation<S: AsRef<str>>(
     }
 }
 
-/// Where App Center shows `family`'s snap.
-pub fn store_uri(family: Family) -> String {
-    format!("snap://{}", family.snap_name())
-}
-
 /// Whether `backend` belongs to the `recommended` family; a backend of no
 /// known family never does.
 pub fn is_recommended(backend: &BackendIdentity, recommended: Option<Family>) -> bool {
@@ -299,6 +294,20 @@ pub fn better_model_hint(family: Family, user_language: Option<&str>) -> Named {
     }
 }
 
+/// What Install more models says while `family` installs from its dialog,
+/// with snapd's download `percent` once known.
+pub fn installing_hint(family: Family, percent: Option<u8>) -> Named {
+    let name = model_family(family.snap_name()).name;
+    let text = match percent {
+        // TRANSLATORS: Shown under "Install more models" while a model installs. {model} is a model family, such as "Whisper", and {percent} how much of its download has arrived, a number from 0 to 100.
+        Some(percent) => gettextrs::gettext("Installing {model} {percent}%")
+            .replace("{percent}", &percent.to_string()),
+        // TRANSLATORS: Shown under "Install more models" while a model installs. {model} is a model family, such as "Whisper".
+        None => gettextrs::gettext("Installing {model}…"),
+    };
+    Named::plain(text.replace("{model}", &name))
+}
+
 /// Sorts a name by its base letters, so "Čeština" files under C and
 /// "ʻŌlelo Hawaiʻi" under O; other scripts follow Latin by code point.
 fn name_order(name: &str) -> Vec<char> {
@@ -430,13 +439,6 @@ mod tests {
             ),
             []
         );
-    }
-
-    #[test]
-    fn app_center_opens_a_family_by_its_snap() {
-        assert_eq!(store_uri(Family::Parakeet), "snap://myna-parakeet");
-        assert_eq!(store_uri(Family::Whisper), "snap://myna-whisper");
-        assert_eq!(store_uri(Family::FunAsr), "snap://myna-funasr");
     }
 
     fn snaps(backends: &[BackendIdentity]) -> Vec<&str> {

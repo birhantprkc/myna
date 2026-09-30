@@ -37,8 +37,8 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// The model families Myna knows that are not installed, each opening
-    /// its App Center page.
+    /// The model families Myna knows that are not installed, each with its
+    /// install control.
     pub struct InstallModelsDialog(ObjectSubclass<imp::InstallModelsDialog>)
         @extends gtk::Widget, adw::Dialog,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;

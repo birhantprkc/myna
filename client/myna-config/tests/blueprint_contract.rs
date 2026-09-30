@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 const BLUEPRINTS: &[(&str, &str)] = &[
     ("backend-page.blp", "backend-page.ui"),
     ("diagnostics-page.blp", "diagnostics-page.ui"),
+    ("install-control.blp", "install-control.ui"),
     ("install-models-dialog.blp", "install-models-dialog.ui"),
     ("main-window.blp", "main-window.ui"),
     ("myna-page.blp", "myna-page.ui"),

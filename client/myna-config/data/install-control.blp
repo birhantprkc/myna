@@ -1,0 +1,57 @@
+using Gtk 4.0;
+
+template $InstallControl: Gtk.Box {
+  valign: center;
+  // Wide enough for "Installing 100%", so the row's other suffixes stay put
+  // as the button gives way to the progress and then the check.
+  width-request: 136;
+  // Its children expand to align at its end; that must not reach the row.
+  hexpand: false;
+
+  Gtk.Button button {
+    halign: end;
+    hexpand: true;
+    valign: center;
+    width-request: 120;
+
+    styles [
+      "outlined",
+    ]
+  }
+
+  Gtk.Box installing {
+    halign: end;
+    hexpand: true;
+    spacing: 8;
+    visible: false;
+
+    Gtk.Spinner spinner {
+      valign: center;
+    }
+
+    Gtk.Label progress {
+      styles [
+        "numeric",
+      ]
+    }
+  }
+
+  Gtk.Box installed {
+    halign: end;
+    hexpand: true;
+    spacing: 8;
+    visible: false;
+
+    Gtk.Image {
+      icon-name: "object-select-symbolic";
+
+      styles [
+        "success",
+      ]
+    }
+
+    Gtk.Label {
+      label: _("Installed");
+    }
+  }
+}

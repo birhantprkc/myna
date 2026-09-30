@@ -70,140 +70,21 @@ template $OnboardingComponents: Adw.Bin {
             title: _("Dictation app");
 
             [suffix]
-            Gtk.Button myna_button {
-              valign: center;
-              width-request: 120;
-
-              styles [
-                "outlined",
-              ]
-            }
-
-            [suffix]
-            Gtk.Box myna_installing {
-              spacing: 8;
-              visible: false;
-
-              Gtk.Spinner myna_spinner {
-                valign: center;
-              }
-
-              Gtk.Label myna_progress {
-                styles [
-                  "numeric",
-                ]
-              }
-            }
-
-            [suffix]
-            Gtk.Box myna_installed {
-              spacing: 8;
-              visible: false;
-
-              Gtk.Image {
-                icon-name: "object-select-symbolic";
-
-                styles [
-                  "success",
-                ]
-              }
-
-              Gtk.Label {
-                label: _("Installed");
-              }
-            }
+            $InstallControl myna_control {}
           }
 
           Adw.ActionRow model_row {
             title: _("Speech-to-text model");
 
             [suffix]
-            Gtk.Button model_button {
-              valign: center;
-              width-request: 120;
-
-              styles [
-                "outlined",
-              ]
-            }
-
-            [suffix]
-            Gtk.Box model_installing {
-              spacing: 8;
-              visible: false;
-
-              Gtk.Spinner model_spinner {
-                valign: center;
-              }
-
-              Gtk.Label model_progress {
-                styles [
-                  "numeric",
-                ]
-              }
-            }
-
-            [suffix]
-            Gtk.Box model_installed {
-              spacing: 8;
-              visible: false;
-
-              Gtk.Image {
-                icon-name: "object-select-symbolic";
-
-                styles [
-                  "success",
-                ]
-              }
-
-              Gtk.Label {
-                label: _("Installed");
-              }
-            }
+            $InstallControl model_control {}
           }
 
           Adw.ActionRow extension_row {
             title: _("Shell extension");
 
             [suffix]
-            Gtk.Button extension_button {
-              valign: center;
-              width-request: 120;
-
-              styles [
-                "outlined",
-              ]
-            }
-
-            [suffix]
-            Gtk.Box extension_installing {
-              spacing: 8;
-              visible: false;
-
-              Gtk.Spinner extension_spinner {
-                valign: center;
-              }
-
-              Gtk.Label extension_progress {}
-            }
-
-            [suffix]
-            Gtk.Box extension_installed {
-              spacing: 8;
-              visible: false;
-
-              Gtk.Image {
-                icon-name: "object-select-symbolic";
-
-                styles [
-                  "success",
-                ]
-              }
-
-              Gtk.Label {
-                label: _("Installed");
-              }
-            }
+            $InstallControl extension_control {}
           }
         }
       };

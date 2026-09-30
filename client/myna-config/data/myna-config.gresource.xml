@@ -5,6 +5,7 @@
     <file>appearance-gtk416.css</file>
     <file>backend-page.ui</file>
     <file>diagnostics-page.ui</file>
+    <file>install-control.ui</file>
     <file>install-models-dialog.ui</file>
     <file>main-window.ui</file>
     <file>myna-page.ui</file>
