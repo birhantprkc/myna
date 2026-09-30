@@ -5,14 +5,14 @@
 //! through the controller: [`Chiming`] wraps whatever [`Indicator`] the daemon
 //! runs and hears every state it is shown, so what the user hears can never
 //! disagree with what the HUD shows. [`Chime`] is the port;
-//! [`theme::ThemeChime`] plays the desktop sound theme's files.
+//! [`player::Player`] plays Myna's own sounds.
 
 use async_trait::async_trait;
 
 use crate::indicator::{Indicator, IndicatorState};
 use crate::live::Live;
 
-pub mod theme;
+pub mod player;
 
 /// The three moments a session is heard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -20,18 +20,6 @@ pub enum Cue {
     Start,
     Stop,
     Error,
-}
-
-impl Cue {
-    /// The freedesktop sound-naming event id each cue plays: a rising and a
-    /// falling blip that every theme pairs, and the theme's error sound.
-    pub fn event_id(self) -> &'static str {
-        match self {
-            Cue::Start => "device-added",
-            Cue::Stop => "device-removed",
-            Cue::Error => "dialog-error",
-        }
-    }
 }
 
 /// Plays a cue. Must return at once: the controller awaits the indicator.
@@ -210,13 +198,6 @@ mod tests {
     #[test]
     fn a_stray_state_while_idle_is_silent() {
         assert_eq!(heard(&[Hidden, Transcribing, Finalizing, notice()]), []);
-    }
-
-    #[test]
-    fn each_cue_names_a_freedesktop_event() {
-        assert_eq!(Cue::Start.event_id(), "device-added");
-        assert_eq!(Cue::Stop.event_id(), "device-removed");
-        assert_eq!(Cue::Error.event_id(), "dialog-error");
     }
 
     #[derive(Default)]

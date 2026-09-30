@@ -63,7 +63,7 @@ use myna_desktop::shortcut::control::{default_socket_path, send_toggle, ControlT
 use myna_desktop::shortcut::portal::{ActivationMode, GlobalShortcutTrigger, TriggerError};
 use myna_desktop::shortcut::retry::{BindFailure, Rebind, RetryingTrigger};
 use myna_desktop::shortcut::Trigger;
-use myna_desktop::sound::{theme::ThemeChime, Chiming};
+use myna_desktop::sound::{player::Player, Chiming};
 use myna_desktop::{AutoStop, DesktopController, Indicator, Live, Session};
 use myna_orchestrator::backend::share::{BackendSocket, ResolveError};
 use myna_orchestrator::{
@@ -841,7 +841,7 @@ fn bind_control(path: &std::path::Path) -> Result<Box<dyn Trigger>, BindFailure>
 /// The indicator, heard as well as seen while the `sounds` setting is on. A
 /// daemon that cannot start the player thread dictates silently.
 fn with_sounds(indicator: impl Indicator + 'static, live: &LiveSettings) -> Box<dyn Indicator> {
-    match ThemeChime::spawn() {
+    match Player::spawn() {
         Ok(chime) => Box::new(Chiming::new(indicator, chime, live.sounds.clone())),
         Err(e) => {
             eprintln!("myna-desktop: no sound player ({e}); cues are off");

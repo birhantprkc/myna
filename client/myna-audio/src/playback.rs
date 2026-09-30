@@ -103,6 +103,11 @@ impl Clip {
         self.channels
     }
 
+    /// Interleaved, `channels` wide.
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
     pub fn duration(&self) -> Duration {
         let frames = self.samples.len() as u64 / u64::from(self.channels);
         Duration::from_micros(frames * 1_000_000 / u64::from(self.rate))

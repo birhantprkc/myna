@@ -29,8 +29,8 @@
       <default>true</default>
       <summary>Sounds on start, stop and error</summary>
       <description>
-        Play a short sound from the desktop sound theme when dictation starts
-        listening, when it stops, and when it fails.
+        Play a short sound when dictation starts listening, when it stops,
+        and when it fails.
       </description>
     </key>
 
