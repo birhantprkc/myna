@@ -360,6 +360,7 @@ fn onboarding_probe() -> glib::ExitCode {
                 runner.clone(),
             )),
             Rc::new(ProbeMachine::new()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
             Box::new(|| {}),
         );
@@ -592,7 +593,7 @@ fn onboarding_probe() -> glib::ExitCode {
         status.is_mapped()
             && status
                 .label()
-                .starts_with("Cannot read what snapd has installed: ")
+                .starts_with("Cannot read what snapd has set up: ")
     };
     for _ in 0..100 {
         if unreadable() {
@@ -623,6 +624,7 @@ fn onboarding_probe() -> glib::ExitCode {
                 std::sync::Arc::new(machine.clone()),
             )),
             Rc::new(machine.clone()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
             Box::new(|| {}),
         );
@@ -735,6 +737,7 @@ fn onboarding_probe() -> glib::ExitCode {
                 std::sync::Arc::new(machine.clone()),
             )),
             Rc::new(machine.clone()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
             Box::new(|| {}),
         );
@@ -774,6 +777,7 @@ fn onboarding_probe() -> glib::ExitCode {
                 std::sync::Arc::new(machine.clone()),
             )),
             Rc::new(machine.clone()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
             Box::new(|| {}),
         );
@@ -805,6 +809,65 @@ fn onboarding_probe() -> glib::ExitCode {
     window.close();
     settle_gtk();
 
+    // Without the extension the required components alone never move on by
+    // themselves: Next does.
+    let machine = ProbeMachine::bare();
+    let window = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine::default()),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Unavailable),
+            None,
+            Box::new(|| {}),
+        );
+        ui.set_poll_interval(Duration::from_millis(50));
+        ui.set_beat(Duration::from_millis(50));
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    machine.install();
+    for _ in 0..100 {
+        if installed_status(&window) == Some(true) {
+            break;
+        }
+        settle_gtk();
+    }
+    for _ in 0..20 {
+        settle_gtk();
+    }
+    if installed_status(&window) != Some(true)
+        || step(&window) != "components"
+        || !window.forward_button().is_sensitive()
+        || machine.restarts_attempted() != 0
+    {
+        eprintln!(
+            "the required components alone reached {} having restarted {} times",
+            step(&window),
+            machine.restarts_attempted()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    window.forward_button().emit_clicked();
+    for _ in 0..100 {
+        if step(&window) == "shortcut" {
+            break;
+        }
+        settle_gtk();
+    }
+    if step(&window) != "shortcut" {
+        eprintln!("Next without the extension stayed on {}", step(&window));
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-optional: the extension waits for Next");
+    window.close();
+    settle_gtk();
+
     // A failed automatic setup reports itself, stays, and Next retries.
     let machine = ProbeMachine::bare();
     machine.refuse_restarts(1);
@@ -816,6 +879,7 @@ fn onboarding_probe() -> glib::ExitCode {
                 std::sync::Arc::new(machine.clone()),
             )),
             Rc::new(machine.clone()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
             Box::new(|| {}),
         );
@@ -867,11 +931,15 @@ fn onboarding_probe() -> glib::ExitCode {
     let window = {
         let ui = OnboardingUi::present_with_ports(
             &application,
-            assess(Machine::new(&installed, 1)),
+            assess(Machine {
+                user_daemons: true,
+                ..Machine::new(&installed, 1)
+            }),
             Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
                 std::sync::Arc::new(crate::command::FakeCommandRunner::default()),
             )),
             Rc::new(ProbeMachine::new()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
             Box::new(|| {}),
         );
@@ -913,11 +981,15 @@ fn onboarding_probe() -> glib::ExitCode {
     let (window, shortcut_button) = {
         let ui = OnboardingUi::present_with_ports(
             &application,
-            assess(Machine::new(&installed, 1)),
+            assess(Machine {
+                user_daemons: true,
+                ..Machine::new(&installed, 1)
+            }),
             Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
                 std::sync::Arc::new(machine.clone()),
             )),
             Rc::new(machine.clone()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
             None,
             Box::new({
                 let application = application.clone();
@@ -1190,10 +1262,11 @@ fn build_window(application: &adw::Application) {
     // no window and no held use count quits the moment `activate` returns.
     let hold = application.hold();
     glib::spawn_future_local(async move {
+        let runner = std::sync::Arc::new(crate::command::GioCommandRunner);
         let components = crate::onboarding_ui::assess_machine(
-            &crate::adapters::snap_backend::SnapBackendRepository::new(std::sync::Arc::new(
-                crate::command::GioCommandRunner,
-            )),
+            &crate::adapters::snap_backend::SnapBackendRepository::new(runner.clone()),
+            &crate::adapters::system_configurator::PkexecSystemConfigurator::new(runner),
+            &crate::adapters::shell_extensions::GnomeShellExtensions::new(),
         )
         .await;
         if needs_onboarding(&components) {
@@ -1559,11 +1632,15 @@ fn onboarding_control_probe() -> glib::ExitCode {
         let (window, button) = {
             let ui = OnboardingUi::present_with_ports(
                 &application,
-                assess(Machine::new(&installed, 1)),
+                assess(Machine {
+                    user_daemons: true,
+                    ..Machine::new(&installed, 1)
+                }),
                 Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
                     std::sync::Arc::new(machine.clone()),
                 )),
                 Rc::new(machine),
+                ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
                 None,
                 Box::new(|| {}),
             );
@@ -2181,8 +2258,31 @@ impl crate::command::CommandRunner for ProbeMachine {
     }
 }
 
+/// gnome-shell as the probes need it, changed as they go.
+struct ProbeExtensions(Cell<crate::onboarding::ExtensionState>);
+
+impl ProbeExtensions {
+    fn new(state: crate::onboarding::ExtensionState) -> Rc<Self> {
+        Rc::new(Self(Cell::new(state)))
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl crate::ports::ShellExtensions for ProbeExtensions {
+    async fn extension_state(&self, _uuid: &str) -> crate::onboarding::ExtensionState {
+        self.0.get()
+    }
+}
+
 #[async_trait::async_trait(?Send)]
 impl crate::ports::SystemConfigurator for ProbeMachine {
+    async fn user_daemons_enabled(
+        &self,
+        _cancellation: crate::command::CancellationToken,
+    ) -> Result<bool, String> {
+        Ok(!self.bare.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
     async fn changes_in_progress(
         &self,
         _cancellation: crate::command::CancellationToken,
@@ -3138,7 +3238,7 @@ fn installed_status(window: &ui::OnboardingWindow) -> Option<bool> {
     let label = find_descendant(window.upcast_ref(), &|widget| {
         widget.downcast_ref::<gtk::Label>().is_some_and(|label| {
             label.is_mapped()
-                && label.label() == gettextrs::gettext("All components installed").as_str()
+                && label.label() == gettextrs::gettext("All required components installed").as_str()
         })
     })?;
     let check = label.parent().and_then(|status| {

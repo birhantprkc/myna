@@ -29,6 +29,14 @@ pub fn machine_facts() -> MachineFacts {
     }
 }
 
+/// Whether an NVIDIA display controller is present, which is what makes an
+/// inference snap's install hook pick its GPU engine.
+pub fn has_nvidia_gpu() -> bool {
+    gpus(Path::new("/sys/bus/pci/devices"))
+        .iter()
+        .any(|gpu| gpu.starts_with("NVIDIA "))
+}
+
 fn cpu_summary(cpuinfo: &str) -> String {
     let field = |name: &str| {
         cpuinfo

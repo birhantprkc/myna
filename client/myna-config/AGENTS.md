@@ -25,12 +25,12 @@ Myna Settings is a host application, not a snap. It talks to snapd on the user's
 
 # Architecture
 
-Hexagonal. `ports.rs` declares the traits the application depends on (backend repository, system configurator, client settings). `adapters/` implements them against real snapd, `snap`, `pkexec`, and Gio. `domain.rs`, `active_backend.rs`, `backend_apply.rs`, `onboarding.rs`, `shortcut.rs`, and `machine.rs` hold the pure decision logic. The `*_controller.rs` and `*_ui.rs` pairs bind that logic to GTK, and `operation_gate.rs` ensures one privileged operation runs at a time.
+Hexagonal. `ports.rs` declares the traits the application depends on (backend repository, system configurator, client settings, shell extensions). `adapters/` implements them against real snapd, `snap`, `pkexec`, gnome-shell's D-Bus, and Gio. `domain.rs`, `active_backend.rs`, `backend_apply.rs`, `onboarding.rs`, `shortcut.rs`, and `machine.rs` hold the pure decision logic. The `*_controller.rs` and `*_ui.rs` pairs bind that logic to GTK, and `operation_gate.rs` ensures one privileged operation runs at a time.
 
 # Directory
 
 - `build/` - Build logic outside cargo: the minimum `blueprint-compiler` version that `tests/` pulls in with `include!`, and the translation install the deb build runs.
-- `src/adapters/` - snapd REST client, `snap` CLI repository, pkexec configurator, Gio settings, GNOME custom shortcut.
+- `src/adapters/` - snapd REST client, `snap` CLI repository, pkexec configurator, Gio settings, GNOME custom shortcut, gnome-shell extension state.
 - `src/ui/` - One module per Blueprint template in `data/`.
 - `src/bin/` - Test fixture that stands in for a real command runner.
 - `data/` - Blueprint templates, CSS, desktop entry, polkit action, man page, gresource manifest.

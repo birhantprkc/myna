@@ -11,6 +11,7 @@
 //!   recorded for it.
 //! * `GET  /v2/changes/{id}` to poll async changes to completion.
 //! * `GET  /v2/changes?select=in-progress` to show what an apply waits on.
+//! * `GET  /v2/system-info` to read whether `experimental.user-daemons` is on.
 //!
 //! There is deliberately no way to send an arbitrary path, method, body, or
 //! header through this module. Snap names are re-validated against the strict
@@ -36,6 +37,10 @@ use crate::snap_changes::{parse_changes, ChangeInProgress};
 /// Every change snapd has not finished. Not `for=<snap>`: snapd cannot name
 /// the snap of the `snapctl-install` change a model download runs in.
 const CHANGES_IN_PROGRESS: &str = "/v2/changes?select=in-progress";
+
+/// Unlike `/v2/snaps/system/conf`, which answers a user 401, this lists the
+/// experimental flags to anyone.
+const SYSTEM_INFO: &str = "/v2/system-info";
 
 /// Default host location of the snapd socket. The value is deliberately a
 /// constant, not user configurable, so an attacker cannot redirect the client.
@@ -335,6 +340,12 @@ pub trait SnapdClient {
     ) -> Result<Vec<ChangeInProgress>, SnapdError> {
         Ok(Vec::new())
     }
+
+    /// Whether `experimental.user-daemons` is on, read as the user.
+    async fn user_daemons_enabled(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<bool, SnapdError>;
 }
 
 /// Real snapd client. Runs blocking Unix-socket I/O off the GTK main loop via
@@ -400,6 +411,58 @@ impl SnapdClient for UnixSocketSnapdClient {
             message: format!("snapd worker join failed: {error:?}"),
         })?
     }
+
+    async fn user_daemons_enabled(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<bool, SnapdError> {
+        let socket_path = self.socket_path.clone();
+        let timeouts = self.timeouts;
+        let handle = gio::spawn_blocking(move || {
+            blocking_user_daemons_enabled(&socket_path, timeouts, cancellation)
+        });
+        handle.await.map_err(|error| SnapdError::Transport {
+            message: format!("snapd worker join failed: {error:?}"),
+        })?
+    }
+}
+
+fn blocking_user_daemons_enabled(
+    socket_path: &Path,
+    timeouts: SnapdTimeouts,
+    cancellation: CancellationToken,
+) -> Result<bool, SnapdError> {
+    let start = Instant::now();
+    let response = do_request(
+        socket_path,
+        "GET",
+        SYSTEM_INFO,
+        None,
+        SnapdTimeoutContext::Request,
+        &timeouts,
+        &cancellation,
+        start,
+        start + timeouts.per_request,
+    )?;
+    match parse_envelope(&response)? {
+        Envelope::Sync { result_json } => Ok(user_daemons_feature(&result_json)),
+        Envelope::Async { .. } => Err(SnapdError::Protocol {
+            message: "unexpected async envelope for the system information".to_owned(),
+            body: truncate(&response, 512),
+        }),
+        Envelope::Error {
+            status_code,
+            kind,
+            message,
+        } => Err(classify_error(status_code, kind, message)),
+    }
+}
+
+/// A snapd that does not list the flag cannot have it on.
+fn user_daemons_feature(system_info: &serde_json::Value) -> bool {
+    system_info["features"]["user-daemons"]["enabled"]
+        .as_bool()
+        .unwrap_or(false)
 }
 
 fn blocking_changes_in_progress(

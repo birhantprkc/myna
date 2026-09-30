@@ -736,3 +736,68 @@ fn unreadable_changes_are_no_progress() {
 
     assert_eq!(progress, None);
 }
+
+fn system_info(features: &str) -> String {
+    http_body(
+        200,
+        "OK",
+        &format!(
+            r#"{{"type":"sync","status-code":200,"status":"OK","result":{{"series":"16","version":"2.77.1","features":{features}}}}}"#
+        ),
+    )
+}
+
+fn user_daemons(response: String) -> (Result<bool, SnapdError>, Vec<String>) {
+    let fake = FakeSnapd::start(vec![Step {
+        request_path_contains: "GET /v2/system-info ".to_owned(),
+        response,
+        delay: None,
+        close_early: false,
+    }]);
+    let enabled = block_on(fake.client().user_daemons_enabled(CancellationToken::new()));
+    let calls = fake.calls.lock().unwrap().clone();
+    (enabled, calls)
+}
+
+/// `/v2/snaps/system/conf` answers a user 401; the system information lists
+/// the flag to anyone.
+#[test]
+fn the_user_daemons_flag_is_read_from_the_system_information() {
+    let (enabled, calls) = user_daemons(system_info(
+        r#"{"user-daemons":{"supported":true,"enabled":true},"parallel-instances":{"supported":true}}"#,
+    ));
+    assert_eq!(enabled, Ok(true));
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].starts_with("GET /v2/system-info HTTP/1.1\r\n"));
+
+    let (enabled, _) = user_daemons(system_info(
+        r#"{"user-daemons":{"supported":true,"enabled":false}}"#,
+    ));
+    assert_eq!(enabled, Ok(false));
+}
+
+/// snapd lists only the flags it knows, and one unset may omit `enabled`.
+#[test]
+fn a_user_daemons_flag_snapd_does_not_list_is_off() {
+    assert_eq!(user_daemons(system_info("{}")).0, Ok(false));
+    assert_eq!(
+        user_daemons(system_info(r#"{"user-daemons":{"supported":true}}"#)).0,
+        Ok(false)
+    );
+}
+
+#[test]
+fn an_unreadable_system_information_is_an_error() {
+    let (enabled, _) = user_daemons(http_body(
+        500,
+        "Internal Server Error",
+        r#"{"type":"error","status-code":500,"result":{"message":"boom"}}"#,
+    ));
+    assert!(matches!(
+        enabled,
+        Err(SnapdError::Snapd {
+            status_code: 500,
+            ..
+        })
+    ));
+}

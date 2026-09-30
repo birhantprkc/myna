@@ -86,8 +86,9 @@ apps:
     # entirely (wrappers/internal/service_unit_gen.go:214), making the unit
     # on-demand only. Nothing would hold the global hotkey until something
     # addressed com.canonical.Myna.Dictation, and the only natural poker is the
-    # myna-shell extension, which is not packaged. The hotkey IS the entry
-    # point, so it has to be held from login.
+    # myna-shell extension, which is optional: gnome-shell-ubuntu-extensions
+    # ships it, but not on every series. The hotkey IS the entry point, so it
+    # has to be held from login.
     #
     # Starting against `default.target` means PAM login - before the
     # compositor, PipeWire, IBus and the portal (the `graphical-session.target`

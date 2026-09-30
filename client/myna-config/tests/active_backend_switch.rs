@@ -256,6 +256,10 @@ impl FakeConfigurator {
 
 #[async_trait(?Send)]
 impl SystemConfigurator for FakeConfigurator {
+    async fn user_daemons_enabled(&self, _cancellation: CancellationToken) -> Result<bool, String> {
+        Ok(true)
+    }
+
     async fn execute_backend_switch(
         &self,
         plan: &SwitchPlan,

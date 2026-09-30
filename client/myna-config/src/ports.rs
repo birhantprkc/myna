@@ -10,6 +10,7 @@ use crate::domain::{
     BackendIdentity, BackendSnapshot, BackendSurfaceError, ClientSetting, ClientSettingMetadata,
     ClientSettingValue, CommandResult, ConnectionSnapshot,
 };
+use crate::onboarding::ExtensionState;
 use crate::snap_changes::{apply_progress, ApplyProgress, ChangeInProgress};
 
 pub type ClientSettingsCallback = Box<dyn Fn(ClientSetting) + 'static>;
@@ -83,6 +84,10 @@ pub trait SystemConfigurator {
         Ok(Vec::new())
     }
 
+    /// Whether snapd's `experimental.user-daemons` flag is on, read as the
+    /// user.
+    async fn user_daemons_enabled(&self, cancellation: CancellationToken) -> Result<bool, String>;
+
     /// What snapd is doing on `backend_snap` now, while an apply runs; none
     /// when it is doing nothing there or cannot be read.
     async fn apply_progress(
@@ -93,6 +98,13 @@ pub trait SystemConfigurator {
         let changes = self.changes_in_progress(cancellation).await.ok()?;
         apply_progress(&changes, backend_snap)
     }
+}
+
+/// GNOME Shell's extensions, as the running shell reports them.
+#[async_trait(?Send)]
+pub trait ShellExtensions {
+    /// Where `uuid` stands. A session with no gnome-shell has none.
+    async fn extension_state(&self, uuid: &str) -> ExtensionState;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

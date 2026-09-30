@@ -16,15 +16,16 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use crate::active_backend::{ensure_backend_active, SetupStage, SnapdWait};
+use crate::adapters::shell_extensions::GnomeShellExtensions;
 use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
 use crate::command::{CancellationToken, GioCommandRunner};
 use crate::domain::BackendSurfaceError;
 use crate::onboarding::{
-    assess, can_advance, completes, needs_onboarding, polls, Component, Machine, Step,
-    RECOMMENDED_BACKEND_SNAP,
+    assess, can_advance, completes, needs_onboarding, polls, Component, ComponentState, Machine,
+    Step, RECOMMENDED_BACKEND_SNAP, SHELL_EXTENSION_UUID,
 };
-use crate::ports::{BackendRepository, SystemConfigurator};
+use crate::ports::{BackendRepository, ShellExtensions, SystemConfigurator};
 use crate::snap_changes::ApplyProgress;
 use crate::ui;
 
@@ -34,7 +35,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// How long setting up waits for snapd to finish installing Myna or a model,
 /// which may still be downloading it.
 const SNAPD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-/// How long "All components installed" shows before the wizard moves on by
+/// How long "All required components installed" shows before the wizard moves on by
 /// itself.
 const BEAT: Duration = Duration::from_secs(1);
 
@@ -44,6 +45,7 @@ pub struct OnboardingUi {
     shortcut: Rc<crate::shortcut_ui::ShortcutControl>,
     repository: Rc<dyn BackendRepository>,
     configurator: Rc<dyn SystemConfigurator>,
+    extensions: Rc<dyn ShellExtensions>,
     step: Cell<Step>,
     components: RefCell<Vec<Component>>,
     /// Why the last assessment could not read the machine.
@@ -75,6 +77,7 @@ impl OnboardingUi {
             initial,
             Rc::new(SnapBackendRepository::new(runner.clone())),
             Rc::new(PkexecSystemConfigurator::new(runner)),
+            Rc::new(GnomeShellExtensions::new()),
             None,
             finished,
         )
@@ -87,6 +90,7 @@ impl OnboardingUi {
         initial: Vec<Component>,
         repository: Rc<dyn BackendRepository>,
         configurator: Rc<dyn SystemConfigurator>,
+        extensions: Rc<dyn ShellExtensions>,
         parent: Option<&gtk::Window>,
         finished: Box<dyn Fn()>,
     ) -> Rc<Self> {
@@ -141,6 +145,7 @@ impl OnboardingUi {
             shortcut,
             repository,
             configurator,
+            extensions,
             step: Cell::new(Step::first()),
             components: RefCell::new(initial),
             problem: RefCell::default(),
@@ -225,8 +230,15 @@ impl OnboardingUi {
         }
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
+        let configurator = self.configurator.clone();
+        let extensions = self.extensions.clone();
         glib::spawn_future_local(async move {
-            let (components, problem) = read_machine(repository.as_ref()).await;
+            let (components, problem) = read_machine(
+                repository.as_ref(),
+                configurator.as_ref(),
+                extensions.as_ref(),
+            )
+            .await;
             let Some(ui) = ui.upgrade() else {
                 return;
             };
@@ -485,17 +497,36 @@ fn copy_command(window: &ui::OnboardingWindow, command: &str) {
 }
 
 /// One assessment of what dictation is missing on this machine: one `snap
-/// list` and one discovery. A surface that cannot be read counts as nothing
-/// found, which opens the wizard: the flow then shows what it could not verify
-/// rather than a settings window with no backends and no explanation.
-pub async fn assess_machine(repository: &dyn BackendRepository) -> Vec<Component> {
-    read_machine(repository).await.0
+/// list`, one discovery, snapd's flags over its socket and one call to
+/// gnome-shell. A surface that cannot be read counts as nothing found, which
+/// opens the wizard: the flow then shows what it could not verify rather than
+/// a settings window with no backends and no explanation.
+pub async fn assess_machine(
+    repository: &dyn BackendRepository,
+    configurator: &dyn SystemConfigurator,
+    extensions: &dyn ShellExtensions,
+) -> Vec<Component> {
+    let (components, problem) = read_machine(repository, configurator, extensions).await;
+    let found = problem.unwrap_or_else(|| describe(&components));
+    glib::g_message!(crate::LOG_DOMAIN, "onboarding assessment: {found}");
+    components
 }
 
 /// [`assess_machine`], and what it could not read.
-async fn read_machine(repository: &dyn BackendRepository) -> (Vec<Component>, Option<String>) {
+async fn read_machine(
+    repository: &dyn BackendRepository,
+    configurator: &dyn SystemConfigurator,
+    extensions: &dyn ShellExtensions,
+) -> (Vec<Component>, Option<String>) {
     let cancellation = CancellationToken::new();
     let mut problems = Vec::new();
+    let user_daemons = configurator
+        .user_daemons_enabled(cancellation.clone())
+        .await
+        .unwrap_or_else(|error| {
+            problems.push(error);
+            false
+        });
     let installed = repository
         .installed_snaps(cancellation.clone())
         .await
@@ -513,11 +544,17 @@ async fn read_machine(repository: &dyn BackendRepository) -> (Vec<Component>, Op
         });
     problems.dedup();
     let problem = (!problems.is_empty()).then(|| {
-        // TRANSLATORS: {error} is snap's own message, in English.
-        let frame = gettextrs::gettext("Cannot read what snapd has installed: {error}");
+        // TRANSLATORS: {error} is snapd's own message, in English.
+        let frame = gettextrs::gettext("Cannot read what snapd has set up: {error}");
         frame.replace("{error}", &problems.join("; "))
     });
-    (assess(Machine::new(&installed, backends)), problem)
+    let machine = Machine {
+        user_daemons,
+        extension: extensions.extension_state(SHELL_EXTENSION_UUID).await,
+        nvidia_gpu: crate::machine::has_nvidia_gpu(),
+        ..Machine::new(&installed, backends)
+    };
+    (assess(machine), problem)
 }
 
 /// What snap said, which names the cause, over how it exited.
@@ -532,10 +569,10 @@ fn describe(components: &[Component]) -> String {
     components
         .iter()
         .map(|component| {
-            let state = if component.satisfied {
-                "found"
-            } else {
-                "missing"
+            let state = match component.state {
+                ComponentState::Satisfied => "found".to_owned(),
+                ComponentState::Missing => "missing".to_owned(),
+                ComponentState::Unavailable(why) => format!("unavailable ({why:?})"),
             };
             format!("{:?} {state}", component.id)
         })

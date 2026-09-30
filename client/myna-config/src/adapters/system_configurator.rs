@@ -158,6 +158,13 @@ impl SystemConfigurator for PkexecSystemConfigurator {
             .await
             .map_err(|error| error.to_string())
     }
+
+    async fn user_daemons_enabled(&self, cancellation: CancellationToken) -> Result<bool, String> {
+        self.snapd
+            .user_daemons_enabled(cancellation)
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 /// Ensure every operation matches the exact allowlist for the direct snapd
@@ -919,6 +926,13 @@ mod tests {
                         body: String::new(),
                     })
                 })
+        }
+
+        async fn user_daemons_enabled(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<bool, SnapdError> {
+            unreachable!("no switch reads the flag")
         }
     }
 

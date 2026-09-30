@@ -770,6 +770,13 @@ mod tests {
 
     #[async_trait(?Send)]
     impl SystemConfigurator for FakeConfigurator {
+        async fn user_daemons_enabled(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<bool, String> {
+            Ok(true)
+        }
+
         async fn restart_myna(
             &self,
             _cancellation: CancellationToken,

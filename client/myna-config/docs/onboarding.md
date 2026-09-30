@@ -16,20 +16,48 @@ still lists a deleted hicolor copy made the theme fail without falling back.
 
 ## What opens it
 
-`myna_config::onboarding` assesses two components from the observations the
+`myna_config::onboarding` assesses four components from the observations the
 application already makes at startup (`snap list`, `snap connections` and
-`snap interface content`):
+`snap interface content`), snapd's `/v2/system-info` read as the user, and
+gnome-shell's `org.gnome.Shell.Extensions`:
 
-| Component | Satisfied when                         |
-| --------- | -------------------------------------- |
-| Myna      | the `myna` snap is installed           |
-| Model     | discovery reports at least one backend |
+| Component       | Required | Satisfied when                                          |
+| --------------- | -------- | ------------------------------------------------------- |
+| User daemons    | yes      | snapd's `experimental.user-daemons` is on               |
+| Myna            | yes      | the `myna` snap is installed                            |
+| Model           | yes      | discovery reports at least one backend                  |
+| Shell extension | no       | gnome-shell runs the system copy of `myna-shell@canonical.com` |
 
-The wizard opens when either is missing. "Model" is satisfied by discovery
-rather than by a snap name: which snaps are backends is a property of the
-socket interface they publish, not of their name. The GNOME Shell extension is
-not assessed: dictation works without it (the daemon falls back to desktop
-notifications), and it is not published anywhere snapd can reach.
+The wizard opens when a required component is missing. The flag stays
+required once Myna is installed: an installed Myna keeps running with the
+flag unset, but snapd refuses its refreshes. "Model" is satisfied by
+discovery rather than by a snap name: which snaps are backends is a property
+of the socket interface they publish, not of their name. Every other row
+waits for the flag, since snapd refuses Myna without it.
+
+The extension is optional because dictation works without it: the daemon
+falls back to desktop notifications. It ships in the
+`gnome-shell-ubuntu-extensions` deb, not through snapd, so the wizard never
+installs it. Only a system copy counts, not a development copy in `~/.local`.
+Its state is one of:
+
+- enabled: satisfied;
+- disabled: gnome-shell lists the system copy but does not run it, and one
+  `EnableExtension` call fixes it;
+- installed after login: the copy is under a system data directory but
+  gnome-shell, which scans them only at login, does not list it;
+- shadowed: a system copy is on disk and so is a user copy of the same uuid
+  under `~/.local/share/gnome-shell/extensions`. gnome-shell loads the user
+  directory first and skips a uuid it already has, so the system copy never
+  runs and a re-login does not help; removing the user copy does. Checked on
+  disk, since gnome-shell keeps listing a user copy deleted after login;
+- unavailable: no system copy, one gnome-shell cannot run (error, out of
+  date), or no gnome-shell answering on the session bus within 2 s.
+
+gnome-shell sends `type` and `state` as doubles; `type` 1 is a system copy,
+`state` 1 enabled, 2 and 6 disabled and never enabled. The transient 8
+(activating) and 7 (deactivating) read as the state they are heading for, so
+a re-read right after `EnableExtension` does not flash the row unavailable.
 
 The settings window's main menu reopens the wizard (Set Up Dictation), modal
 over the window. It refuses while a backend operation is in flight: the wizard
@@ -60,19 +88,21 @@ installs its model component.
 
 The installs happen in another window, so the component step re-assesses the
 machine whenever the wizard regains focus, and every 2 s while something is
-missing: a terminal beside the wizard may never take its focus. Next stays insensitive until both
-components are found; then the footer shows a success checkmark and "All
-components installed" left of it.
+missing: a terminal beside the wizard may never take its focus. Next stays
+insensitive until the required components are found; then the footer shows
+a success checkmark and "All required components installed" left of it.
 
 ## Finishing setup
 
 Leaving the component step makes a backend active and restarts the daemon, so
 the shortcut step finds dictation running. When a re-assessment finds the last
-missing component while the step shows, the step does this by itself: a
-spinner takes the footer status's place, then "All components installed" shows
+missing component, the optional extension included, while the step shows,
+the step does this by itself: a
+spinner takes the footer status's place, then "All required components installed" shows
 for a second and the wizard moves on. Only that transition counts: opening the
 step with everything already installed waits for Next, so a re-run of the
-wizard does not rush past it. Next during the pause moves on at once without
+wizard does not rush past it, and a machine whose extension the wizard
+cannot install leaves the move to Next. Next during the pause moves on at once without
 setting up again; a failed setup shows the error dialog and leaves Next to
 retry. Both snaps share a publisher, so
 snapd's base declaration auto-connects `myna:backend` to the new backend's
@@ -105,8 +135,8 @@ While the step polls, the same line shows snap's own error when it cannot
 read the machine, rather than only reporting a component missing that it
 could not check.
 
-Each assessment that differs from the last, and each setup stage and
-outcome, is logged once as a GLib message in the `myna-config` domain: to
+The assessment that opens the wizard or the settings window, each later one
+that differs from the last, and each setup stage and outcome, is logged once as a GLib message in the `myna-config` domain: to
 the journal when launched from the desktop (`journalctl --user -b | grep
 myna-config`), and to stderr from a terminal.
 
@@ -151,10 +181,14 @@ Change captures a key in a dialog that:
 ## Cost
 
 The startup assessment is the same two subprocesses as a startup
-refresh, run before any window exists, and it is handed to the wizard rather
-than repeated there. The shortcut proxy spawns nothing: it is one D-Bus match
-per surface. Regaining focus on the component step costs another `snap list`
-plus a discovery, and so does each poll while a component is missing.
+refresh, plus one read of snapd's socket and one D-Bus call to gnome-shell,
+run before any window exists, and it is handed to the wizard rather than
+repeated there. The shortcut proxy spawns nothing: it is one D-Bus match
+per surface. Regaining focus on the component step costs a full re-assessment,
+and so does each poll while a component is missing: a `snap list`, a
+discovery, one read of snapd's socket for the flag, one `GetExtensionInfo`
+call to gnome-shell (at most 2 s when it does not answer), a stat of each
+extension directory and a scan of `/sys/bus/pci/devices` for an NVIDIA GPU.
 Setting up reads snapd's changes over its socket once, and again every 2 s
 while snapd is still changing Myna or a backend, plus one discovery after
 such a wait.

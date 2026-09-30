@@ -193,6 +193,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-poll: stopped once found",
         "onboarding-close: setup stopped with the wizard",
         "onboarding-auto: Next skips the pause",
+        "onboarding-optional: the extension waits for Next",
         "onboarding-auto-failure: reported",
         "onboarding-auto-failure: Next retries",
         "onboarding-setup-failure: reported",

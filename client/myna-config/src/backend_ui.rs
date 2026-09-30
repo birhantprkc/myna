@@ -1040,7 +1040,14 @@ impl BackendUi {
         let action = action.clone();
         let window = window.clone();
         glib::spawn_future_local(async move {
-            let components = crate::onboarding_ui::assess_machine(repository.as_ref()).await;
+            let extensions: Rc<dyn crate::ports::ShellExtensions> =
+                Rc::new(crate::adapters::shell_extensions::GnomeShellExtensions::new());
+            let components = crate::onboarding_ui::assess_machine(
+                repository.as_ref(),
+                configurator.as_ref(),
+                extensions.as_ref(),
+            )
+            .await;
             if ui.upgrade().is_none() {
                 action.set_enabled(true);
                 return;
@@ -1050,6 +1057,7 @@ impl BackendUi {
                 components,
                 repository,
                 configurator,
+                extensions,
                 Some(window.upcast_ref()),
                 Box::new(|| {}),
             );
@@ -4560,6 +4568,13 @@ mod tests {
 
     #[async_trait::async_trait(?Send)]
     impl SystemConfigurator for ApplyMachine {
+        async fn user_daemons_enabled(
+            &self,
+            _cancellation: CancellationToken,
+        ) -> Result<bool, String> {
+            Ok(true)
+        }
+
         async fn execute_backend_switch(
             &self,
             _plan: &crate::active_backend::SwitchPlan,
