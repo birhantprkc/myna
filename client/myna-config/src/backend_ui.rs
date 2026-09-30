@@ -316,7 +316,7 @@ fn offer_subtitle(description: Option<&str>, offer: ModelOffer) -> String {
         size
     };
     match description {
-        // TRANSLATORS: {description} says what a model is good at, such as "Widest language support", and {size} what installing it downloads, such as "198 MB" or "up to 1.4 GB". The spaces around the dot are no-break spaces, so the size never starts a line of its own.
+        // TRANSLATORS: {description} says what a model is good at, such as "Most languages, with uneven accuracy", and {size} what installing it downloads, such as "198 MB" or "up to 1.4 GB". The spaces around the dot are no-break spaces, so the size never starts a line of its own.
         Some(description) => gettextrs::gettext("{description}\u{a0}·\u{a0}{size}")
             .replace("{description}", description)
             .replace("{size}", &size),
@@ -3564,7 +3564,7 @@ mod tests {
                 listed_models(&ui),
                 [(
                     "Parakeet".to_owned(),
-                    gettextrs::gettext("Fastest, good support for European languages"),
+                    gettextrs::gettext("Fastest and most accurate in its 25 languages"),
                     None,
                 )]
             );
@@ -4090,11 +4090,11 @@ mod tests {
         on_gtk_thread(|| {
             let whisper = format!(
                 "{}\u{a0}·\u{a0}198\u{a0}MB",
-                gettextrs::gettext("Widest language support")
+                gettextrs::gettext("Most languages, with uneven accuracy")
             );
             let funasr = format!(
                 "{}\u{a0}·\u{a0}309\u{a0}MB",
-                gettextrs::gettext("Good support for English, Chinese, Japanese and Korean")
+                gettextrs::gettext("Best for Chinese, Japanese and Korean")
             );
             let ui = general_ui(PARAKEET_CONNECTED);
             assert_eq!(
@@ -4169,8 +4169,8 @@ mod tests {
     fn an_offer_says_what_it_downloads() {
         let whisper = family_offer(myna_core::language::ModelFamily::Whisper, false);
         assert_eq!(
-            offer_subtitle(Some("Widest language support"), whisper),
-            "Widest language support\u{a0}·\u{a0}198\u{a0}MB"
+            offer_subtitle(Some("Most languages, with uneven accuracy"), whisper),
+            "Most languages, with uneven accuracy\u{a0}·\u{a0}198\u{a0}MB"
         );
         let gpu = family_offer(myna_core::language::ModelFamily::Whisper, true);
         assert_eq!(offer_subtitle(None, gpu), "up to 1.4\u{a0}GB");

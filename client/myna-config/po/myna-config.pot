@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 00:19+0100\n"
+"POT-Creation-Date: 2026-10-01 00:21+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -275,11 +275,11 @@ msgid "Diagnostics appear once Myna finds your models."
 msgstr ""
 
 #: src/app.rs:3391 src/backend_ui.rs:3567 src/model_family.rs:27
-msgid "Fastest, good support for European languages"
+msgid "Fastest and most accurate in its 25 languages"
 msgstr ""
 
-#: src/app.rs:3395 src/backend_ui.rs:4093 src/model_family.rs:29
-msgid "Widest language support"
+#: src/app.rs:3395 src/backend_ui.rs:4093 src/model_family.rs:31
+msgid "Most languages, with uneven accuracy"
 msgstr ""
 
 #: src/app.rs:3530 src/myna_settings.rs:104
@@ -400,7 +400,7 @@ msgstr ""
 msgid "snapd is still busy with “{change}”. Try again once it has finished."
 msgstr ""
 
-#: src/backend_ui.rs:85 src/onboarding_ui.rs:991 src/model_family.rs:280
+#: src/backend_ui.rs:85 src/onboarding_ui.rs:991 src/model_family.rs:283
 msgid "Recommended"
 msgstr ""
 
@@ -417,7 +417,7 @@ msgstr ""
 msgid "up to {size}"
 msgstr ""
 
-#. TRANSLATORS: {description} says what a model is good at, such as "Widest language support", and {size} what installing it downloads, such as "198 MB" or "up to 1.4 GB". The spaces around the dot are no-break spaces, so the size never starts a line of its own.
+#. TRANSLATORS: {description} says what a model is good at, such as "Most languages, with uneven accuracy", and {size} what installing it downloads, such as "198 MB" or "up to 1.4 GB". The spaces around the dot are no-break spaces, so the size never starts a line of its own.
 #: src/backend_ui.rs:320
 msgid "{description}\\u{a0}·\\u{a0}{size}"
 msgstr ""
@@ -832,8 +832,8 @@ msgstr ""
 msgid "several models"
 msgstr ""
 
-#: src/backend_ui.rs:4097 src/model_family.rs:32
-msgid "Good support for English, Chinese, Japanese and Korean"
+#: src/backend_ui.rs:4097 src/model_family.rs:35
+msgid "Best for Chinese, Japanese and Korean"
 msgstr ""
 
 #: src/backend_apply.rs:95
@@ -1279,43 +1279,43 @@ msgid "Default"
 msgstr ""
 
 #. TRANSLATORS: separates language names in a list, as in "English, Deutsch".
-#: src/model_family.rs:221
+#: src/model_family.rs:224
 msgctxt "language list"
 msgid ", "
 msgstr ""
 
 #. TRANSLATORS: {languages} is a short list of language names, {count} how many more there are.
-#: src/model_family.rs:231
+#: src/model_family.rs:234
 msgid "{languages} +{count}"
 msgstr ""
 
-#: src/model_family.rs:240
+#: src/model_family.rs:243
 msgid "{count} language"
 msgid_plural "{count} languages"
 msgstr[0] ""
 msgstr[1] ""
 
 #. TRANSLATORS: {language} is the user's language named in that language, such as "Deutsch" or "中文", inserted as-is in the nominative. If your grammar would inflect it, rephrase, e.g. "Najlepszy dla języka: {language}".
-#: src/model_family.rs:277
+#: src/model_family.rs:280
 msgid "Best for {language}"
 msgstr ""
 
 #. TRANSLATORS: Shown under "Install more models" when a model not installed would transcribe the user's language better. {language} is that language named in itself, such as "Deutsch" or "中文", inserted as-is in the nominative. If your grammar would inflect it, rephrase, e.g. "Dostępny jest lepszy model dla języka: {language}".
-#: src/model_family.rs:290
+#: src/model_family.rs:293
 msgid "A better model for {language} is available"
 msgstr ""
 
-#: src/model_family.rs:293
+#: src/model_family.rs:296
 msgid "A recommended model is available"
 msgstr ""
 
 #. TRANSLATORS: Shown under "Install more models" while a model installs. {model} is a model family, such as "Whisper", and {percent} how much of its download has arrived, a number from 0 to 100.
-#: src/model_family.rs:303
+#: src/model_family.rs:306
 msgid "Installing {model} {percent}%"
 msgstr ""
 
 #. TRANSLATORS: Shown under "Install more models" while a model installs. {model} is a model family, such as "Whisper".
-#: src/model_family.rs:306
+#: src/model_family.rs:309
 msgid "Installing {model}…"
 msgstr ""
 

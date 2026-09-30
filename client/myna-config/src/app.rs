@@ -3388,11 +3388,11 @@ fn backends_probe() -> glib::ExitCode {
     let expected = vec![
         (
             "Parakeet".to_owned(),
-            gettextrs::gettext("Fastest, good support for European languages"),
+            gettextrs::gettext("Fastest and most accurate in its 25 languages"),
         ),
         (
             "Whisper".to_owned(),
-            gettextrs::gettext("Widest language support"),
+            gettextrs::gettext("Most languages, with uneven accuracy"),
         ),
     ];
     if !settles(&|| described(&model_rows()) == expected && chosen() == ["Parakeet"]) {

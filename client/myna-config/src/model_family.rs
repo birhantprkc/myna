@@ -24,12 +24,15 @@ pub fn model_family(snap_name: &str) -> ModelFamily {
     match Family::from_snap_name(snap_name) {
         Some(Family::Parakeet) => known(
             "Parakeet",
-            gettextrs::gettext("Fastest, good support for European languages"),
+            gettextrs::gettext("Fastest and most accurate in its 25 languages"),
         ),
-        Some(Family::Whisper) => known("Whisper", gettextrs::gettext("Widest language support")),
+        Some(Family::Whisper) => known(
+            "Whisper",
+            gettextrs::gettext("Most languages, with uneven accuracy"),
+        ),
         Some(Family::FunAsr) => known(
             "FunASR",
-            gettextrs::gettext("Good support for English, Chinese, Japanese and Korean"),
+            gettextrs::gettext("Best for Chinese, Japanese and Korean"),
         ),
         None => ModelFamily {
             name: title_from_snap(snap_name),
@@ -367,21 +370,21 @@ mod tests {
             described("myna-parakeet"),
             (
                 "Parakeet".to_owned(),
-                Some("Fastest, good support for European languages".to_owned())
+                Some("Fastest and most accurate in its 25 languages".to_owned())
             )
         );
         assert_eq!(
             described("myna-whisper"),
             (
                 "Whisper".to_owned(),
-                Some("Widest language support".to_owned())
+                Some("Most languages, with uneven accuracy".to_owned())
             )
         );
         assert_eq!(
             described("myna-funasr"),
             (
                 "FunASR".to_owned(),
-                Some("Good support for English, Chinese, Japanese and Korean".to_owned())
+                Some("Best for Chinese, Japanese and Korean".to_owned())
             )
         );
     }
