@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -322,6 +323,69 @@ def test_a_failed_reselection_keeps_the_connection(snap_dir: str, tmp_path: Path
     )
     assert any(c.startswith("use-engine") for c in ran), ran
     assert result.returncode == 0, result.stderr
+
+
+def _run_install_hook(snap_dir: str, tmp_path: Path, *, components: list[str]) -> list[str]:
+    """Run an install hook without hardware-observe against fake snapctl and
+    modelctl; return the calls.
+
+    $SNAP is the snap's source dir: it has the engines/ and models/ the hook reads.
+    """
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    comps = tmp_path / "components"
+    comps.mkdir()
+    for component in components:
+        (comps / component).mkdir()
+    calls = tmp_path / "calls"
+    root = REPO_ROOT / snap_dir
+    fakes = {
+        "modelctl": f"""#!/bin/sh
+echo "modelctl $*" >> {calls}
+""",
+        "snapctl": f"""#!/bin/sh
+echo "snapctl $*" >> {calls}
+case "$1" in is-connected) exit 1 ;; esac
+""",
+        "lscpu": "#!/bin/sh\nexit 1\n",
+        "logger": """#!/bin/sh
+case " $* " in *" --stderr "*) cat >&2 ;; *) cat >/dev/null ;; esac
+""",
+    }
+    for tool, body in fakes.items():
+        (bin_dir / tool).write_text(body, encoding="utf-8")
+        (bin_dir / tool).chmod(0o755)
+    (bin_dir / "python3").symlink_to(sys.executable)  # the snap's python has PyYAML
+    result = subprocess.run(
+        [str(root / "snap" / "hooks" / "install")],
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "SNAP_INSTANCE_NAME": INFERENCE_SNAPS[snap_dir],
+            "SNAP_COMPONENTS": str(comps),
+            "SNAP_COMMON": str(tmp_path),
+            "SNAP": str(root),
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    return calls.read_text(encoding="utf-8").splitlines()
+
+
+def test_a_sideload_without_the_default_model_keeps_an_installed_one(tmp_path: Path) -> None:
+    """A sideload cannot fetch the cpu engine's default (tiny) from the store,
+    and the hook failing would fail the whole install."""
+    ran = _run_install_hook("whisper-snap", tmp_path, components=["model-small"])
+    engine = ran.index("modelctl use-engine cpu --assume-yes --no-restart")
+    assert "snapctl set cache.active-model=small" in ran[:engine], ran
+
+
+def test_the_default_model_wins_when_it_is_installed(tmp_path: Path) -> None:
+    ran = _run_install_hook("whisper-snap", tmp_path, components=["model-small", "model-tiny"])
+    assert "snapctl set cache.active-model=tiny" in ran, ran
 
 
 def test_declares_every_engine_it_ships(snap) -> None:

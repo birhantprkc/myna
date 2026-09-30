@@ -28,7 +28,9 @@ snapcraft pack
 Model weights are snap *components* (separate `.comp` files). On a sideload
 they must be installed **in the same command** as the snap — otherwise the
 install/refresh hook tries to fetch them from the store and fails
-(`snap not known to the store`). Pass the model components you want:
+(`snap not known to the store`). Pass the model components you want; any
+subset works, since the install hook keeps an installed model when the engine's
+default is missing:
 
 ```shell
 sudo snap install --dangerous \
