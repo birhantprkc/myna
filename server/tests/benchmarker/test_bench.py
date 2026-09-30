@@ -24,6 +24,7 @@ from myna.benchmarker._bench import (
 from myna.benchmarker._summarize import SCHEMA_VERSION, _summarize
 from myna.core import TranscriptionError, TranscriptionFinal, serve_unix
 from myna.testbed import NORMALIZER_VERSION, FakeAdapter, ScriptStep
+from myna.testbed.metrics import SECONDARY_NORMALIZER_VERSION
 
 
 def transcribing(text):
@@ -117,6 +118,47 @@ async def test_a_record_row_is_json_serialisable_and_carries_provenance(tmp_path
     assert line["cold"] is True
     assert line["normalizer_version"] == NORMALIZER_VERSION
     assert line["schema_version"] == SCHEMA_VERSION
+
+
+async def test_a_row_carries_the_whisper_normalised_score_beside_ours(tmp_path):
+    """The leaderboard's normaliser reads "$20" and "twenty dollars" as one
+    token; ours counts two errors. Both land on the row, each with its counts."""
+    path = tmp_path / "dollars.sock"
+    async with serve_unix(transcribing("He paid twenty dollars."), path):
+        clip = make_clip(tmp_path, text="he paid $20")
+        line = paced_line(clip, *await bench_clip(path, clip, "fake/batch", streaming=False))
+
+    assert line["wer"] > 0
+    assert line["secondary_normalizer_version"] == SECONDARY_NORMALIZER_VERSION
+    assert (line["wer_whisper_norm"], line["cer_whisper_norm"]) == (0.0, 0.0)
+    assert (line["wer_whisper_norm_edits"], line["ref_words_whisper_norm"]) == (0, 3)
+    assert (line["cer_whisper_norm_edits"], line["ref_chars_whisper_norm"]) == (0, 11)
+
+
+async def test_the_whisper_row_counts_insertions_and_characters(tmp_path):
+    """An extra word is one insertion over three reference words, and six
+    inserted characters (" today") over eleven."""
+    path = tmp_path / "extra.sock"
+    async with serve_unix(transcribing("He paid twenty dollars today."), path):
+        clip = make_clip(tmp_path, text="he paid $20")
+        line = paced_line(clip, *await bench_clip(path, clip, "fake/batch", streaming=False))
+
+    assert (line["wer_whisper_norm_edits"], line["ref_words_whisper_norm"]) == (1, 3)
+    assert (line["cer_whisper_norm_edits"], line["ref_chars_whisper_norm"]) == (6, 11)
+    assert line["wer_whisper_norm"] == round(1 / 3, 4)
+    assert line["cer_whisper_norm"] == round(6 / 11, 4)
+
+
+async def test_the_secondary_score_uses_the_clips_language(tmp_path):
+    """Non-English clips take Whisper's basic normaliser, which keeps numbers
+    as spoken: "vingt" against "20" is an error there too."""
+    from dataclasses import replace
+
+    path = tmp_path / "fr.sock"
+    async with serve_unix(transcribing("vingt"), path):
+        clip = replace(make_clip(tmp_path, text="20"), language="fr")
+        line = paced_line(clip, *await bench_clip(path, clip, "fake/batch", streaming=False))
+    assert (line["wer_whisper_norm_edits"], line["ref_words_whisper_norm"]) == (1, 1)
 
 
 async def test_provenance_is_omitted_entirely_when_not_supplied(tmp_path, socket):

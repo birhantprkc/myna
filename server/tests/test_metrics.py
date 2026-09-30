@@ -273,3 +273,43 @@ def test_cer_memory_stays_bounded_on_a_long_form_clip():
     finally:
         tracemalloc.stop()
     assert peak < 4 << 20  # 4 MiB; the retired table was ~380 MB for a clip this size
+
+
+# ─── secondary (Whisper) normaliser ─────────────────────────────────────────
+
+
+def test_english_is_scored_with_whispers_english_normaliser():
+    std = metrics_mod.whisper_normalizer("en")
+    assert std("Mr. Smith paid twenty dollars.") == "mister smith paid $20"
+
+
+@pytest.mark.parametrize("tag", ["en-GB", "en_US", "EN-gb"])
+def test_a_regional_english_tag_is_still_english(tag):
+    assert metrics_mod.whisper_normalizer(tag)("colour") == "color"
+
+
+def test_other_languages_get_whispers_basic_normaliser():
+    std = metrics_mod.whisper_normalizer("fr")
+    assert std("L'élève a dit « vingt » !") == "l élève a dit vingt "
+
+
+def test_the_secondary_normaliser_scores_what_the_primary_counts_as_errors():
+    """The point of the secondary column: a spoken-form number is an error
+    under our normaliser and a hit under the leaderboard's."""
+    reference, hypothesis = "He paid 20 dollars", "he paid twenty dollars"
+    assert word_error_rate(reference, hypothesis).rate > 0
+    whisper = metrics_mod.whisper_normalizer("en")
+    assert word_error_rate(reference, hypothesis, normalizer=whisper).rate == 0.0
+    assert character_error_rate(reference, hypothesis, normalizer=whisper).rate == 0.0
+
+
+def test_the_secondary_version_names_the_upstream_pin():
+    assert metrics_mod.SECONDARY_NORMALIZER_VERSION == "whisper-v20250625"
+
+
+def test_whispers_edge_spaces_are_not_scored_as_characters():
+    """Whisper's basic normaliser leaves a space where trailing punctuation
+    was; jiwer's CER, which the leaderboard uses, strips the ends first."""
+    whisper = metrics_mod.whisper_normalizer("fr")
+    assert character_error_rate("« Bonjour ! »", "bonjour", normalizer=whisper).rate == 0.0
+    assert character_error_rate("bonjour", "« Bonjour ! »", normalizer=whisper).rate == 0.0

@@ -35,6 +35,12 @@ class ClipSample:
     audio_seconds: float = 0.0
     processing_seconds: float = 0.0
     latencies: tuple[float, ...] = ()
+    # The secondary (Whisper-normalised) counts; False once any repeat lacks them.
+    wer_whisper_edits: int = 0
+    ref_words_whisper: int = 0
+    cer_whisper_edits: int = 0
+    ref_chars_whisper: int = 0
+    whisper_scored: bool = True
 
 
 def sample_floor(q: float) -> int:

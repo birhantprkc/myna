@@ -182,12 +182,55 @@ def test_cer_is_micro_averaged_over_edits_and_reference_chars():
     assert summary[UNKNOWN]["cer"] == pytest.approx(3 / 20)
 
 
+def test_the_whisper_normalised_scores_micro_average_beside_ours():
+    summary = _summarize(
+        [
+            record(clip="c1", wer_whisper_norm_edits=1, ref_words_whisper_norm=2),
+            record(clip="c2", cer_whisper_norm_edits=3, ref_chars_whisper_norm=9),
+        ]
+    )
+    assert summary[UNKNOWN]["wer_whisper"] == pytest.approx(1 / 4)
+    assert summary[UNKNOWN]["cer_whisper"] == pytest.approx(3 / 20)
+    assert summary[UNKNOWN]["wer"] == 0.0
+
+
+def test_cold_rows_stay_out_of_the_whisper_normalised_scores():
+    summary = _summarize(
+        [
+            record(clip="c1"),
+            record(clip="c1", cold=True, wer_whisper_norm_edits=2, cer_whisper_norm_edits=5),
+        ]
+    )
+    assert (summary[UNKNOWN]["wer_whisper"], summary[UNKNOWN]["cer_whisper"]) == (0.0, 0.0)
+
+
+def test_a_cell_with_an_unscored_row_has_no_whisper_score():
+    """Rows written before the secondary score existed carry no counts; a
+    micro-average over the rest would describe a different set of clips."""
+    stale = record(clip="c2")
+    for field in [f for f in stale if "whisper" in f]:
+        del stale[field]
+    summary = _summarize([record(clip="c1"), stale])
+    assert (summary[UNKNOWN]["wer_whisper"], summary[UNKNOWN]["cer_whisper"]) == (None, None)
+    assert summary[UNKNOWN]["wer"] == 0.0
+
+
+def test_the_table_labels_both_normalisers(capsys):
+    print_overall(_summarize([record(wer_whisper_norm_edits=1, ref_words_whisper_norm=4)]))
+    out = capsys.readouterr().out
+    assert "WERw%" in out and "CERw%" in out and "25.00" in out
+    assert "Whisper" in out and "EnglishTextNormalizer" in out
+
+
 def test_nothing_to_score_reads_as_unscored_not_as_a_perfect_run():
     """No divide-by-zero, and no 0.00% either: a label with no reference words
     would otherwise print as flawless and rank first."""
-    summary = _summarize([record(ref_words=0, ref_chars=0)])
+    summary = _summarize(
+        [record(ref_words=0, ref_chars=0, ref_words_whisper_norm=0, ref_chars_whisper_norm=0)]
+    )
     stats = summary[UNKNOWN]
     assert (stats["wer"], stats["cer"]) == (None, None)
+    assert (stats["wer_whisper"], stats["cer_whisper"]) == (None, None)
 
 
 def test_an_unscored_label_ranks_below_a_scored_one():
@@ -201,7 +244,8 @@ def test_an_unscored_label_ranks_below_a_scored_one():
 
 
 def test_an_unscored_label_renders_as_a_dash(capsys):
-    print_overall(_summarize([record(ref_words=0, ref_chars=0)]))
+    unscored = record(ref_words=0, ref_chars=0, ref_words_whisper_norm=0, ref_chars_whisper_norm=0)
+    print_overall(_summarize([unscored]))
     row = next(ln for ln in capsys.readouterr().out.splitlines() if record()["label"] in ln)
     assert "0.00" not in row
     assert "--" in row
@@ -536,6 +580,18 @@ def test_missing_and_stamped_normalizer_versions_are_refused():
         one_normalizer_version(records)
 
 
+def test_mixed_secondary_normalizer_versions_are_refused():
+    records = [record(clip="c1"), record(clip="c2", secondary_normalizer_version="whisper-v1")]
+    with pytest.raises(SystemExit, match="secondary normalizer versions"):
+        one_normalizer_version(records)
+
+
+def test_rows_without_a_secondary_score_do_not_block_the_primary_one():
+    stale = record(clip="c2")
+    del stale["secondary_normalizer_version"]
+    one_normalizer_version([record(clip="c1"), stale])  # no raise
+
+
 # ─── ranking and status ──────────────────────────────────────────────────────
 
 
@@ -747,6 +803,23 @@ def test_clip_samples_sum_the_character_counts_too():
     assert (sample.cer_edits, sample.ref_chars) == (4, 22)
 
 
+def test_clip_samples_sum_the_whisper_normalised_counts():
+    rows = [record(repeat=r, wer_whisper_norm_edits=1, cer_whisper_norm_edits=3) for r in range(2)]
+    sample = clip_samples(rows)[record()["clip"]]
+    assert (sample.wer_whisper_edits, sample.ref_words_whisper) == (2, 4)
+    assert (sample.cer_whisper_edits, sample.ref_chars_whisper) == (6, 22)
+    assert sample.whisper_scored
+
+
+@pytest.mark.parametrize("stale_first", [True, False])
+def test_a_repeat_without_the_whisper_score_marks_its_clip_unscored(stale_first):
+    stale = record(repeat=1)
+    for field in [f for f in stale if "whisper" in f]:
+        del stale[field]
+    rows = [stale, record(repeat=0)] if stale_first else [record(repeat=0), stale]
+    assert not clip_samples(rows)[record()["clip"]].whisper_scored
+
+
 def test_clip_samples_read_a_row_without_a_cold_flag_as_warm():
     row = record()
     del row["cold"]
@@ -784,15 +857,21 @@ def test_the_interval_table_brackets_each_estimate(capsys):
             audio_seconds=2.0,
             rtf=0.25,
             finalize_latency=0.3,
+            wer_whisper_norm_edits=1,
+            ref_words_whisper_norm=8,
+            cer_whisper_norm_edits=1,
+            ref_chars_whisper_norm=25,
         )
         for i in range(60)
     ]
     print_intervals(_summarize(rows), rows, [UNKNOWN], resamples=200)
     assert capsys.readouterr().out.splitlines()[2:] == [
         "label                                   WER%               CER%"
+        "                 WERw%              CERw%"
         "            RTFx             med final             p95 final",
-        "-" * 123,
+        "-" * 164,
         "whisper/cpu/tiny/batch  10.00 [10.00, 10.00]  5.00 [5.00, 5.00]"
+        "  12.50 [12.50, 12.50]  4.00 [4.00, 4.00]"
         "  4.0 [4.0, 4.0]  0.300 [0.300, 0.300]  0.300 [0.300, 0.300]",
     ]
 
@@ -876,6 +955,10 @@ def test_compare_prints_every_delta_exactly(tmp_path, capsys):
                 cer_edits=1,
                 ref_chars=10,
                 finalize_latency=0.75,
+                wer_whisper_norm_edits=1,
+                ref_words_whisper_norm=4,
+                cer_whisper_norm_edits=1,
+                ref_chars_whisper_norm=20,
             )
         )
     path = tmp_path / "results.jsonl"
@@ -885,6 +968,8 @@ def test_compare_prints_every_delta_exactly(tmp_path, capsys):
         "b - a over 10 paired clip(s), corpus v1:testcorpus",
         "WER%          +50.00 [+50.00, +50.00]  p=0.0001",
         "CER%          +10.00 [+10.00, +10.00]  p=0.0001",
+        "WERw%         +25.00 [+25.00, +25.00]  p=0.0001",
+        "CERw%         +5.00 [+5.00, +5.00]  p=0.0001",
         "med final s   +0.250 [+0.250, +0.250]  p=0.0001",
         "",
         "95% CI and two-sided p: paired bootstrap over clips (10000 resamples, seed 0);"

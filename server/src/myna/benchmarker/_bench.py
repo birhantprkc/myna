@@ -34,6 +34,7 @@ from myna.testbed import (
 )
 from myna.testbed.adapter import Candidate
 from myna.testbed.corpus import Clip
+from myna.testbed.metrics import SECONDARY_NORMALIZER_VERSION, whisper_normalizer
 
 
 class RecordSink(Protocol):
@@ -84,6 +85,24 @@ async def bench_clip(
     wer = word_error_rate(clip.text, record.transcript)
     cer = character_error_rate(clip.text, record.transcript)
     return record, wer, cer
+
+
+def _whisper_scores(clip: Clip, transcript: str) -> Record:
+    """The row's secondary score, under Whisper's normaliser for the clip's
+    language: comparable with the Open ASR Leaderboard, never a replacement
+    for the primary ``wer``/``cer``. Counts ride along so it micro-averages."""
+    std = whisper_normalizer(clip.language)
+    wer = word_error_rate(clip.text, transcript, normalizer=std)
+    cer = character_error_rate(clip.text, transcript, normalizer=std)
+    return {
+        "secondary_normalizer_version": SECONDARY_NORMALIZER_VERSION,
+        "wer_whisper_norm": round(wer.rate, 4),
+        "cer_whisper_norm": round(cer.rate, 4),
+        "wer_whisper_norm_edits": wer.substitutions + wer.deletions + wer.insertions,
+        "ref_words_whisper_norm": wer.reference_length,
+        "cer_whisper_norm_edits": cer.substitutions + cer.deletions + cer.insertions,
+        "ref_chars_whisper_norm": cer.reference_length,
+    }
 
 
 def to_line(
@@ -139,6 +158,7 @@ def to_line(
         "ref_words": wer.reference_length,
         "cer_edits": cer.substitutions + cer.deletions + cer.insertions,
         "ref_chars": cer.reference_length,
+        **_whisper_scores(clip, record.transcript),
         "audio_seconds": round(record.audio_duration_seconds, 3),
         "time_to_first_event": m.time_to_first_event,
         "time_to_ready": m.time_to_ready,

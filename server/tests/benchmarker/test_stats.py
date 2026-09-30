@@ -9,6 +9,7 @@ test finds a planted difference and does not invent one.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -183,6 +184,31 @@ def test_unscored_metrics_have_no_interval():
     assert intervals["wer"].estimate is None
     assert intervals["rtfx"].estimate is None
     assert intervals["p50_final"].estimate is None
+
+
+def test_the_whisper_normalised_rates_get_intervals_too():
+    clips = [
+        clip(wer_whisper_edits=1, ref_words_whisper=4, cer_whisper_edits=2, ref_chars_whisper=10)
+    ]
+    intervals = cell_intervals(clips * 3, resamples=QUICK, seed=0)
+    assert intervals["wer_whisper"] == Interval(0.25, 0.25, 0.25)
+    assert intervals["cer_whisper"] == Interval(0.2, 0.2, 0.2)
+
+
+def test_a_cell_with_an_unscored_clip_has_no_whisper_interval():
+    """As in the table: an interval over the scored subset is not the cell's."""
+    clips = [clip(wer_whisper_edits=1, ref_words_whisper=4), clip(whisper_scored=False)]
+    intervals = cell_intervals(clips, resamples=QUICK, seed=0)
+    assert intervals["wer_whisper"] == Interval(None, None, None)
+    assert intervals["cer_whisper"] == Interval(None, None, None)
+
+
+def test_the_paired_test_compares_the_whisper_rates():
+    a = {f"c{i}": clip(ref_words_whisper=10, ref_chars_whisper=40) for i in range(10)}
+    b = {cid: replace(s, wer_whisper_edits=1, cer_whisper_edits=2) for cid, s in a.items()}
+    deltas = paired(b, a, resamples=QUICK, seed=0)
+    assert deltas["wer_whisper"].estimate == pytest.approx(0.1)
+    assert deltas["cer_whisper"].estimate == pytest.approx(0.05)
 
 
 def test_a_clips_repeats_travel_together():

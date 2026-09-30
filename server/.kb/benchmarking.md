@@ -27,6 +27,21 @@ Read the top-level `.kb/agents.md` file before continuing below.
   them. `normalizer_version` is stamped on every row; `one_normalizer_version`
   refuses a file whose rows were scored under different versions, same as
   `one_corpus` does for `corpus_id`.
+- Each row also carries a secondary score, `wer_whisper_norm`/
+  `cer_whisper_norm` with their edit and reference counts, under Whisper's
+  normalisers (`EnglishTextNormalizer` for `en*` clips, `BasicTextNormalizer`
+  otherwise), so English numbers compare with the Open ASR Leaderboard. The
+  normalisers are vendored in `myna.testbed.whisper_normalizers`, pinned to
+  openai/whisper v20250625 and stamped as `secondary_normalizer_version`;
+  bump both together. It never replaces the primary score. `summarize` shows
+  it as `WERw%`/`CERw%`, in the table, the `--ci` intervals and `compare`,
+  blank for a cell with any row scored before it existed; mixed secondary
+  versions are refused like primary ones.
+- Sanity check, 2026-09-30, full LibriSpeech test-clean (2620 clips), the
+  myna-parakeet rev 2 int8 model in batch on a laptop CPU, intervals from
+  `summarize --ci`: WERw 2.08 [1.92, 2.25] against NVIDIA's published 1.93
+  for Parakeet TDT 0.6B v3 (fp32 NeMo; ours is the int8 SmoothQuant encoder,
+  see `parakeet-snap/NOTICE`); ours reads 2.29 [2.12, 2.46] on the same rows.
 - Full FLEURS test set, Parakeet v3 fp32 CUDA, 2026-09-17 (de 862 / es 908 /
   fr 676 clips): the apostrophe fold moved fr 7.78 -> 5.46 WER (published
   5.15), de 5.16 -> 5.14 (published 5.04), es unchanged at 3.62 (published

@@ -85,6 +85,10 @@ def _ratio(num: Floats, den: Floats) -> Callable[[Counts], Floats]:
     return statistic
 
 
+def _unscored(counts: Counts) -> Floats:
+    return np.full(len(counts), np.nan)
+
+
 def _quantile(latencies: Sequence[tuple[float, ...]], q: float) -> Callable[[Counts], Floats]:
     """Nearest-rank ``q`` of the pooled latencies, each weighted by its clip's
     draw count. NaN where the draw holds too few timed clips for ``q``."""
@@ -131,9 +135,18 @@ def _metrics(clips: Sequence[ClipSample]) -> dict[str, Callable[[Counts], Floats
         return np.array([getattr(c, field) for c in clips])
 
     latencies = [c.latencies for c in clips]
+    # A cell with any clip scored before the secondary score existed has no
+    # such rate, as in the table: the scored subset is a different corpus.
+    whisper = all(c.whisper_scored for c in clips)
     return {
         "wer": _ratio(column("wer_edits"), column("ref_words")),
         "cer": _ratio(column("cer_edits"), column("ref_chars")),
+        "wer_whisper": _ratio(column("wer_whisper_edits"), column("ref_words_whisper"))
+        if whisper
+        else _unscored,
+        "cer_whisper": _ratio(column("cer_whisper_edits"), column("ref_chars_whisper"))
+        if whisper
+        else _unscored,
         "rtfx": _ratio(column("audio_seconds"), column("processing_seconds")),
         "p50_final": _quantile(latencies, 0.5),
         "p95_final": _quantile(latencies, 0.95),
@@ -181,6 +194,8 @@ def paired(
     return {
         "wer": _delta("wer", first, second, common, resamples, seed),
         "cer": _delta("cer", first, second, common, resamples, seed),
+        "wer_whisper": _delta("wer_whisper", first, second, common, resamples, seed),
+        "cer_whisper": _delta("cer_whisper", first, second, common, resamples, seed),
         "p50_final": _delta("p50_final", first, second, timed, resamples, seed),
     }
 

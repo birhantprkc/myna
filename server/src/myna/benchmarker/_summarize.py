@@ -32,6 +32,7 @@ from myna.benchmarker._stats import (
     rtfx,
     sample_floor,
 )
+from myna.testbed.metrics import NORMALIZER_VERSION, SECONDARY_NORMALIZER_VERSION
 
 Record = dict[str, Any]
 
@@ -55,6 +56,8 @@ class SummaryRow(TypedDict):
     machine: str
     wer: float | None
     cer: float | None
+    wer_whisper: float | None
+    cer_whisper: float | None
     rtf: float | None
     rtfx: float | None
     median_final: float | None
@@ -184,6 +187,25 @@ def one_normalizer_version(records: list[Record]) -> None:
             f"records span normalizer versions ({detail}) - rescore everything with the "
             "current myna.testbed.metrics normalizer before comparing, or split the file"
         )
+    # Rows from before the secondary score have none; _whisper_rate leaves
+    # such a cell blank rather than refusing the primary table over it.
+    secondary = {
+        r["secondary_normalizer_version"] for r in records if r.get("secondary_normalizer_version")
+    }
+    if len(secondary) > 1:
+        raise SystemExit(
+            f"records span secondary normalizer versions ({', '.join(sorted(secondary))}) - "
+            "rescore with the current vendored Whisper normalizer, or split the file"
+        )
+
+
+def _whisper_rate(records: list[Record], edits: str, total: str) -> float | None:
+    """A cell's micro-averaged rate under Whisper's normaliser, or None when
+    any row lacks it: a rate over a subset of the clips is not the cell's."""
+    if any(r.get(total) is None for r in records):
+        return None
+    reference = sum(r[total] for r in records)
+    return sum(r[edits] for r in records) / reference if reference else None
 
 
 def _latency(record: Record) -> float | None:
@@ -215,6 +237,17 @@ def clip_samples(records: list[Record]) -> dict[str, ClipSample]:
         prior = folded.get(r["clip"], ClipSample())
         latency = _latency(r)
         timed = _throughput(r) or (0.0, 0.0)
+        scored = r.get("ref_words_whisper_norm") is not None
+        w_edits, w_words, c_edits, c_chars = (
+            (
+                r["wer_whisper_norm_edits"],
+                r["ref_words_whisper_norm"],
+                r["cer_whisper_norm_edits"],
+                r["ref_chars_whisper_norm"],
+            )
+            if scored
+            else (0, 0, 0, 0)
+        )
         folded[r["clip"]] = ClipSample(
             wer_edits=prior.wer_edits + r["wer_edits"],
             ref_words=prior.ref_words + r["ref_words"],
@@ -223,6 +256,11 @@ def clip_samples(records: list[Record]) -> dict[str, ClipSample]:
             audio_seconds=prior.audio_seconds + timed[0],
             processing_seconds=prior.processing_seconds + timed[1],
             latencies=prior.latencies + ((latency,) if latency is not None else ()),
+            wer_whisper_edits=prior.wer_whisper_edits + w_edits,
+            ref_words_whisper=prior.ref_words_whisper + w_words,
+            cer_whisper_edits=prior.cer_whisper_edits + c_edits,
+            ref_chars_whisper=prior.ref_chars_whisper + c_chars,
+            whisper_scored=prior.whisper_scored and scored,
         )
     return folded
 
@@ -266,6 +304,8 @@ def _summarize(records: list[Record]) -> dict[RowKey, SummaryRow]:
             # would both print as flawless and rank first.
             "wer": wer_edits / ref_words if ref_words else None,
             "cer": cer_edits / ref_chars if ref_chars else None,
+            "wer_whisper": _whisper_rate(warm, "wer_whisper_norm_edits", "ref_words_whisper_norm"),
+            "cer_whisper": _whisper_rate(warm, "cer_whisper_norm_edits", "ref_chars_whisper_norm"),
             "rtf": percentile(rtfs, 0.5),
             "rtfx": rtfx(clips),
             "median_final": latency_percentile(clips, 0.5),
@@ -408,7 +448,7 @@ def _print_overall(
     rh = f"{'RSS MB':>9} {'VRAM MB':>9}" if show_res else ""
     header = (
         f"{'#':>3} {'label':{lw}} {'status':>13} {mh}{'clips':>5} "
-        f"{'WER%':>7} {'CER%':>7} {'speed':>6} {'RTFx':>7} "
+        f"{'WER%':>7} {'CER%':>7} {'WERw%':>7} {'CERw%':>7} {'speed':>6} {'RTFx':>7} "
         f"{'med final':>11} {'p95 final':>11} {'p99 final':>11} {'rep CV%':>7} "
         f"{'cold load':>10} {rh}"
     )
@@ -429,6 +469,7 @@ def _print_overall(
         print(
             f"{rank:>3} {key[1]:{lw}} {status_col:>13} {mc}{s['clips']:>5} "
             f"{_f(_scaled(s['wer']), '7.2f')} {_f(_scaled(s['cer']), '7.2f')} "
+            f"{_f(_scaled(s['wer_whisper']), '7.2f')} {_f(_scaled(s['cer_whisper']), '7.2f')} "
             f"{_speed(s['rtf']):>6} {_rtfx(s['rtfx']):>7} "
             f"{_f(s['median_final'], '11.3f')} "
             f"{_tail(s['p95_final'], s['timed_clips'], 0.95, 11)} "
@@ -439,6 +480,11 @@ def _print_overall(
     print(
         "\nmed/p95/p99 final are seconds (end-of-audio -> committed text); a p95 needs"
         " 60 timed clips and a p99 300 (repeats pool, but do not count), or it reads 'n too small'."
+    )
+    print(
+        f"WER/CER use Myna's normaliser (v{NORMALIZER_VERSION}, primary); WERw/CERw use Whisper's"
+        f" ({SECONDARY_NORMALIZER_VERSION}: EnglishTextNormalizer for English,"
+        " BasicTextNormalizer otherwise), as the Open ASR Leaderboard does; -- = not scored."
     )
     print(
         "speed = 1 / median per-clip RTF; RTFx = total audio / total processing"
@@ -525,7 +571,7 @@ def print_intervals(
     resamples = resamples or boot.RESAMPLES
     groups = _groups(records)
     show_machine = len({key[0] for key in order}) > 1
-    rows = [("label", "WER%", "CER%", "RTFx", "med final", "p95 final")]
+    rows = [("label", "WER%", "CER%", "WERw%", "CERw%", "RTFx", "med final", "p95 final")]
     for key in order:
         cells = boot.cell_intervals(list(clip_samples(groups[key]).values()), resamples=resamples)
         rows.append(
@@ -533,6 +579,8 @@ def print_intervals(
                 f"{key[1]} @ {key[0]}" if show_machine else key[1],
                 _interval(cells["wer"], 100),
                 _interval(cells["cer"], 100),
+                _interval(cells["wer_whisper"], 100),
+                _interval(cells["cer_whisper"], 100),
                 _interval(cells["rtfx"], spec=".1f"),
                 _interval(cells["p50_final"], spec=".3f"),
                 TOO_FEW
@@ -628,6 +676,8 @@ def cmd_compare(args: argparse.Namespace) -> None:
     print(f"{args.first} - {args.second} over {clips} paired clip(s), corpus {corpus}")
     print(f"WER%          {_delta(deltas['wer'], 100, '.2f')}")
     print(f"CER%          {_delta(deltas['cer'], 100, '.2f')}")
+    print(f"WERw%         {_delta(deltas['wer_whisper'], 100, '.2f')}")
+    print(f"CERw%         {_delta(deltas['cer_whisper'], 100, '.2f')}")
     latency = deltas["p50_final"]
     timed = f"  ({latency.clips} timed on both)" if latency.clips != clips else ""
     print(f"med final s   {_delta(latency, 1, '.3f')}{timed}")

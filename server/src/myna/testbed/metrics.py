@@ -24,6 +24,11 @@ convention, so this deliberately does not reach for Whisper's heavier
 (spoken-number expansion, British/American spelling folding) is a deliberate
 later decision, not baked in here.
 
+A secondary score uses Whisper's normalisers instead (``whisper_normalizer``,
+vendored in ``myna.testbed.whisper_normalizers``): ``EnglishTextNormalizer``
+for English, ``BasicTextNormalizer`` otherwise, which is what the Open ASR
+Leaderboard reports. It sits beside the primary score, never in place of it.
+
 ``NORMALIZER_VERSION`` is stamped into every benchmark row (see
 ``myna.benchmarker._bench.to_line``) precisely because this function is
 allowed to change: bump it whenever a change here can move a score, so rows
@@ -35,11 +40,19 @@ from __future__ import annotations
 import array
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import cache
+
+from myna.testbed.whisper_normalizers import BasicTextNormalizer, EnglishTextNormalizer
 
 # Bump whenever `normalize` changes in a way that can move a WER/CER score.
 NORMALIZER_VERSION = 1
+
+# The openai/whisper release the vendored normalisers are pinned to.
+SECONDARY_NORMALIZER_VERSION = "whisper-v20250625"
+
+Normalizer = Callable[[str], str]
 
 # Keep word chars, whitespace, and intra-word apostrophes; drop the rest.
 _PUNCT = re.compile(r"[^\w\s']", flags=re.UNICODE)
@@ -61,6 +74,15 @@ def normalize(text: str) -> str:
     text = _PUNCT.sub(" ", text)
     text = _APOSTROPHE_EDGES.sub(" ", text)  # leading/trailing quotes, not don't
     return _WS.sub(" ", text).strip()
+
+
+@cache
+def whisper_normalizer(language: str) -> Normalizer:
+    """Whisper's normaliser for a BCP-47-ish ``language``: English's for any
+    ``en`` tag, the language-independent one for everything else."""
+    if re.split(r"[-_]", language, maxsplit=1)[0].casefold() == "en":
+        return EnglishTextNormalizer()
+    return BasicTextNormalizer()
 
 
 @dataclass(frozen=True)
@@ -258,11 +280,15 @@ def _align(reference: Sequence[str], hypothesis: Sequence[str]) -> ErrorRate:
     return ErrorRate((subs + dels + ins) / n, subs, dels, ins, n)
 
 
-def word_error_rate(reference: str, hypothesis: str) -> ErrorRate:
+def word_error_rate(
+    reference: str, hypothesis: str, *, normalizer: Normalizer = normalize
+) -> ErrorRate:
     """WER between two strings after normalization."""
-    return _align(normalize(reference).split(), normalize(hypothesis).split())
+    return _align(normalizer(reference).split(), normalizer(hypothesis).split())
 
 
-def character_error_rate(reference: str, hypothesis: str) -> ErrorRate:
+def character_error_rate(
+    reference: str, hypothesis: str, *, normalizer: Normalizer = normalize
+) -> ErrorRate:
     """CER between two strings after normalization (over characters)."""
-    return _align(list(normalize(reference)), list(normalize(hypothesis)))
+    return _align(list(normalizer(reference).strip()), list(normalizer(hypothesis).strip()))

@@ -1,0 +1,16 @@
+Third-party notices for the Myna source tree
+============================================
+
+Myna is licensed under the GNU Affero General Public License, version 3 or
+later; see LICENSE. The files below are third-party code under their own
+licences.
+
+server/src/myna/testbed/whisper_normalizers/
+--------------------------------------------
+
+basic.py, english.py and english.json: the text normalisers from OpenAI's
+Whisper (https://github.com/openai/whisper), tag v20250625, commit
+31243bad24cc746f07d4c8bfdd2d974872cb1803, Copyright (c) 2022 OpenAI, MIT
+License. The full licence text and a list of the modifications head each
+Python file. They are part of the myna wheel, so they ship inside
+myna-bench.pyz and every inference snap's server.
