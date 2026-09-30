@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-30 23:12+0100\n"
+"POT-Creation-Date: 2026-10-01 00:18+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -72,11 +72,11 @@ msgid ""
 "audio, transcripts, or filesystem paths."
 msgstr ""
 
-#: data/diagnostics-page.blp:88 src/backend_ui.rs:1701
+#: data/diagnostics-page.blp:94 src/backend_ui.rs:1701
 msgid "Diagnostic report"
 msgstr ""
 
-#: data/diagnostics-page.blp:89
+#: data/diagnostics-page.blp:95
 msgid "Read-only privacy-safe diagnostic text."
 msgstr ""
 

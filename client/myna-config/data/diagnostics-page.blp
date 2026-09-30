@@ -73,16 +73,22 @@ template $DiagnosticsPage: Adw.NavigationPage {
         hscrollbar-policy: automatic;
         vscrollbar-policy: automatic;
         min-content-height: 240;
+        vexpand: true;
+        overflow: hidden;
+
+        styles [
+          "card",
+        ]
 
         Gtk.TextView report_view {
           editable: false;
           monospace: true;
           cursor-visible: false;
           wrap-mode: word_char;
-          top-margin: 8;
-          bottom-margin: 8;
-          left-margin: 8;
-          right-margin: 8;
+          top-margin: 12;
+          bottom-margin: 12;
+          left-margin: 12;
+          right-margin: 12;
 
           accessibility {
             label: _("Diagnostic report");
