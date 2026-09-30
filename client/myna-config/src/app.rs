@@ -1002,7 +1002,8 @@ fn onboarding_probe() -> glib::ExitCode {
     window.close();
     settle_gtk();
 
-    // A failed automatic setup reports itself, stays, and Next retries.
+    // A failed automatic setup reports itself in a toast, not a dialog to
+    // dismiss, stays, and Next retries.
     let machine = ProbeMachine::bare();
     machine.refuse_restarts(1);
     let window = {
@@ -1024,11 +1025,7 @@ fn onboarding_probe() -> glib::ExitCode {
     window.forward_button().emit_clicked();
     settle_gtk();
     machine.install();
-    let failed = || {
-        window
-            .visible_dialog()
-            .is_some_and(|dialog| dialog.is::<ui::OperationErrorDialog>())
-    };
+    let failed = || setup_failure_toasted(&window);
     for _ in 0..100 {
         if failed() {
             break;
@@ -1036,17 +1033,38 @@ fn onboarding_probe() -> glib::ExitCode {
         settle_gtk();
     }
     if !failed()
+        || window.visible_dialog().is_some()
         || step(&window) != "components"
         || setup_spinner(&window)
         || !window.forward_button().is_sensitive()
     {
-        eprintln!("a failed automatic setup did not report itself and offer Next");
+        eprintln!(
+            "a failed automatic setup showed toasts {:?} and a dialog {}, not Next",
+            toast_texts(&window),
+            window.visible_dialog().is_some()
+        );
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-auto-failure: reported");
-    if let Some(dialog) = window.visible_dialog() {
-        dialog.force_close();
+    // The toast times out; the footer keeps saying dictation is not set up.
+    if !setup_failed_shown(&window) || installed_status(&window).is_some() {
+        eprintln!(
+            "after a failed setup the footer read installed {:?}, not set up {}",
+            installed_status(&window),
+            setup_failed_shown(&window)
+        );
+        return glib::ExitCode::FAILURE;
     }
+    println!("onboarding-auto-failure: the footer says so");
+    match setup_failure_report(&window) {
+        // The report names the command, as the Settings window's do.
+        Some(report) if report.contains(PROBE_RESTART_FAILURE) && report.contains("systemctl") => {}
+        report => {
+            eprintln!("the failed setup's Details read {report:?}");
+            return glib::ExitCode::FAILURE;
+        }
+    }
+    println!("onboarding-auto-failure: Details name the cause");
     window.forward_button().emit_clicked();
     if !reached(&window, "shortcut") || machine.applied() != [vec!["restart-myna".to_owned()]] {
         eprintln!("Next did not retry setup: {:?}", machine.applied());
@@ -1083,11 +1101,7 @@ fn onboarding_probe() -> glib::ExitCode {
     window.forward_button().emit_clicked();
     settle_gtk();
     window.forward_button().emit_clicked();
-    let failed = || {
-        window
-            .visible_dialog()
-            .is_some_and(|dialog| dialog.is::<ui::OperationErrorDialog>())
-    };
+    let failed = || setup_failure_toasted(&window);
     for _ in 0..100 {
         if failed() {
             break;
@@ -1099,9 +1113,99 @@ fn onboarding_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-setup-failure: reported");
-    if let Some(dialog) = window.visible_dialog() {
-        dialog.force_close();
+    window.close();
+    settle_gtk();
+
+    // A model the store did not connect costs a polkit prompt on Next.
+    // Dismissing it is the user's answer, not a failure: nothing to report,
+    // and Next asks again. A refusal is reported.
+    let installed = [crate::diagnostics::InstalledSnap {
+        name: crate::onboarding::MYNA_SNAP.to_owned(),
+        version: "1".to_owned(),
+    }];
+    let machine = ProbeMachine::new();
+    machine.disconnect_backends();
+    machine.dismiss_authorization(true);
+    let window = {
+        let ui = OnboardingUi::present_with_ports(
+            &application,
+            assess(Machine {
+                user_daemons: true,
+                extension: crate::onboarding::ExtensionState::Enabled,
+                ..Machine::new(&installed, 1)
+            }),
+            Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+                std::sync::Arc::new(machine.clone()),
+            )),
+            Rc::new(machine.clone()),
+            ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
+            None,
+            Box::new(|| {}),
+        );
+        ui.window()
+    };
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    for _ in 0..100 {
+        if machine.switches_attempted() == 1 && window.forward_button().is_sensitive() {
+            break;
+        }
+        settle_gtk();
     }
+    for _ in 0..5 {
+        settle_gtk();
+    }
+    if machine.switches_attempted() != 1
+        || !toast_texts(&window).is_empty()
+        || window.visible_dialog().is_some()
+        || step(&window) != "components"
+        || setup_spinner(&window)
+        || !window.forward_button().is_sensitive()
+    {
+        eprintln!(
+            "a dismissed connection prompt left step {} after {} switches, toasts {:?}, a dialog {}",
+            step(&window),
+            machine.switches_attempted(),
+            toast_texts(&window),
+            window.visible_dialog().is_some()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-connect: a dismissed prompt stays silently");
+    machine.dismiss_authorization(false);
+    machine.deny_switches(true);
+    window.forward_button().emit_clicked();
+    for _ in 0..100 {
+        if setup_failure_toasted(&window) {
+            break;
+        }
+        settle_gtk();
+    }
+    if !setup_failure_toasted(&window)
+        || machine.switches_attempted() != 2
+        || step(&window) != "components"
+    {
+        eprintln!(
+            "a refused connection left step {} after {} switches, toasts {:?}",
+            step(&window),
+            machine.switches_attempted(),
+            toast_texts(&window)
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-connect: a refusal is reported");
+    machine.deny_switches(false);
+    window.forward_button().emit_clicked();
+    if !reached(&window, "shortcut") || machine.switches_attempted() != 3 {
+        eprintln!(
+            "Next did not connect the model on the third try: {}",
+            machine.switches_attempted()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-connect: Next connects the model");
     window.close();
     settle_gtk();
 
@@ -1172,22 +1276,48 @@ fn onboarding_probe() -> glib::ExitCode {
         }
         false
     };
+    let can_pop = || {
+        window
+            .navigation()
+            .visible_page()
+            .is_some_and(|page| page.can_pop())
+    };
     machine.hold_restart(true);
     forward.emit_clicked();
-    if window
-        .navigation()
-        .visible_page()
-        .is_none_or(|page| page.can_pop())
-    {
-        eprintln!("the component step could be left while it set dictation up");
+    // Hiding the back arrow for a quick setup flashed it.
+    if !can_pop() {
+        eprintln!("the back arrow went a moment into setting up");
         return glib::ExitCode::FAILURE;
     }
+    println!("onboarding-setup: back stays for a moment");
     settle_gtk();
+    // A spinner that flashes for a quick setup reads as a glitch: for a
+    // moment the footer keeps saying everything is installed.
+    if setup_spinner(&window) || installed_status(&window) != Some(true) || forward.is_sensitive() {
+        eprintln!(
+            "a moment into setting up the footer showed a spinner: {}, the status: {:?}",
+            setup_spinner(&window),
+            installed_status(&window)
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-setup: no spinner for a moment");
+    for _ in 0..100 {
+        if setup_spinner(&window) {
+            break;
+        }
+        settle_gtk();
+    }
     if !setup_spinner(&window) || installed_status(&window).is_some() {
         eprintln!("setting up showed no spinner in the footer's status");
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-setup: spinner while setting up");
+    if can_pop() {
+        eprintln!("the component step could be left while its spinner showed");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-setup: no leaving past the moment");
     machine.hold_restart(false);
     if !reaches("shortcut") {
         eprintln!("the component step did not reach the shortcut step");
@@ -1210,6 +1340,37 @@ fn onboarding_probe() -> glib::ExitCode {
     settle_gtk();
     if !popped || step(&window) != "components" {
         eprintln!("going back did not return to the component step");
+        return glib::ExitCode::FAILURE;
+    }
+    // Back during that moment lets the setup finish without moving on.
+    machine.hold_restart(true);
+    forward.emit_clicked();
+    let popped = window.navigation().visible_page().is_some_and(|page| {
+        page.can_pop() && WidgetExt::activate_action(&page, "navigation.pop", None).is_ok()
+    });
+    settle_gtk();
+    machine.hold_restart(false);
+    for _ in 0..100 {
+        if machine.applied().len() == 2 {
+            break;
+        }
+        settle_gtk();
+    }
+    for _ in 0..20 {
+        settle_gtk();
+    }
+    if !popped || machine.applied().len() != 2 || step(&window) != "welcome" {
+        eprintln!(
+            "back during setup: popped {popped}, restarts {:?}, on {}",
+            machine.applied(),
+            step(&window)
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-setup: back stays back");
+    forward.emit_clicked();
+    if !reaches("components") {
+        eprintln!("Next on the welcome step did not return to the components");
         return glib::ExitCode::FAILURE;
     }
     forward.emit_clicked();
@@ -1277,6 +1438,37 @@ fn onboarding_probe() -> glib::ExitCode {
     settings.close();
     settle_gtk();
     glib::ExitCode::SUCCESS
+}
+
+/// The shortcut step's column is centred, so a column that grew when the
+/// portal's grant lands would move the title under the user's eyes.
+fn shortcut_page_holds_its_place(page: &ui::OnboardingShortcut) -> Result<(), String> {
+    use crate::shortcut::{ShortcutPath, ShortcutState};
+    use crate::shortcut_ui::{fill_keys, onboarding_description, Surface};
+    let keys = page.shortcut_box();
+    let column = std::iter::successors(Some(keys.clone().upcast::<gtk::Widget>()), |w| w.parent())
+        .find(|w| w.parent().is_some_and(|p| p.is::<adw::Clamp>()))
+        .ok_or("the key caps sit in no clamped column")?;
+    let height = |state: &ShortcutState| {
+        while let Some(child) = keys.first_child() {
+            keys.remove(&child);
+        }
+        if let ShortcutState::Bound(trigger) = state {
+            fill_keys(&keys, trigger, Surface::Onboarding);
+        }
+        keys.set_visible(matches!(state, ShortcutState::Bound(_)));
+        page.description()
+            .set_label(&onboarding_description(state, ShortcutPath::Portal));
+        column.measure(gtk::Orientation::Vertical, 540).1
+    };
+    let bound = height(&ShortcutState::Bound("<Super>j".to_owned()));
+    let unbound = height(&ShortcutState::Unbound);
+    if bound != unbound {
+        return Err(format!(
+            "the shortcut step's column is {unbound} px high unbound and {bound} px bound"
+        ));
+    }
+    Ok(())
 }
 
 fn template_probe() -> glib::ExitCode {
@@ -1364,6 +1556,11 @@ fn template_probe() -> glib::ExitCode {
         shortcut.shortcut_button(),
     );
     println!("OnboardingShortcut");
+    if let Err(error) = shortcut_page_holds_its_place(&shortcut) {
+        eprintln!("{error}");
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-shortcut: the page holds its place when a key is bound");
     let onboarding = ui::OnboardingWindow::new(&application);
     let _ = (
         onboarding.overlay(),
@@ -1388,6 +1585,28 @@ fn template_probe() -> glib::ExitCode {
     // string with markup characters intact and without warnings.
     if error_dialog.details_text() != "full <safe> details & example" {
         eprintln!("operation error dialog did not preserve details text");
+        return glib::ExitCode::FAILURE;
+    }
+    // A snap plug name wraps whole, never after its hyphen.
+    let request = "Request: POST /v2/interfaces (connect myna:backend myna-parakeet:provider)";
+    let wrapped = ui::OperationErrorDialog::new("Operation failed", "summary", request);
+    let label = wrapped.details_label();
+    let layout = label.create_pango_layout(Some(&label.text()));
+    let head = label.create_pango_layout(Some(
+        "Request: POST /v2/interfaces (connect myna:backend myna-",
+    ));
+    layout.set_wrap(gtk::pango::WrapMode::WordChar);
+    layout.set_width(head.size().0 + gtk::pango::SCALE);
+    let first_line = layout
+        .line(0)
+        .map(|line| {
+            let start = line.start_index() as usize;
+            let text = layout.text();
+            text[start..start + line.length() as usize].to_owned()
+        })
+        .unwrap_or_default();
+    if first_line.trim_end().ends_with('-') || wrapped.details_text() != request {
+        eprintln!("the details wrap a plug name at its hyphen: {first_line:?}");
         return glib::ExitCode::FAILURE;
     }
     println!("OperationErrorDialog");
@@ -1694,8 +1913,8 @@ const PROBE_DICTATION_XML: &str = "<node>\
 </node>";
 
 /// Finishing setup under control activation installs the default key, unless
-/// the user already has one or the key is taken; under the portal it binds
-/// nothing, since only the portal's own dialog may. Runs against a stand-in
+/// the user already has one or the key is taken; under the portal it raises
+/// the portal's own dialog, the only way to grant one. Runs against a stand-in
 /// daemon on the session bus, which the caller makes private.
 fn onboarding_control_probe() -> glib::ExitCode {
     use crate::adapters::desktop_shortcut::DesktopShortcut;
@@ -1849,21 +2068,49 @@ fn onboarding_control_probe() -> glib::ExitCode {
     window.close();
     let _ = other.set_string("binding", "");
 
-    let (window, _) = walk("portal");
-    if binds.get() != 0 || desktop.binding().is_some() {
+    // Under the portal only its own dialog grants a key, so arriving raises
+    // it once. The stand-in answers as a dismissed dialog: that was the
+    // user's answer, so nothing reports it, and setting a key up becomes the
+    // step's main action over Done.
+    let (window, button) = walk("portal");
+    for _ in 0..20 {
+        if binds.get() > 0 {
+            break;
+        }
+        settle_gtk();
+    }
+    settle_gtk();
+    if binds.get() != 1 || desktop.binding().is_some() || window.visible_dialog().is_some() {
         eprintln!(
-            "setup under the portal bound {} times, installed {:?}",
+            "setup under the portal bound {} times, installed {:?}, dialog {}",
             binds.get(),
-            desktop.binding()
+            desktop.binding(),
+            window.visible_dialog().is_some()
         );
         return glib::ExitCode::FAILURE;
     }
-    println!("onboarding-default: portal untouched");
+    println!("onboarding-default: portal dialog raised on arrival");
+    let forward = window.forward_button();
+    if !button.has_css_class("suggested-action")
+        || button.has_css_class("outlined")
+        || forward.has_css_class("suggested-action")
+        || !forward.has_css_class("outlined")
+        || !forward.is_sensitive()
+    {
+        eprintln!(
+            "with no key the step suggested {:?} over {:?}",
+            forward.css_classes(),
+            button.css_classes()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-keys: set up leads while no key is bound");
     window.close();
+    binds.set(0);
 
     // A key the portal granted before reads as the design, as Super+J.
     shortcut.replace("Press <Super>j".to_owned());
-    let (window, _) = walk("portal");
+    let (window, button) = walk("portal");
     shortcut.replace(String::new());
     if !shortcut_shown(&window) {
         eprintln!(
@@ -1873,6 +2120,21 @@ fn onboarding_control_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-keys: Super+J under the portal");
+    let forward = window.forward_button();
+    if binds.get() != 0
+        || !forward.has_css_class("suggested-action")
+        || !button.has_css_class("outlined")
+        || button.has_css_class("suggested-action")
+    {
+        eprintln!(
+            "with a key bound setup asked {} binds and suggested {:?} over {:?}",
+            binds.get(),
+            button.css_classes(),
+            forward.css_classes()
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-keys: Done leads once a key is bound");
     window.close();
 
     let (window, button) = walk("control");
@@ -1903,6 +2165,78 @@ fn onboarding_control_probe() -> glib::ExitCode {
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-keys: Super+J under control");
+    window.close();
+    settle_gtk();
+
+    // The restarted daemon takes a moment to claim its name; moving on
+    // before then showed "not running" on arrival. Setup waits for it.
+    let name_call = |method: &str| {
+        connection.call_sync(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            method,
+            Some(&match method {
+                "RequestName" => ("com.canonical.Myna.Dictation", 4u32).to_variant(),
+                _ => ("com.canonical.Myna.Dictation",).to_variant(),
+            }),
+            None,
+            gio::DBusCallFlags::NONE,
+            1_000,
+            gio::Cancellable::NONE,
+        )
+    };
+    shortcut.replace("Press <Super>j".to_owned());
+    activation.replace("portal".to_owned());
+    if name_call("ReleaseName").is_err() {
+        eprintln!("the probe could not stop its stand-in daemon");
+        return glib::ExitCode::FAILURE;
+    }
+    let window = OnboardingUi::present_with_ports(
+        &application,
+        assess(Machine {
+            user_daemons: true,
+            ..Machine::new(&installed, 1)
+        }),
+        Rc::new(crate::adapters::snap_backend::SnapBackendRepository::new(
+            std::sync::Arc::new(ProbeMachine::new()),
+        )),
+        Rc::new(ProbeMachine::new()),
+        ProbeExtensions::new(crate::onboarding::ExtensionState::Enabled),
+        None,
+        Box::new(|| {}),
+    )
+    .window();
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    settle_gtk();
+    window.forward_button().emit_clicked();
+    for _ in 0..10 {
+        settle_gtk();
+    }
+    if step(&window) != "components" {
+        eprintln!("setup moved on before the restarted daemon was on the bus");
+        return glib::ExitCode::FAILURE;
+    }
+    if name_call("RequestName").is_err() {
+        eprintln!("the probe could not restart its stand-in daemon");
+        return glib::ExitCode::FAILURE;
+    }
+    for _ in 0..100 {
+        if step(&window) == "shortcut" {
+            break;
+        }
+        settle_gtk();
+    }
+    if step(&window) != "shortcut" || !shortcut_shown(&window) {
+        eprintln!(
+            "once the daemon was up the wizard reached {} with caps {:?}",
+            step(&window),
+            keycaps(window.upcast_ref())
+        );
+        return glib::ExitCode::FAILURE;
+    }
+    println!("onboarding-restart: waits for the daemon's name");
     window.close();
     settle_gtk();
     glib::ExitCode::SUCCESS
@@ -2394,6 +2728,11 @@ impl ProbeMachine {
             .store(denying, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// No backend is connected to `myna:backend`.
+    fn disconnect_backends(&self) {
+        self.connected.lock().expect("probe machine lock").clear();
+    }
+
     fn switches_attempted(&self) -> usize {
         self.switches_attempted
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -2743,7 +3082,15 @@ impl crate::ports::SystemConfigurator for ProbeMachine {
             |left| left.checked_sub(1),
         );
         if refused.is_ok() {
-            return Err(crate::ports::SystemConfiguratorError::Cancelled);
+            return Err(crate::ports::SystemConfiguratorError::execution(
+                "systemctl",
+                ["--user", "restart", "snap.myna.myna.service"]
+                    .map(str::to_owned)
+                    .to_vec(),
+                Some(1),
+                PROBE_RESTART_FAILURE,
+                PROBE_RESTART_FAILURE,
+            ));
         }
         self.applied
             .lock()
@@ -3650,7 +3997,7 @@ fn probe_extension_enable(application: &adw::Application) -> Result<(), String> 
         .and_then(|dialog| dialog.downcast::<ui::OperationErrorDialog>().ok())
         .ok_or("Details opened no failure report")?;
     let expected = format!(
-        "{} org.gnome.Shell.Extensions.EnableExtension(\"myna-shell@canonical.com\")\n{}\n{reason}",
+        "{} org.gnome.Shell.Extensions.EnableExtension(\"myna-shell@canonical.com\")\n{} {reason}",
         gettextrs::gettext("D-Bus call:"),
         gettextrs::gettext("Message:"),
     );
@@ -4078,7 +4425,7 @@ fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
     let dialog = report().ok_or("Details opened no failure report")?;
     let text = dialog.details_text();
     let expected = format!(
-        "{} PUT /v2/snaps/system/conf (experimental.user-daemons=true)\n{} 401\n{}\naccess denied",
+        "{} PUT /v2/snaps/system/conf (experimental.user-daemons=true)\n{} 401\n{} access denied",
         gettextrs::gettext("Request:"),
         gettextrs::gettext("HTTP status:"),
         gettextrs::gettext("Message:"),
@@ -4090,7 +4437,8 @@ fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
         find_descendant(dialog.upcast_ref(), &|widget| {
             widget
                 .downcast_ref::<gtk::Label>()
-                .is_some_and(|label| label.label() == text)
+                // Word joiners keep hyphenated names whole; they read as nothing.
+                .is_some_and(|label| label.label().replace('\u{2060}', "") == text)
         })
     };
     let (Some(details), Some(copy)) = (label(&text), label(&gettextrs::gettext("Copy Details")))
@@ -4411,6 +4759,78 @@ fn setup_spinner(window: &ui::OnboardingWindow) -> bool {
             .is_some_and(|spinner| spinner.is_mapped() && spinner.is_spinning())
     })
     .is_some()
+}
+
+/// What the fixture's refused restart says, for its report.
+const PROBE_RESTART_FAILURE: &str = "Job for snap.myna.myna.service failed";
+
+fn toast_texts(window: &ui::OnboardingWindow) -> Vec<String> {
+    descendants(window.upcast_ref(), &|widget| {
+        widget.type_().name() == "AdwToastWidget"
+    })
+    .iter()
+    .flat_map(|toast| {
+        descendants(toast, &|widget| widget.is::<gtk::Label>())
+            .into_iter()
+            .filter_map(|label| label.downcast::<gtk::Label>().ok())
+            .map(|label| label.label().to_string())
+            .collect::<Vec<_>>()
+    })
+    .collect()
+}
+
+fn setup_failure_toasted(window: &ui::OnboardingWindow) -> bool {
+    toast_texts(window)
+        == [
+            gettextrs::gettext("Could not set up Dictation"),
+            gettextrs::gettext("Details"),
+        ]
+}
+
+/// Open the failure toast's Details and read the report, closing it again.
+fn setup_failure_report(window: &ui::OnboardingWindow) -> Option<String> {
+    let details = gettextrs::gettext("Details");
+    descendants(window.upcast_ref(), &|widget| {
+        widget
+            .downcast_ref::<gtk::Button>()
+            .is_some_and(|button| button.label().as_deref() == Some(details.as_str()))
+    })
+    .into_iter()
+    .next()?
+    .downcast::<gtk::Button>()
+    .ok()?
+    .emit_clicked();
+    for _ in 0..8 {
+        settle_gtk();
+    }
+    let dialog = window
+        .visible_dialog()?
+        .downcast::<ui::OperationErrorDialog>()
+        .ok()?;
+    let report = dialog.details_text();
+    dialog.force_close();
+    for _ in 0..8 {
+        settle_gtk();
+    }
+    Some(report.to_string())
+}
+
+/// The footer says a setup left dictation not set up, with a warning icon.
+fn setup_failed_shown(window: &ui::OnboardingWindow) -> bool {
+    let status = window.setup_failed_status();
+    status.is_mapped()
+        && find_descendant(status.upcast_ref(), &|widget| {
+            widget.downcast_ref::<gtk::Label>().is_some_and(|label| {
+                label.label()
+                    == gettextrs::gettext("Dictation is not set up yet. Select Next to try again.")
+                        .as_str()
+            })
+        })
+        .is_some()
+        && find_descendant(status.upcast_ref(), &|widget| {
+            widget.has_css_class("warning")
+        })
+        .is_some()
 }
 
 fn installed_status(window: &ui::OnboardingWindow) -> Option<bool> {

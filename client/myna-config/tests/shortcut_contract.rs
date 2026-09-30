@@ -1,7 +1,7 @@
 use myna_config::shortcut::{accelerators, default_key, DefaultKey, ShortcutPath, ShortcutState};
 
 #[test]
-fn setup_installs_the_default_key_only_under_control_with_none_bound() {
+fn setup_sets_the_default_key_only_when_none_is_bound() {
     let unbound = ShortcutState::Unbound;
     assert_eq!(
         default_key(Some("control"), &unbound, true),
@@ -19,8 +19,21 @@ fn setup_installs_the_default_key_only_under_control_with_none_bound() {
         ),
         DefaultKey::Leave
     );
+    // Only the portal's own dialog grants a key, so setup raises it.
     assert_eq!(
         default_key(Some("portal"), &unbound, true),
+        DefaultKey::Bind
+    );
+    assert_eq!(
+        default_key(
+            Some("portal"),
+            &ShortcutState::Bound("Press <Super>j".to_owned()),
+            true
+        ),
+        DefaultKey::Leave
+    );
+    assert_eq!(
+        default_key(Some("portal"), &ShortcutState::Unpublished, true),
         DefaultKey::Leave
     );
 }

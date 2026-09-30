@@ -188,6 +188,23 @@ impl ModelOffer {
     pub fn snap(&self) -> &'static str {
         self.family.snap_name()
     }
+
+    /// The size the model row shows, before or after installing.
+    pub fn size(&self, installed: bool) -> ModelSize {
+        match (self.upper_bound, installed) {
+            (false, _) => ModelSize::Exact(self.download_bytes),
+            (true, false) => ModelSize::UpTo(self.download_bytes),
+            // The engine the hook picked is not known, so no figure.
+            (true, true) => ModelSize::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelSize {
+    Exact(u64),
+    UpTo(u64),
+    Unknown,
 }
 
 /// What installing Myna downloads.
@@ -648,6 +665,19 @@ mod tests {
             })
             .upper_bound
         );
+    }
+
+    #[test]
+    fn an_installed_model_does_not_claim_the_most_it_could_have_downloaded() {
+        let cpu = model_offer(&Machine::default());
+        let gpu = model_offer(&Machine {
+            nvidia_gpu: true,
+            ..Machine::default()
+        });
+        assert_eq!(cpu.size(false), ModelSize::Exact(cpu.download_bytes));
+        assert_eq!(cpu.size(true), ModelSize::Exact(cpu.download_bytes));
+        assert_eq!(gpu.size(false), ModelSize::UpTo(gpu.download_bytes));
+        assert_eq!(gpu.size(true), ModelSize::Unknown);
     }
 
     #[test]

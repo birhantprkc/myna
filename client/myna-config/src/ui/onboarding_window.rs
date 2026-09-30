@@ -21,6 +21,8 @@ mod imp {
         #[template_child]
         pub installed_status: gtk::TemplateChild<gtk::Box>,
         #[template_child]
+        pub setup_failed_status: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
         pub forward_button: gtk::TemplateChild<gtk::Button>,
     }
 
@@ -79,6 +81,10 @@ impl OnboardingWindow {
 
     pub fn installed_status(&self) -> gtk::Box {
         self.imp().installed_status.get()
+    }
+
+    pub fn setup_failed_status(&self) -> gtk::Box {
+        self.imp().setup_failed_status.get()
     }
 
     pub fn forward_button(&self) -> gtk::Button {

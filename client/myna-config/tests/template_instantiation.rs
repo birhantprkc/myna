@@ -36,6 +36,10 @@ fn every_top_level_template_instantiates_headlessly_when_enabled() {
     ] {
         assert!(stdout.contains(name), "{name} was not instantiated");
     }
+    assert!(
+        stdout.contains("onboarding-shortcut: the page holds its place when a key is bound"),
+        "the shortcut step's column changed height"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     for offender in ["Failed to parse markup", "unknown tag", "Pango-WARNING"] {
         assert!(
@@ -218,11 +222,20 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-rows: an unavailable extension says it falls back",
         "onboarding-rows: an extension that cannot run says why",
         "onboarding-auto-failure: reported",
+        "onboarding-auto-failure: the footer says so",
+        "onboarding-auto-failure: Details name the cause",
         "onboarding-auto-failure: Next retries",
         "onboarding-setup-failure: reported",
+        "onboarding-connect: a dismissed prompt stays silently",
+        "onboarding-connect: a refusal is reported",
+        "onboarding-connect: Next connects the model",
         "onboarding-installed: shown in the footer",
         "onboarding-rows: each installed",
+        "onboarding-setup: back stays for a moment",
+        "onboarding-setup: no spinner for a moment",
         "onboarding-setup: spinner while setting up",
+        "onboarding-setup: no leaving past the moment",
+        "onboarding-setup: back stays back",
         "onboarding-setup: restarted the daemon",
         "onboarding-walk: reached the last step",
         "onboarding-shortcut: headed as the design",
@@ -322,8 +335,8 @@ fn the_shortcut_row_installs_a_desktop_shortcut_under_control_activation() {
 }
 
 /// Setup installs the default key itself under control activation, but never
-/// over a key the user has or another shortcut holds, and never under the
-/// portal, which binds only through its own dialog.
+/// over a key the user has or another shortcut holds; under the portal it
+/// raises the portal's own dialog, and a dismissal is not reported.
 #[test]
 fn onboarding_installs_the_default_key_only_under_control_activation() {
     if std::env::var_os("MYNA_CONFIG_GTK_TESTS").is_none() {
@@ -353,10 +366,13 @@ fn onboarding_installs_the_default_key_only_under_control_activation() {
     for line in [
         "onboarding-default: kept the user's key",
         "onboarding-default: left a key in use",
-        "onboarding-default: portal untouched",
+        "onboarding-default: portal dialog raised on arrival",
+        "onboarding-keys: set up leads while no key is bound",
         "onboarding-keys: Super+J under the portal",
+        "onboarding-keys: Done leads once a key is bound",
         "onboarding-default: Super+J without a click",
         "onboarding-keys: Super+J under control",
+        "onboarding-restart: waits for the daemon's name",
     ] {
         assert!(
             stdout.contains(line),

@@ -2073,9 +2073,10 @@ fn failure_details(step: Option<&crate::ports::FailedStep>, message: &str) -> St
         }
         None => {}
     }
+    let message = diagnostics::redact_text(message);
     out.push_str(&gettextrs::gettext("Message:"));
-    out.push('\n');
-    out.push_str(&diagnostics::redact_text(message));
+    out.push(if message.contains('\n') { '\n' } else { ' ' });
+    out.push_str(&message);
     out
 }
 

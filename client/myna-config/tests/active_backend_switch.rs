@@ -8,7 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use myna_config::active_backend::{
     ensure_backend_active, execute_switch, myna_restart_request, ActiveBackendController,
-    PrepareSwitchError, SetupStage, SnapdWait, SwitchNotice, SwitchOutcome, SwitchPlan,
+    PrepareSwitchError, SetupError, SetupStage, SnapdWait, SwitchNotice, SwitchOutcome, SwitchPlan,
 };
 use myna_config::backend_apply::ApplyPreview;
 use myna_config::command::{CancellationToken, CommandRequest};
@@ -836,7 +836,8 @@ fn a_failed_restart_is_reported() {
         &no_wait(),
         &unheard,
     ))
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
 
     assert!(error.contains("unit not found"), "{error}");
 }
@@ -920,14 +921,18 @@ fn a_failed_or_contradicted_switch_is_reported() {
         Ok(initial.clone()),
         Ok(initial.clone()),
     ]);
-    assert!(block_on(ensure_backend_active(
-        &repository,
-        &denied,
-        "myna-parakeet",
-        &no_wait(),
-        &unheard,
-    ))
-    .is_err());
+    // A refusal is reported as snapd's, naming its request; only a
+    // dismissed prompt is not reported.
+    assert!(matches!(
+        block_on(ensure_backend_active(
+            &repository,
+            &denied,
+            "myna-parakeet",
+            &no_wait(),
+            &unheard,
+        )),
+        Err(SetupError::Step(_))
+    ));
 
     // snapd reported success but the backend is still not connected.
     let contradicted = FakeConfigurator::returning(Ok(success(&plan)));
@@ -939,7 +944,8 @@ fn a_failed_or_contradicted_switch_is_reported() {
         &no_wait(),
         &unheard,
     ))
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(
         error.contains("changed while it was being switched on"),
         "{error}"
@@ -959,7 +965,8 @@ fn a_switch_lost_to_discovery_or_cancellation_is_reported() {
         &no_wait(),
         &unheard,
     ))
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(lost.contains("snapd went away"), "{lost}");
 
     let repository = FakeRepository::new([Ok(initial.clone()), Ok(initial.clone()), Ok(initial)]);
@@ -975,7 +982,7 @@ fn a_switch_lost_to_discovery_or_cancellation_is_reported() {
         &unheard,
     ))
     .unwrap_err();
-    assert!(cancelled.contains("cancelled"), "{cancelled}");
+    assert_eq!(cancelled, SetupError::Cancelled);
 }
 
 /// The model's install change as snapd lists it while it downloads the snap,
@@ -1125,7 +1132,7 @@ fn a_cancelled_wait_changes_nothing() {
     ))
     .unwrap_err();
 
-    assert!(error.contains("cancelled"), "{error}");
+    assert_eq!(error, SetupError::Cancelled);
     assert_eq!(*configurator.restarts.borrow(), 0);
     assert!(configurator.calls().is_empty());
     assert_eq!(configurator.changes.borrow().len(), 1);
@@ -1192,7 +1199,8 @@ fn a_change_that_outlasts_the_wait_is_reported_without_a_restart() {
         &no_wait(),
         &unheard,
     ))
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
 
     assert!(error.contains("Install \"myna-parakeet\" snap"), "{error}");
     assert_eq!(*configurator.restarts.borrow(), 0);
@@ -1213,7 +1221,8 @@ fn unreadable_changes_are_reported_without_a_restart() {
         &no_wait(),
         &unheard,
     ))
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
 
     assert!(failed.contains("snapd is down"), "{failed}");
     assert_eq!(*configurator.restarts.borrow(), 0);

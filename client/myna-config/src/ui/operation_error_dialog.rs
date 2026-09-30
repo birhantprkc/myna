@@ -64,7 +64,7 @@ impl OperationErrorDialog {
         dialog.set_heading(Some(heading));
         dialog.set_body(summary);
         let imp = dialog.imp();
-        imp.details_label.set_text(details);
+        imp.details_label.set_text(&unbroken_hyphens(details));
         imp.details_text.replace(details.to_owned());
         let dialog_weak = dialog.downgrade();
         imp.copy_button.connect_clicked(move |_| {
@@ -82,4 +82,15 @@ impl OperationErrorDialog {
     pub fn details_text(&self) -> String {
         self.imp().details_text.borrow().clone()
     }
+
+    pub fn details_label(&self) -> gtk::Label {
+        self.imp().details_label.get()
+    }
+}
+
+/// `text` with a word joiner after each hyphen, so a plug name such as
+/// `myna-parakeet:provider` wraps whole. Only the label shows it; Copy Details
+/// copies `text` itself.
+fn unbroken_hyphens(text: &str) -> String {
+    text.replace('-', "-\u{2060}")
 }

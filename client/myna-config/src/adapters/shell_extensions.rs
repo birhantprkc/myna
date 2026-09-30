@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(
             crate::backend_ui::system_error_details(&error),
             "D-Bus call: org.gnome.Shell.Extensions.EnableExtension(\"myna-shell@canonical.com\")\n\
-             Message:\ngnome-shell did not start it"
+             Message: gnome-shell did not start it"
         );
     }
 

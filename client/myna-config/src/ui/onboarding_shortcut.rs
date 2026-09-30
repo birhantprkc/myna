@@ -1,5 +1,6 @@
 use adw::subclass::prelude::*;
 use glib::subclass::types::ObjectSubclassIsExt;
+use gtk::prelude::*;
 use gtk::{glib, CompositeTemplate};
 use gtk4 as gtk;
 use libadwaita as adw;
@@ -12,6 +13,8 @@ mod imp {
     pub struct OnboardingShortcut {
         #[template_child]
         pub description: gtk::TemplateChild<crate::ui::BalancedLabel>,
+        #[template_child]
+        pub key_slot: gtk::TemplateChild<gtk::Stack>,
         #[template_child]
         pub shortcut_box: gtk::TemplateChild<gtk::Box>,
         #[template_child]
@@ -34,7 +37,17 @@ mod imp {
         }
     }
 
-    impl ObjectImpl for OnboardingShortcut {}
+    impl ObjectImpl for OnboardingShortcut {
+        fn constructed(&self) {
+            self.parent_constructed();
+            let slot = self.key_slot.get();
+            let show = move |keys: &gtk::Box| {
+                slot.set_visible_child_name(if keys.is_visible() { "keys" } else { "none" });
+            };
+            show(&self.shortcut_box);
+            self.shortcut_box.connect_visible_notify(show);
+        }
+    }
     impl WidgetImpl for OnboardingShortcut {}
     impl BinImpl for OnboardingShortcut {}
 }

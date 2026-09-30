@@ -49,6 +49,9 @@ pub struct ShortcutControl {
     state: RefCell<ShortcutState>,
     busy: Cell<bool>,
     default_pending: Cell<bool>,
+    /// The control itself, for the bind a refresh starts.
+    me: std::rc::Weak<Self>,
+    changed: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl ShortcutControl {
@@ -62,7 +65,7 @@ impl ShortcutControl {
         surface: Surface,
         describe: Describe,
     ) -> Rc<Self> {
-        let control = Rc::new(Self {
+        let control = Rc::new_cyclic(|me| Self {
             keys,
             button: button.clone(),
             overlay,
@@ -74,6 +77,8 @@ impl ShortcutControl {
             state: RefCell::new(ShortcutState::NotRunning),
             busy: Cell::new(false),
             default_pending: Cell::new(false),
+            me: me.clone(),
+            changed: RefCell::default(),
         });
         control.render();
         if let Some(desktop) = &control.desktop {
@@ -123,8 +128,28 @@ impl ShortcutControl {
         control
     }
 
-    /// Install the default key once the daemon says it is activated through
-    /// the control socket, unless a key is already bound or taken.
+    /// Run `changed` after every state the control shows.
+    pub fn connect_changed(&self, changed: Box<dyn Fn()>) {
+        self.changed.replace(Some(changed));
+    }
+
+    /// The daemon runs with no key bound: dictation cannot be triggered yet.
+    pub fn needs_key(&self) -> bool {
+        *self.state.borrow() == ShortcutState::Unbound
+    }
+
+    /// The unique name owning the daemon's name, if any. `None` while there
+    /// is no session bus to watch it on.
+    pub fn owner(&self) -> Option<Option<String>> {
+        self.proxy
+            .borrow()
+            .as_ref()
+            .map(|proxy| proxy.name_owner().map(|owner| owner.to_string()))
+    }
+
+    /// Set the default key once the daemon says how it is activated, unless
+    /// a key is already bound or taken: under control install it, under the
+    /// portal raise the portal's dialog offering it.
     pub fn install_default(&self) {
         self.default_pending.set(true);
         self.refresh();
@@ -168,6 +193,12 @@ impl ShortcutControl {
                 DefaultKey::Install => {
                     self.default_pending.set(false);
                     self.install(DEFAULT_ACCELERATOR);
+                }
+                DefaultKey::Bind => {
+                    self.default_pending.set(false);
+                    if let Some(control) = self.me.upgrade() {
+                        control.bind(false);
+                    }
                 }
                 DefaultKey::Leave => self.default_pending.set(false),
             }
@@ -216,6 +247,16 @@ impl ShortcutControl {
             .update_property(&[gtk::accessible::Property::Description(&help)]);
         self.button
             .set_sensitive(!self.busy.get() && state != ShortcutState::NotRunning);
+        // Onboarding cannot finish usefully without a key, so setting one up
+        // is the step's main action until there is one.
+        if self.surface == Surface::Onboarding {
+            let main = state == ShortcutState::Unbound;
+            set_class(&self.button, "suggested-action", main);
+            set_class(&self.button, "outlined", !main);
+        }
+        if let Some(changed) = &*self.changed.borrow() {
+            changed();
+        }
     }
 
     fn activate(self: &Rc<Self>) {
@@ -224,7 +265,7 @@ impl ShortcutControl {
             (_, ShortcutState::NotRunning) => {}
             (ShortcutPath::Control, ShortcutState::Unbound) => self.claim(DEFAULT_ACCELERATOR),
             (ShortcutPath::Control, _) => self.change(),
-            (ShortcutPath::Portal, ShortcutState::Unbound) => self.bind(),
+            (ShortcutPath::Portal, ShortcutState::Unbound) => self.bind(true),
             (ShortcutPath::Portal, _) => {
                 self.open_settings(&format!("applications {MYNA_SNAP}_{MYNA_SNAP}"))
             }
@@ -326,8 +367,10 @@ impl ShortcutControl {
     }
 
     /// Ask the daemon to bind. The portal keys a binding by the caller's app
-    /// id, so only the daemon can make one it will see.
-    fn bind(self: &Rc<Self>) {
+    /// id, so only the daemon can make one it will see. Only a bind the user
+    /// asked for reports a failure: one setup raised was answered in the
+    /// portal's dialog, and the step's button stays to try again.
+    fn bind(self: &Rc<Self>, asked: bool) {
         let Some(proxy) = self.proxy.borrow().clone() else {
             return;
         };
@@ -358,7 +401,10 @@ impl ShortcutControl {
                 },
                 Err(error) => Some(error.message().to_owned()),
             };
-            if let Some(detail) = failure {
+            if let (Some(detail), false) = (&failure, asked) {
+                glib::g_message!(crate::LOG_DOMAIN, "shortcut: setup's bind: {detail}");
+            }
+            if let Some(detail) = failure.filter(|_| asked) {
                 let heading = gettextrs::gettext("Could not set up the shortcut");
                 crate::ui::OperationErrorDialog::new(&heading, &heading, &detail)
                     .present(control.overlay.root().as_ref());
@@ -381,6 +427,14 @@ impl ShortcutControl {
     }
 }
 
+pub(crate) fn set_class(widget: &impl IsA<gtk::Widget>, class: &str, on: bool) {
+    if on {
+        widget.add_css_class(class);
+    } else {
+        widget.remove_css_class(class);
+    }
+}
+
 /// The onboarding step's sentence for `state`.
 pub fn onboarding_description(state: &ShortcutState, path: ShortcutPath) -> String {
     match state {
@@ -391,7 +445,7 @@ pub fn onboarding_description(state: &ShortcutState, path: ShortcutPath) -> Stri
             gettextrs::gettext("You can trigger Dictation anytime by using the keyboard shortcut:")
         }
         ShortcutState::Unbound => gettextrs::gettext(
-            "Set up a keyboard shortcut to trigger Dictation. The desktop asks you to confirm it.",
+            "Set up a keyboard shortcut to trigger Dictation. You will be asked to confirm it.",
         ),
         ShortcutState::NotRunning => gettextrs::gettext(
             "Myna is not running yet. The shortcut can be set up once it starts.",
@@ -416,7 +470,7 @@ pub fn row_subtitle(state: &ShortcutState) -> String {
 
 /// The first accelerator in `description` drawn for `surface`, or the
 /// description itself when it names none GTK can parse.
-fn fill_keys(keys: &gtk::Box, description: &str, surface: Surface) {
+pub(crate) fn fill_keys(keys: &gtk::Box, description: &str, surface: Surface) {
     let caps = accelerators(description)
         .first()
         .and_then(|accelerator| key_caps(accelerator));

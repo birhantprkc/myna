@@ -269,6 +269,37 @@ pub enum SetupStage {
     Restarting,
 }
 
+/// Why setting up did not leave dictation running.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SetupError {
+    /// The user dismissed the connection's polkit prompt, or the wizard
+    /// stopped the setup: nothing to report.
+    Cancelled,
+    /// What went wrong, for the report.
+    Failed(String),
+    /// A step that failed as snapd or systemctl reported it, whose report
+    /// names that step.
+    Step(SystemConfiguratorError),
+}
+
+impl std::fmt::Display for SetupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => {
+                formatter.write_str(&gettextrs::gettext("The change was cancelled."))
+            }
+            Self::Failed(message) => formatter.write_str(message),
+            Self::Step(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl From<String> for SetupError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
 /// Leave dictation running on a backend. With none connected, switch to
 /// `preferred`, or the first discovered backend without it; the switch
 /// restarts Myna. With one connected, only restart, because the daemon may
@@ -280,7 +311,7 @@ pub async fn ensure_backend_active(
     preferred: &str,
     wait: &SnapdWait<'_>,
     report: &dyn Fn(SetupStage),
-) -> Result<(), String> {
+) -> Result<(), SetupError> {
     report(SetupStage::Checking);
     let mut snapshot = repository
         .refresh(CancellationToken::new())
@@ -306,7 +337,10 @@ pub async fn ensure_backend_active(
         return configurator
             .restart_myna(CancellationToken::new())
             .await
-            .map_err(|error| error.to_string());
+            .map_err(|error| match error {
+                SystemConfiguratorError::Cancelled => SetupError::Cancelled,
+                error => SetupError::Step(error),
+            });
     }
     let backends = snapshot.backends();
     let Some(selected) = backends
@@ -315,21 +349,28 @@ pub async fn ensure_backend_active(
         .or_else(|| backends.first())
         .cloned()
     else {
-        return Err(gettextrs::gettext(
+        return Err(SetupError::Failed(gettextrs::gettext(
             "No speech-to-text model appeared in snap connections.",
-        ));
+        )));
     };
-    let plan = SwitchPlan::new(&snapshot, selected.clone())
-        .map_err(|_| gettextrs::gettext("The model is not available to switch to."))?;
+    let plan = SwitchPlan::new(&snapshot, selected.clone()).map_err(|_| {
+        SetupError::Failed(gettextrs::gettext(
+            "The model is not available to switch to.",
+        ))
+    })?;
     report(SetupStage::Connecting(selected.snap_name().to_owned()));
     match execute_switch(&plan, configurator, repository, CancellationToken::new()).await {
         SwitchOutcome::Applied { .. } | SwitchOutcome::Noop { .. } => Ok(()),
-        SwitchOutcome::Failed { error, .. } => Err(error.to_string()),
-        SwitchOutcome::FinalDiscoveryFailed { error, .. } => Err(error.message().to_owned()),
-        SwitchOutcome::Cancelled { .. } => Err(gettextrs::gettext("The change was cancelled.")),
-        SwitchOutcome::Disagreed { .. } | SwitchOutcome::StaleDiscovery { .. } => Err(
-            gettextrs::gettext("The model changed while it was being switched on. Try again."),
-        ),
+        SwitchOutcome::Failed { error, .. } => Err(SetupError::Step(error)),
+        SwitchOutcome::FinalDiscoveryFailed { error, .. } => {
+            Err(SetupError::Failed(error.message().to_owned()))
+        }
+        SwitchOutcome::Cancelled { .. } => Err(SetupError::Cancelled),
+        SwitchOutcome::Disagreed { .. } | SwitchOutcome::StaleDiscovery { .. } => {
+            Err(SetupError::Failed(gettextrs::gettext(
+                "The model changed while it was being switched on. Try again.",
+            )))
+        }
     }
 }
 
@@ -340,12 +381,11 @@ async fn wait_for_snapd(
     snaps: &[String],
     wait: &SnapdWait<'_>,
     report: &dyn Fn(SetupStage),
-) -> Result<bool, String> {
-    let cancelled = || gettextrs::gettext("The change was cancelled.");
+) -> Result<bool, SetupError> {
     let mut waited = Duration::ZERO;
     loop {
         if wait.cancellation.is_cancelled() {
-            return Err(cancelled());
+            return Err(SetupError::Cancelled);
         }
         let changes = configurator
             .changes_in_progress(wait.cancellation.clone())
@@ -354,10 +394,12 @@ async fn wait_for_snapd(
             return Ok(waited > Duration::ZERO);
         };
         if waited >= wait.timeout {
-            return Err(gettextrs::gettext(
-                "snapd is still busy with “{change}”. Try again once it has finished.",
-            )
-            .replace("{change}", change.summary()));
+            return Err(SetupError::Failed(
+                gettextrs::gettext(
+                    "snapd is still busy with “{change}”. Try again once it has finished.",
+                )
+                .replace("{change}", change.summary()),
+            ));
         }
         report(SetupStage::Waiting(change.progress()));
         (wait.sleep)(wait.interval).await;

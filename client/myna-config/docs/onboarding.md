@@ -175,14 +175,14 @@ of offering Install again. It is found in `/v2/changes?select=in-progress` as
 an unfinished `install-snap` change whose summary names the snap. Such a change failing only puts Install back, since it
 was not this window's action.
 
-Enable does not act yet.
-
 The subtitles size the download, in whole megabytes from 100 MB to 1 GB,
 where a decimal is noise. The app's is the store's size of the `myna`
 snap. The model's names the family and the size of what its install fetches:
 the snap and the int8 model, or, with an NVIDIA GPU, the CUDA runtime and the
 fp32 model, said as "up to" because the install hook falls back to the CPU
-engine when the GPU has no driver. The sizes are fixed per store revision in
+engine when the GPU has no driver. Once installed, that model's row names
+only the family: which engine the hook picked is not known, and "up to"
+reads wrong after the fact. The sizes are fixed per store revision in
 `onboarding.rs`, not read from the store.
 
 Installing may still happen elsewhere, so the component step re-assesses the
@@ -206,16 +206,42 @@ component.
 Leaving the component step makes a backend active and restarts the daemon, so
 the shortcut step finds dictation running. When a re-assessment finds the last
 missing component, the optional extension included, while the step shows,
-the step does this by itself: a
-spinner takes the footer status's place, then "All required components installed" shows
+the step does this by itself, then "All required components installed" shows
 for a second and the wizard moves on. Only that transition counts: opening the
 step with everything already installed waits for Next, so a re-run of the
 wizard does not rush past it, and a machine whose extension the wizard
 cannot install leaves the move to Next. Next during the pause moves on at once without
-setting up again; a failed setup shows the error dialog and leaves Next to
-retry. Both snaps share a publisher, so
+setting up again. Both snaps share a publisher, so
 snapd's base declaration auto-connects `myna:backend` to the new backend's
 slot and the step only restarts.
+
+Setting up ends once the restarted daemon has claimed
+`com.canonical.Myna.Dictation` again, a new owner of the name (0.4 s after
+`systemctl --user restart` returns on Noble), watched on the shortcut step's
+own proxy. Moving on as soon as the restart returned showed "Myna is not
+running yet" on arrival until the daemon was up. A daemon that has not
+claimed it after 10 s is left for the shortcut step to report.
+
+Setting up usually takes a fraction of a second (a restart), so for its
+first second the footer keeps "All required components installed" and only
+Next goes insensitive; a spinner that flashed past read as a glitch. Past
+that second a spinner and the stage below take the status's place, and the
+header's back arrow goes until setting up ends: leaving then would strand a
+connect or a restart in flight. The arrow stays through that first second,
+since hiding it flashed it the same way; Back then lets the setup finish
+without moving on.
+
+A failed setup leaves the step as it was, Next retrying, and says so in a
+toast whose Details open the report, as a failed install does: setting up
+may have started by itself, and a dialog to dismiss would hold up a user who
+only wants to go back or close. The report names the failed step (the
+`systemctl --user` restart, or snapd's connect request and its HTTP status).
+Dismissing the connect's polkit prompt is the user's answer, not a
+failure: the step stays silently and Next asks again. Either way, until a
+setup succeeds, a warning in the footer takes the check's place, "Dictation
+is not set up yet. Select Next to try again.", since the toast times out and
+the step would otherwise read as ready. The wizard's toasts rise above the
+footer, never over its status or Next.
 
 snapd shows that connection while the install change is still fetching the
 model, and mounts the backend into Myna's namespace only as the change's
@@ -270,15 +296,31 @@ caller's app id and grants one only through that dialog. The description
 (`Press <Super>j`) becomes key caps. Change shortcut opens
 `gnome-control-center applications myna_myna`: GlobalShortcuts 1 has no
 `ConfigureShortcuts` and no unbind. A refused bind shows the error dialog.
+The portal lists the binding under the name the daemon gives it,
+"Dictation (tap to start or stop)" (translated in `myna-desktop`). The portal
+files the grant by the shortcut id `dictate` and keeps the name it was granted
+with, so renaming it neither drops nor re-asks an existing grant (checked on
+resolute, both ways between the old and new name).
+
+The dialog belongs to the daemon, which owns the portal session, and is raised
+with no parent window: the wizard is another process with no handle to lend
+it. GNOME still centres it over the focused wizard and gives it focus
+(resolute, 2026-09-30). Until a key lands, the step keeps the key caps' height
+free, so the page does not move when it does.
 
 **Control (Noble).** The key is a GNOME custom shortcut to
 `/snap/bin/myna.toggle`, the entry `myna.install-shortcut` writes; this
 application is unconfined and writes it itself. Finishing setup installs
 Super+J without asking once the restarted daemon reports `control`, unless
 Myna's entry already has a key or another shortcut holds Super+J: a key the
-user chose is never replaced silently. Under the portal setup binds nothing,
-because only the portal's own dialog may, and the shortcut step's button
-raises it. Set Up installs Super+J;
+user chose is never replaced silently. Under the portal only the portal's own
+dialog grants a key, so arriving on the shortcut step with none bound raises
+it, offering Super+J, over the step it concerns; the brief's "set the default
+shortcut" cannot be silent there. A dialog dismissed there is the user's
+answer and is not reported, unlike one raised by the step's button. While
+no key is bound, Set up shortcut is the step's suggested action and Done is
+outlined, so finishing with nothing to trigger dictation is not the obvious
+path. Set Up installs Super+J;
 Change captures a key in a dialog that:
 
 - takes a chord with Ctrl, Alt or Super, or a lone function or media key, so

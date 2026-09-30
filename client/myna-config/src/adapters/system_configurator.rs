@@ -882,7 +882,23 @@ mod tests {
             crate::backend_ui::system_error_details(&error),
             "Request: PUT /v2/snaps/system/conf (experimental.user-daemons=true)\n\
              HTTP status: 401\n\
-             Message:\naccess denied"
+             Message: access denied"
+        );
+    }
+
+    #[test]
+    fn a_message_of_several_lines_starts_on_its_own() {
+        let error = snapd_error_to_system_error(
+            user_daemons_on_request(),
+            SnapdError::Transport {
+                message: "first\nsecond".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            crate::backend_ui::system_error_details(&error),
+            "Request: PUT /v2/snaps/system/conf (experimental.user-daemons=true)\n\
+             Message:\nsnapd transport error: first\nsecond"
         );
     }
 
@@ -898,7 +914,7 @@ mod tests {
         assert_eq!(
             crate::backend_ui::system_error_details(&error),
             "Request: PUT /v2/snaps/system/conf (experimental.user-daemons=true)\n\
-             Message:\nsnapd transport error: connection refused"
+             Message: snapd transport error: connection refused"
         );
     }
 
@@ -914,7 +930,7 @@ mod tests {
         assert_eq!(
             crate::backend_ui::system_error_details(&error),
             "Executable: pkexec\nArguments: snap restart\nExit status: 126\n\
-             Message:\nNot authorized"
+             Message: Not authorized"
         );
     }
 

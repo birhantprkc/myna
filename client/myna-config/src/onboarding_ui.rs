@@ -16,7 +16,7 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::active_backend::{ensure_backend_active, SetupStage, SnapdWait};
+use crate::active_backend::{ensure_backend_active, SetupError, SetupStage, SnapdWait};
 use crate::adapters::shell_extensions::GnomeShellExtensions;
 use crate::adapters::snap_backend::SnapBackendRepository;
 use crate::adapters::system_configurator::PkexecSystemConfigurator;
@@ -25,12 +25,13 @@ use crate::domain::BackendSurfaceError;
 use crate::onboarding::{
     assess, can_advance, completes, flag_enabled, installs, model_offer, needs_onboarding, polls,
     row_action, unlocked, while_installing, Component, ComponentId, ComponentState, Machine,
-    ModelOffer, RowAction, Step, Unavailable, MYNA_DOWNLOAD_BYTES, RECOMMENDED_BACKEND_SNAP,
-    SHELL_EXTENSION_UUID,
+    ModelOffer, ModelSize, RowAction, Step, Unavailable, MYNA_DOWNLOAD_BYTES,
+    RECOMMENDED_BACKEND_SNAP, SHELL_EXTENSION_UUID,
 };
 use crate::ports::{
     BackendRepository, ShellExtensions, SystemConfigurator, SystemConfiguratorError,
 };
+use crate::shortcut_ui::set_class;
 use crate::snap_changes::{pending_install, ApplyProgress};
 use crate::snap_install::{follow_change, install, Follow};
 use crate::ui;
@@ -44,6 +45,13 @@ const SNAPD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// How long "All required components installed" shows before the wizard moves on by
 /// itself.
 const BEAT: Duration = Duration::from_secs(1);
+/// How long setting up runs before its spinner shows. Restarting the daemon
+/// alone takes a fraction of this, and a spinner flashing past reads as a
+/// glitch.
+const SPINNER_DELAY: Duration = Duration::from_secs(1);
+/// How long setting up waits for the restarted daemon to claim its bus
+/// name, about 0.4 s on Noble, before moving on regardless.
+const DAEMON_START_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often an install's change is read for its progress.
 const FOLLOW_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -92,6 +100,11 @@ pub struct OnboardingUi {
     follow_interval: Cell<Duration>,
     stage: RefCell<Option<SetupStage>>,
     setup_cancellation: RefCell<Option<CancellationToken>>,
+    /// Setting up has run past [`SPINNER_DELAY`], so the footer says so.
+    setup_slow: Cell<bool>,
+    /// The last setup did not leave dictation running.
+    setup_failed: Cell<bool>,
+    spinner_timer: RefCell<Option<glib::SourceId>>,
     /// The last line logged, so a poll repeats none.
     logged: RefCell<String>,
     assessing: Cell<bool>,
@@ -195,6 +208,9 @@ impl OnboardingUi {
             follow_interval: Cell::new(FOLLOW_INTERVAL),
             stage: RefCell::default(),
             setup_cancellation: RefCell::default(),
+            setup_slow: Cell::new(false),
+            setup_failed: Cell::new(false),
+            spinner_timer: RefCell::default(),
             logged: RefCell::default(),
             assessing: Cell::new(false),
             poll_interval: Cell::new(POLL_INTERVAL),
@@ -204,6 +220,16 @@ impl OnboardingUi {
             finished: RefCell::new(Some(finished)),
         });
 
+        ui.shortcut.connect_changed(Box::new({
+            let ui = Rc::downgrade(&ui);
+            move || {
+                if let Some(ui) = ui.upgrade() {
+                    if ui.step.get() == Step::Shortcut {
+                        ui.render();
+                    }
+                }
+            }
+        }));
         // The switch turns the flag on and never off: snapd refuses Myna's
         // refreshes without it. Its state is only ever what snapd reports.
         components_page.flag_switch().connect_state_set({
@@ -615,8 +641,15 @@ impl OnboardingUi {
     }
 
     fn announce_failure(&self, heading: String, error: &SystemConfiguratorError) {
-        let summary = crate::backend_ui::system_failure_summary(error);
-        let details = crate::backend_ui::system_error_details(error);
+        self.toast_report(
+            heading,
+            crate::backend_ui::system_failure_summary(error),
+            crate::backend_ui::system_error_details(error),
+        );
+    }
+
+    /// A toast whose Details open the report.
+    fn toast_report(&self, heading: String, summary: String, details: String) {
         let toast = adw::Toast::builder()
             .title(crate::markup::escape_markup(&heading))
             .button_label(gettextrs::gettext("Details"))
@@ -634,15 +667,14 @@ impl OnboardingUi {
         // The gate lives here, not on the button: a step can also be advanced
         // by activating the button from the keyboard or a screen reader, and
         // an insensitive widget still emits `clicked` when told to.
-        if self.busy.get() || !can_advance(self.step.get(), &self.shown()) {
+        let step = self.step.get();
+        if (step == Step::Components && self.busy.get()) || !can_advance(step, &self.shown()) {
             return;
         }
         // Set up already; only the pause before moving on is left.
         if let Some(beat) = self.beat.take() {
             beat.remove();
-            self.window
-                .navigation()
-                .push_by_tag(step_name(Step::Shortcut));
+            self.move_on(Step::Shortcut);
             return;
         }
         match self.step.get().next() {
@@ -665,11 +697,25 @@ impl OnboardingUi {
         }
         let cancellation = CancellationToken::new();
         self.setup_cancellation.replace(Some(cancellation.clone()));
+        self.setup_slow.set(false);
+        self.setup_failed.set(false);
+        self.spinner_timer
+            .replace(Some(glib::timeout_add_local_once(SPINNER_DELAY, {
+                let ui = Rc::downgrade(self);
+                move || {
+                    if let Some(ui) = ui.upgrade() {
+                        ui.spinner_timer.take();
+                        ui.setup_slow.set(true);
+                        ui.render();
+                    }
+                }
+            })));
         self.render();
         let ui = Rc::downgrade(self);
         let repository = self.repository.clone();
         let configurator = self.configurator.clone();
         let interval = self.poll_interval.get();
+        let previous_owner = self.shortcut.owner().flatten();
         glib::spawn_future_local(async move {
             let sleep = |interval| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> {
                 Box::pin(glib::timeout_future(interval))
@@ -698,25 +744,37 @@ impl OnboardingUi {
                 &report,
             )
             .await;
+            if outcome.is_ok() {
+                wait_for_daemon(&ui, previous_owner).await;
+            }
             let Some(ui) = ui.upgrade() else {
                 return;
             };
             match &outcome {
                 Ok(()) => ui.log("setup: done"),
-                Err(message) => ui.log(&format!("setup: failed: {message}")),
+                Err(SetupError::Cancelled) => ui.log("setup: cancelled"),
+                Err(error) => ui.log(&format!("setup: failed: {error}")),
             }
             ui.setup_cancellation.take();
+            if let Some(timer) = ui.spinner_timer.take() {
+                timer.remove();
+            }
+            ui.setup_slow.set(false);
             ui.stage.take();
             ui.busy.set(false);
+            ui.setup_failed.set(outcome.is_err());
             ui.render();
-            if outcome.is_ok() {
-                ui.shortcut.install_default();
-            }
+            // Back during the first second leaves the setup to finish there.
+            let here = ui.step.get() == Step::Components;
             match outcome {
+                Ok(()) if !here => {}
                 Ok(()) if pause => ui.pause_before(next),
-                Ok(()) => ui.window.navigation().push_by_tag(step_name(next)),
-                Err(message) => {
-                    ui.report_failure(&gettextrs::gettext("Could not set up dictation"), &message)
+                Ok(()) => ui.move_on(next),
+                // Dismissing the prompt was the user's answer; Next asks again.
+                Err(SetupError::Cancelled) => {}
+                Err(SetupError::Failed(message)) => ui.announce_setup_failure(message),
+                Err(SetupError::Step(error)) => {
+                    ui.announce_failure(gettextrs::gettext("Could not set up Dictation"), &error)
                 }
             }
         });
@@ -730,9 +788,17 @@ impl OnboardingUi {
                 return;
             };
             ui.beat.take();
-            ui.window.navigation().push_by_tag(step_name(next));
+            ui.move_on(next);
         });
         self.beat.replace(Some(beat));
+    }
+
+    /// Show the shortcut step, setting the default key as it arrives: the
+    /// portal's dialog, when that is how, then shows over the step it
+    /// concerns.
+    fn move_on(&self, next: Step) {
+        self.window.navigation().push_by_tag(step_name(next));
+        self.shortcut.install_default();
     }
 
     /// The probe polls and pauses shorter than a person needs.
@@ -767,8 +833,11 @@ impl OnboardingUi {
 
         self.window.set_title(Some(&step_title(step)));
         // Setting up restarts the daemon; leaving mid-way would strand it.
+        // Before the spinner shows the arrow stays: hiding it for a
+        // fraction of a second flashed it.
+        let setting_up = step == Step::Components && self.busy.get() && self.setup_slow.get();
         if let Some(page) = self.window.navigation().visible_page() {
-            page.set_can_pop(!self.busy.get());
+            page.set_can_pop(!setting_up);
         }
 
         self.render_components(&components);
@@ -779,11 +848,14 @@ impl OnboardingUi {
             forward.add_css_class("outlined");
         } else {
             forward.set_label(&gettextrs::gettext("Done"));
-            forward.remove_css_class("outlined");
-            forward.add_css_class("suggested-action");
+            // Done gives way to setting up the key while there is none.
+            let main = !self.shortcut.needs_key();
+            set_class(&forward, "suggested-action", main);
+            set_class(&forward, "outlined", !main);
         }
-        forward.set_sensitive(!self.busy.get() && can_advance(step, &components));
-        let setting_up = step == Step::Components && self.busy.get();
+        forward.set_sensitive(
+            !(step == Step::Components && self.busy.get()) && can_advance(step, &components),
+        );
         let spinner = self.window.setup_spinner();
         spinner.set_visible(setting_up);
         spinner.set_spinning(setting_up);
@@ -797,9 +869,12 @@ impl OnboardingUi {
         let label = self.window.setup_status();
         label.set_visible(status.is_some());
         label.set_label(status.as_deref().unwrap_or_default());
+        let ready = step == Step::Components && !setting_up && !needs_onboarding(&components);
+        let failed = self.setup_failed.get() && !self.busy.get();
+        self.window.installed_status().set_visible(ready && !failed);
         self.window
-            .installed_status()
-            .set_visible(step == Step::Components && !setting_up && !needs_onboarding(&components));
+            .setup_failed_status()
+            .set_visible(ready && failed);
         self.watch(!self.busy.get() && polls(step, &components));
         // Going back during the pause stays back.
         if step != Step::Components {
@@ -897,15 +972,22 @@ impl OnboardingUi {
             (ComponentId::Model, _) => {
                 let offer = self.offer.get();
                 let name = crate::model_family::model_family(offer.snap()).name;
-                let size = download_size(offer.download_bytes);
-                let frame = if offer.upper_bound {
-                    // TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "4.2 GB".
-                    gettextrs::gettext("{model} · up to {size}")
-                } else {
-                    // TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "776 MB".
-                    gettextrs::gettext("{model} · {size}")
+                let (frame, bytes) = match offer.size(action == RowAction::Installed) {
+                    ModelSize::Exact(bytes) => (
+                        // TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "776 MB".
+                        gettextrs::gettext("{model} · {size}"),
+                        bytes,
+                    ),
+                    ModelSize::UpTo(bytes) => (
+                        // TRANSLATORS: {model} is a model family, such as "Parakeet", and {size} a download size such as "4.2 GB".
+                        gettextrs::gettext("{model} · up to {size}"),
+                        bytes,
+                    ),
+                    ModelSize::Unknown => return name.to_string(),
                 };
-                frame.replace("{model}", &name).replace("{size}", &size)
+                frame
+                    .replace("{model}", &name)
+                    .replace("{size}", &download_size(bytes))
             }
             (_, RowAction::Unavailable(Unavailable::NeedsRelogin)) => gettextrs::gettext(
                 "Log out and back in to use it. Until then, Dictation shows its status in notifications.",
@@ -955,17 +1037,55 @@ impl OnboardingUi {
         }
     }
 
-    fn report_failure(self: &Rc<Self>, title: &str, details: &str) {
-        let dialog = ui::OperationErrorDialog::new(title, title, details);
-        dialog.present(Some(&self.window));
+    /// A toast rather than a dialog: setting up may have started by itself,
+    /// and the step stays usable, Next retrying.
+    fn announce_setup_failure(&self, message: String) {
+        let heading = gettextrs::gettext("Could not set up Dictation");
+        self.toast_report(heading.clone(), heading, message);
     }
 }
 
 impl Drop for OnboardingUi {
     fn drop(&mut self) {
-        for source in [self.poll.take(), self.beat.take()].into_iter().flatten() {
+        for source in [
+            self.poll.take(),
+            self.beat.take(),
+            self.spinner_timer.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
             source.remove();
         }
+    }
+}
+
+/// Wait for the restarted daemon, a new owner of its name, so the shortcut
+/// step arrives showing the key rather than "not running". A daemon that does
+/// not start in time is left for that step to show.
+async fn wait_for_daemon(ui: &std::rc::Weak<OnboardingUi>, previous: Option<String>) {
+    let mut waited = Duration::ZERO;
+    loop {
+        let Some(strong) = ui.upgrade() else {
+            return;
+        };
+        // Closing the wizard takes the cancellation.
+        if strong.setup_cancellation.borrow().is_none() {
+            return;
+        }
+        match strong.shortcut.owner() {
+            None => return,
+            Some(Some(owner)) if Some(&owner) != previous.as_ref() => return,
+            Some(_) => {}
+        }
+        if waited >= DAEMON_START_TIMEOUT {
+            strong.log("setup: the daemon did not claim its name in time");
+            return;
+        }
+        drop(strong);
+        let interval = Duration::from_millis(100);
+        glib::timeout_future(interval).await;
+        waited += interval;
     }
 }
 
@@ -1127,7 +1247,7 @@ fn stage_text(stage: &SetupStage) -> String {
         }
         SetupStage::Connecting(snap) => {
             // TRANSLATORS: {model} is a model family, such as "Parakeet".
-            let frame = gettextrs::gettext("Connecting {model}. Authorize it if asked.");
+            let frame = gettextrs::gettext("Setting up {model}…");
             frame.replace("{model}", &crate::model_family::model_family(snap).name)
         }
         SetupStage::Restarting => gettextrs::gettext("Starting dictation…"),

@@ -69,8 +69,11 @@ pub enum DefaultKey {
     Wait,
     /// Install [`DEFAULT_ACCELERATOR`] as the desktop shortcut.
     Install,
-    /// Leave the key alone: the portal binds only through its own dialog,
-    /// and a key the user already has, or one another shortcut holds, is theirs.
+    /// Ask the daemon to raise the portal's dialog, the only way to grant a
+    /// portal key.
+    Bind,
+    /// Leave the key alone: a key the user already has, or one another
+    /// shortcut holds, is theirs.
     Leave,
 }
 
@@ -80,6 +83,7 @@ pub fn default_key(activation: Option<&str>, state: &ShortcutState, available: b
     match (activation, state) {
         (_, ShortcutState::NotRunning) | (None | Some(""), _) => DefaultKey::Wait,
         (Some("control"), ShortcutState::Unbound) if available => DefaultKey::Install,
+        (Some("portal"), ShortcutState::Unbound) => DefaultKey::Bind,
         _ => DefaultKey::Leave,
     }
 }
