@@ -89,8 +89,15 @@ def row_key(record: Record) -> RowKey:
     return machine_of(record), record["label"]
 
 
-def _load_latest(path: Path) -> tuple[list[Record], dict[RowKey, tuple[str, str]]]:
+def _load_latest(
+    path: Path, *, keep_errors: bool = False
+) -> tuple[list[Record], dict[RowKey, tuple[str, str]]]:
     """Return (clip records, {(machine, label): (status, reason)}), last wins.
+
+    ``keep_errors`` also returns rows whose backend errored, for a reader that
+    reports them as failed requests. An error never replaces a success: each
+    key keeps its last successful row, which every aggregate scores, and its
+    last error only when no success came after it.
 
     Cold samples and each repeat are keyed separately, so a clip measured cold,
     warm and in several passes keeps every row. Warmup rows are dropped here,
@@ -109,6 +116,7 @@ def _load_latest(path: Path) -> tuple[list[Record], dict[RowKey, tuple[str, str]
     if not path.exists():
         raise SystemExit(f"no results at {path}")
     latest: dict[tuple[str, str, str, int, str], Record] = {}
+    errors: dict[tuple[str, str, str, int, str], Record] = {}
     statuses: dict[RowKey, tuple[str, str]] = {}
     for raw in path.read_text(encoding="utf-8").splitlines():
         raw = raw.strip()
@@ -120,17 +128,21 @@ def _load_latest(path: Path) -> tuple[list[Record], dict[RowKey, tuple[str, str]
         if "status" in rec and "clip" not in rec:
             statuses[row_key(rec)] = (rec["status"], rec.get("reason", ""))
             continue
-        if rec.get("error"):
-            # The backend errored instead of transcribing (missing runtime
-            # library, unloadable weights). Its empty hypothesis would score as
-            # a flawless 100% WER and drag the label's micro-average with it.
-            continue
         phase = rec.get("phase") or (COLD if rec.get("cold", False) else MEASURED)
         if phase == WARMUP:
             continue
         machine, label = row_key(rec)
-        latest[(machine, label, rec["clip"], int(rec.get("repeat") or 0), phase)] = rec
-    return list(latest.values()), statuses
+        key = (machine, label, rec["clip"], int(rec.get("repeat") or 0), phase)
+        if rec.get("error"):
+            # The backend errored instead of transcribing (missing runtime
+            # library, unloadable weights). Its empty hypothesis would score as
+            # a flawless 100% WER and drag the label's micro-average with it.
+            if keep_errors:
+                errors[key] = rec
+            continue
+        errors.pop(key, None)
+        latest[key] = rec
+    return [*latest.values(), *errors.values()], statuses
 
 
 def one_machine_per_name(records: list[Record]) -> None:

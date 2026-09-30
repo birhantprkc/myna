@@ -47,6 +47,11 @@ benchmarker = [
     "psutil>=5",
     "pyyaml>=6",
 ]
+# `myna-bench export --parquet` only. Not in the pyz (it would grow it by
+# ~150 MB); a host without it gets told to install python3-pyarrow.
+parquet = [
+    "pyarrow>=22",
+]
 
 [project.scripts]
 myna-server = "myna.server.cli:main"
@@ -59,6 +64,7 @@ dev = [
     "hypothesis>=6",
     "pyyaml>=6",   # myna-bench run config
     "psutil>=5",   # myna-bench run peak RSS/VRAM sampling
+    "pyarrow>=22", # myna-bench export --parquet
     # Quality gates (feature 006): patch-coverage gate, lint, scoped types,
     # dead-code scan, scheduled lockfile audit.
     "diff-cover>=9",
@@ -156,6 +162,7 @@ module = [
     "funasr_onnx.*",
     "huggingface_hub.*",
     "onnxruntime.*",
+    "pyarrow.*",
     "soundfile.*",
     "tracy_client.*",
 ]

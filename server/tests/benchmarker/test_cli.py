@@ -36,6 +36,7 @@ def dispatched(monkeypatch):
         ("myna.benchmarker._corpus", "cmd_make", "make-corpus"),
         ("myna.benchmarker._summarize", "cmd_summarize", "summarize"),
         ("myna.benchmarker._summarize", "cmd_compare", "compare"),
+        ("myna.benchmarker._parquet", "cmd_export", "export"),
         ("myna.benchmarker.guard", "cmd_check", "check"),
     ]:
         monkeypatch.setattr(f"{module}.{attr}", capture(name))
@@ -68,6 +69,25 @@ def test_make_corpus_dispatches_to_the_manifest_builder(monkeypatch, dispatched)
 def test_summarize_dispatches_to_the_aggregator(monkeypatch, dispatched):
     run_cli(monkeypatch, "summarize")
     assert dispatched["command"] == "summarize"
+
+
+def test_export_dispatches_to_the_parquet_writer(monkeypatch, dispatched):
+    run_cli(monkeypatch, "export", "--parquet", "out")
+    assert dispatched["command"] == "export"
+    assert dispatched["args"].parquet == "out"
+    assert dispatched["args"].infile == "results.jsonl"
+
+
+def test_export_computes_intervals_unless_told_not_to(monkeypatch, dispatched):
+    run_cli(monkeypatch, "export", "--parquet", "out")
+    assert dispatched["args"].ci is True
+    run_cli(monkeypatch, "export", "--parquet", "out", "--no-ci")
+    assert dispatched["args"].ci is False
+
+
+def test_export_needs_a_destination(monkeypatch, dispatched):
+    with pytest.raises(SystemExit):
+        run_cli(monkeypatch, "export")
 
 
 def test_plan_dispatches_to_the_planner(monkeypatch, dispatched):

@@ -326,6 +326,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--corpus", help="corpus id to compare on; required when the file holds more than one"
     )
 
+    # -- export ------------------------------------------------------------
+    p_exp = sub.add_parser(
+        "export",
+        help="write a results file as AIB-shaped Parquet",
+        description=(
+            "Write each cell of a results file (one label on one machine, every\n"
+            "repeat) as an ai-inference-benchmark unit: <unit>.parquet (summary with\n"
+            "95%% intervals), <unit>.samples.parquet (one row per clip run) and\n"
+            "<unit>.load.parquet (the telemetry trace). The unit id hashes what ran,\n"
+            "how it was scored and the environment. Needs pyarrow: pip install it in a\n"
+            "venv (python3-pyarrow is packaged only from Ubuntu 26.04)."
+        ),
+    )
+    p_exp.add_argument("--parquet", required=True, help="directory to write the units into")
+    p_exp.add_argument("--in", dest="infile", default="results.jsonl", help="results JSONL to read")
+    p_exp.add_argument(
+        "--ci",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="compute 95%% clip-bootstrap intervals (default: on; needs numpy)",
+    )
+
     # -- merge -------------------------------------------------------------
     p_merge = sub.add_parser(
         "merge",
@@ -420,6 +442,10 @@ def main() -> None:
         from myna.benchmarker._summarize import cmd_compare
 
         cmd_compare(args)
+    elif args.command == "export":
+        from myna.benchmarker._parquet import cmd_export
+
+        cmd_export(args)
     elif args.command == "merge":
         from myna.benchmarker._summarize import cmd_merge
 

@@ -21,7 +21,9 @@
 # light because the package leans only on myna.core (websockets), myna.testbed
 # (stdlib) and myna.server.lifecycle (stdlib): no torch, no onnxruntime.
 # The one exception is summarize's confidence intervals, which import the
-# host's numpy (python3-numpy) and are skipped with --no-ci.
+# host's numpy (python3-numpy) and are skipped with --no-ci, and `export
+# --parquet`, which imports pyarrow: pip install it in a venv and run the pyz
+# with that python (python3-pyarrow is packaged only from Ubuntu 26.04).
 #
 # Run with sudo for the ``run`` subcommand (snap install/remove). Everything
 # else (plan, bench, download-corpus, make-corpus, summarize, check) is
