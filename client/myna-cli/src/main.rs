@@ -189,10 +189,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     })
 }
 
+/// The socket to use; on failure, the translated headline and, on the next
+/// line, the untranslated detail naming where it looked.
 fn resolve_socket(backend: &BackendSocket) -> Result<PathBuf, String> {
     let provider = backend.resolve().map_err(|e| match backend {
-        BackendSocket::Search(dir) => format!("{}: {e}", dir.display()),
-        BackendSocket::Fixed(_) => e.to_string(),
+        BackendSocket::Search(dir) => format!("{}\n{}: {e}", e.headline(), dir.display()),
+        BackendSocket::Fixed(_) => format!("{}\n{e}", e.headline()),
     })?;
     Ok(provider.socket)
 }
@@ -537,12 +539,12 @@ async fn dictate_clips<B: BackendClient>(backend: B, args: &Args) -> ExitCode {
         match outcome {
             Ok(SessionOutcome::Completed { .. }) => {} // StdoutSink already printed it
             Ok(SessionOutcome::Aborted) => println!("  (aborted)"),
-            Ok(SessionOutcome::Failed { code, message }) => {
-                eprintln!("✗ session failed [{code}]: {message}");
+            Ok(SessionOutcome::Failed { code, failure }) => {
+                eprintln!("✗ {} [{code}]\n  {}", failure.headline, failure.detail);
                 exit = ExitCode::FAILURE;
             }
             Err(e) => {
-                eprintln!("✗ could not open session: {e}");
+                eprintln!("✗ {}\n  could not open session: {e}", e.headline());
                 exit = ExitCode::FAILURE;
             }
         }
@@ -619,14 +621,14 @@ async fn dictate_mic<B: BackendClient>(backend: B, args: &Args) -> ExitCode {
         match outcome {
             Ok(SessionOutcome::Completed { .. }) => {} // StdoutSink already printed it
             Ok(SessionOutcome::Aborted) => println!("  (aborted)"),
-            Ok(SessionOutcome::Failed { code, message }) if code == "capture_failed" => {
-                eprintln!("✗ audio capture failed: {message}");
+            Ok(SessionOutcome::Failed { code, failure }) if code == "capture_failed" => {
+                eprintln!("✗ {}\n  {}", failure.headline, failure.detail);
                 eprintln!("  (no mic? check `wpctl status` lists an Audio Source, or pass --target <node.name>)");
             }
-            Ok(SessionOutcome::Failed { code, message }) => {
-                eprintln!("✗ session failed [{code}]: {message}");
+            Ok(SessionOutcome::Failed { code, failure }) => {
+                eprintln!("✗ {} [{code}]\n  {}", failure.headline, failure.detail);
             }
-            Err(e) => eprintln!("✗ could not open session: {e}"),
+            Err(e) => eprintln!("✗ {}\n  could not open session: {e}", e.headline()),
         }
 
         // The T51 acceptance readout: how much the mic captured.
@@ -728,8 +730,10 @@ mod tests {
     fn a_failed_search_names_the_directory() {
         let dir = PathBuf::from("/nonexistent/share");
         let err = resolve_socket(&BackendSocket::Search(dir)).unwrap_err();
+        let (headline, detail) = err.split_once('\n').expect("two lines");
+        assert_eq!(headline, "Model not connected");
         assert!(
-            err.starts_with("/nonexistent/share: no backend is connected"),
+            detail.starts_with("/nonexistent/share: no backend is connected"),
             "{err}"
         );
     }

@@ -6,3 +6,4 @@
 #     --output=po/myna-orchestrator.pot --files-from=po/POTFILES.in
 src/backend/mod.rs
 src/backend/share.rs
+src/failure.rs

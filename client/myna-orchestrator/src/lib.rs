@@ -28,6 +28,7 @@
 pub mod audio;
 pub mod backend;
 pub mod driver;
+pub mod failure;
 pub mod fsm;
 pub mod i18n;
 pub mod runner;
@@ -43,6 +44,7 @@ pub use backend::{
     BackendClient, BackendError, BackendEvents, BackendHandle, BackendSink, Outbound,
 };
 pub use driver::{run_session, OrchestratorControl, OrchestratorInput, BACKEND_PROGRESS_TIMEOUT};
+pub use failure::Failure;
 pub use fsm::{
     Action, Fsm, FsmState, Input, OrchestratorEvent, Residency, SessionOutcome, SessionState,
 };

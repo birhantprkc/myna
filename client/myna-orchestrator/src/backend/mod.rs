@@ -51,11 +51,13 @@ pub enum Outbound {
 
 /// Failure interacting with the backend.
 ///
-/// `Display` renders user-visible messages through this crate's gettext domain
-/// ([`crate::i18n`]); with no .mo installed it is the identity, so the English
-/// strings below double as the source templates for translation.
+/// [`BackendError::headline`] is what the user is told, translated through
+/// this crate's gettext domain ([`crate::i18n`]); `Display` is the untranslated
+/// detail for logs and Diagnostics.
 #[derive(Debug)]
 pub enum BackendError {
+    /// No single backend socket could be named (see [`share::resolve`]).
+    Resolve(share::ResolveError),
     Connect(String),
     Handshake(String),
     /// The backend refused the session with a terminal error during the
@@ -69,36 +71,51 @@ pub enum BackendError {
     Transport(String),
 }
 
+impl BackendError {
+    /// The short, translated message the user sees.
+    pub fn headline(&self) -> String {
+        match self {
+            BackendError::Resolve(e) => e.headline(),
+            BackendError::Connect(_) => tr("Model not reachable"),
+            BackendError::Handshake(_) => crate::failure::model_not_responding(),
+            BackendError::Rejected { code, .. } if code == "unsupported_protocol_version" => {
+                tr("Model not compatible")
+            }
+            BackendError::Rejected { .. } | BackendError::Wire(_) => tr("Model error"),
+            BackendError::Closed => tr("Model stopped"),
+            BackendError::Transport(_) => crate::failure::model_connection_lost(),
+        }
+    }
+
+    /// The headline and the detail, as one [`Failure`](crate::failure::Failure).
+    pub fn failure(&self) -> crate::failure::Failure {
+        crate::failure::Failure::new(self.headline(), self.to_string())
+    }
+}
+
 impl fmt::Display for BackendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BackendError::Connect(inner) => {
-                write!(f, "{}", tr("cannot reach backend: %s").replace("%s", inner))
+            BackendError::Resolve(e) => write!(f, "{e}"),
+            BackendError::Connect(inner) => write!(f, "cannot reach backend: {inner}"),
+            BackendError::Handshake(inner) => write!(f, "handshake failed: {inner}"),
+            BackendError::Rejected { code, message } => {
+                write!(f, "session rejected: {code}: {message}")
             }
-            BackendError::Handshake(inner) => {
-                write!(f, "{}", tr("handshake failed: %s").replace("%s", inner))
-            }
-            BackendError::Rejected { code, message } => write!(
-                f,
-                "{}",
-                tr("session rejected: %1$s: %2$s")
-                    .replace("%1$s", code)
-                    .replace("%2$s", message)
-            ),
-            BackendError::Wire(e) => write!(
-                f,
-                "{}",
-                tr("malformed event from backend: %s").replace("%s", &e.to_string())
-            ),
-            BackendError::Closed => write!(f, "{}", tr("backend connection closed unexpectedly")),
-            BackendError::Transport(inner) => {
-                write!(f, "{}", tr("transport error: %s").replace("%s", inner))
-            }
+            BackendError::Wire(e) => write!(f, "malformed event from backend: {e}"),
+            BackendError::Closed => write!(f, "backend connection closed unexpectedly"),
+            BackendError::Transport(inner) => write!(f, "transport error: {inner}"),
         }
     }
 }
 
 impl std::error::Error for BackendError {}
+
+impl From<share::ResolveError> for BackendError {
+    fn from(e: share::ResolveError) -> Self {
+        BackendError::Resolve(e)
+    }
+}
 
 impl From<WireError> for BackendError {
     fn from(e: WireError) -> Self {
@@ -263,12 +280,11 @@ impl BackendHandle {
 
 #[cfg(test)]
 mod tests {
+    use super::share::{ResolveError, Unusable};
     use super::BackendError;
 
-    // With no catalog installed the domain is the identity, so the rendered
-    // message is the English template with its placeholders filled.
     #[test]
-    fn errors_render_their_messages_with_placeholders_filled() {
+    fn errors_render_their_details_untranslated() {
         assert_eq!(
             BackendError::Connect("no socket".into()).to_string(),
             "cannot reach backend: no socket"
@@ -293,5 +309,46 @@ mod tests {
             BackendError::Transport("reset".into()).to_string(),
             "transport error: reset"
         );
+        let resolve = ResolveError::Ambiguous(vec!["a".into(), "b".into()]);
+        let detail = resolve.to_string();
+        assert_eq!(BackendError::from(resolve).to_string(), detail);
+    }
+
+    #[test]
+    fn every_error_has_its_headline() {
+        let cases = [
+            (
+                BackendError::Resolve(ResolveError::NotConnected(Unusable::default())),
+                "Model not connected",
+            ),
+            (BackendError::Connect("x".into()), "Model not reachable"),
+            (BackendError::Handshake("x".into()), "Model not responding"),
+            (
+                BackendError::Rejected {
+                    code: "unsupported_protocol_version".into(),
+                    message: "want 2".into(),
+                },
+                "Model not compatible",
+            ),
+            (
+                BackendError::Rejected {
+                    code: "busy".into(),
+                    message: "x".into(),
+                },
+                "Model error",
+            ),
+            (
+                BackendError::Wire(myna_core::WireError::NotAnEvent),
+                "Model error",
+            ),
+            (BackendError::Closed, "Model stopped"),
+            (BackendError::Transport("x".into()), "Model connection lost"),
+        ];
+        for (error, headline) in cases {
+            assert_eq!(error.headline(), headline, "{error:?}");
+            let failure = error.failure();
+            assert_eq!(failure.headline, headline);
+            assert_eq!(failure.detail, error.to_string());
+        }
     }
 }

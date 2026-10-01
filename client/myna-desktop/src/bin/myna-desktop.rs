@@ -668,7 +668,7 @@ fn make_session(
 /// state between `snap install myna` and the first `snap connect`, and it is a
 /// state the user fixes without touching the daemon.
 fn no_backend(e: ResolveError) -> Session {
-    let run: SessionRun = Box::pin(async move { Err(BackendError::Connect(e.to_string())) });
+    let run: SessionRun = Box::pin(async move { Err(BackendError::Resolve(e)) });
     (run, StopHandle::default()).into()
 }
 
@@ -1719,7 +1719,7 @@ mod tests {
             &msgfmt,
             &base.join("po"),
             myna_orchestrator::i18n::GETTEXT_DOMAIN,
-            &[("cannot reach backend: %s", "IT-REACH: %s")],
+            &[("Model not reachable", "IT-REACH")],
         ) {
             eprintln!("skipping: msgfmt could not compile the catalogs");
             return;
@@ -1760,8 +1760,8 @@ mod tests {
             "the desktop domain inits last, so plain gettext() hits its catalog"
         );
         assert_eq!(
-            myna_orchestrator::i18n::tr("cannot reach backend: %s"),
-            "IT-REACH: %s",
+            myna_orchestrator::i18n::tr("Model not reachable"),
+            "IT-REACH",
             "the orchestrator catalog is reached through the same data dirs"
         );
 

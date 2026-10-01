@@ -36,13 +36,16 @@ impl TextSink for StdoutSink {
                 println!("✓ (no speech detected)");
             }
             OrchestratorEvent::Done(text) => println!("✓ {text}"),
-            OrchestratorEvent::CaptureLost { message } => {
+            OrchestratorEvent::CaptureLost { fault } => {
                 // Not the failure itself: the utterance is being finished with
                 // the audio captured before it, and the error follows the text.
-                eprintln!("⚠ {message} - finishing with what was captured");
+                eprintln!(
+                    "⚠ {}: {} - finishing with what was captured",
+                    fault.headline, fault.detail
+                );
             }
-            OrchestratorEvent::Error { code, message } => {
-                eprintln!("✗ [{code}] {message}");
+            OrchestratorEvent::Error { code, failure } => {
+                eprintln!("✗ {} [{code}]: {}", failure.headline, failure.detail);
             }
             OrchestratorEvent::AudioDropped => {
                 eprintln!("  (dropped audio: session not accepting audio)");

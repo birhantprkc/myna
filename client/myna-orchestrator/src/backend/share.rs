@@ -50,9 +50,9 @@ impl Unusable {
 
 /// Why no single backend socket could be named.
 ///
-/// `Display` renders user-facing messages through this crate's gettext domain;
-/// with no .mo installed it is the identity, so the strings below double as
-/// the source templates for translation.
+/// [`ResolveError::headline`] is what the user is told, translated through
+/// this crate's gettext domain; `Display` is the untranslated detail, which
+/// names the snaps involved and the command that fixes it.
 #[derive(Debug)]
 pub enum ResolveError {
     /// No usable backend is connected; carries what was connected instead.
@@ -63,45 +63,52 @@ pub enum ResolveError {
     Ambiguous(Vec<String>),
 }
 
+impl ResolveError {
+    /// The short, translated message the user sees. With several unusable
+    /// shares, the most likely and most fixable cause wins: an installed model
+    /// whose server is down, then one that cannot serve dictation at all.
+    pub fn headline(&self) -> String {
+        match self {
+            ResolveError::NotConnected(unusable) if unusable.is_empty() => {
+                tr("Model not connected")
+            }
+            ResolveError::NotConnected(unusable) if !unusable.not_serving.is_empty() => {
+                tr("Model not running")
+            }
+            ResolveError::NotConnected(_) => tr("Model not compatible"),
+            ResolveError::Ambiguous(_) => tr("Several models connected"),
+        }
+    }
+}
+
 impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ResolveError::NotConnected(unusable) if unusable.is_empty() => write!(
                 f,
-                "{}",
-                tr(
-                    "no backend is connected - install one and connect it, e.g. `sudo snap connect myna:backend myna-whisper`"
-                )
+                "no backend is connected - install one and connect it, e.g. `sudo snap connect myna:backend myna-whisper`"
             ),
             ResolveError::NotConnected(unusable) => {
                 let mut parts = Vec::new();
                 for name in &unusable.no_unix_socket {
-                    parts.push(
-                        tr("%s is connected but offers no Unix socket").replace("%s", name),
-                    );
+                    parts.push(format!("{name} is connected but offers no Unix socket"));
                 }
                 for name in &unusable.not_serving {
-                    parts.push(
-                        tr("%s is connected but its server is not running")
-                            .replace("%s", name),
-                    );
+                    parts.push(format!("{name} is connected but its server is not running"));
                 }
                 if unusable.malformed > 0 {
-                    parts.push(
-                        tr("connected shares with an unreadable provider.env: %s")
-                            .replace("%s", &unusable.malformed.to_string()),
-                    );
+                    parts.push(format!(
+                        "connected shares with an unreadable provider.env: {}",
+                        unusable.malformed
+                    ));
                 }
                 write!(f, "{}", parts.join("; "))
             }
             ResolveError::Ambiguous(names) => write!(
                 f,
-                "{}",
-                tr(
-                    "%1$s backends are connected (%2$s); disconnect all but one (`snap connections myna`)"
-                )
-                .replace("%1$s", &names.len().to_string())
-                .replace("%2$s", &names.join(", "))
+                "{} backends are connected ({}); disconnect all but one (`snap connections myna`)",
+                names.len(),
+                names.join(", ")
             ),
         }
     }
@@ -493,10 +500,47 @@ mod tests {
     }
 
     #[test]
-    fn no_backend_message_is_the_install_hint() {
-        assert!(ResolveError::NotConnected(Unusable::default())
+    fn no_backend_detail_is_the_install_hint() {
+        let err = ResolveError::NotConnected(Unusable::default());
+        assert_eq!(err.headline(), "Model not connected");
+        assert!(err
             .to_string()
             .starts_with("no backend is connected - install one"));
+    }
+
+    /// One headline for any mix of unusable shares: a model whose server is
+    /// down beats one that cannot serve, and the detail keeps every cause.
+    #[test]
+    fn unusable_shares_are_headlined_by_the_most_fixable_cause() {
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let cases = [
+            (names(&["a"]), names(&[]), 0, "Model not compatible"),
+            (names(&[]), names(&["b"]), 0, "Model not running"),
+            (names(&[]), names(&[]), 1, "Model not compatible"),
+            (names(&["a"]), names(&["b"]), 0, "Model not running"),
+            (names(&["a"]), names(&[]), 2, "Model not compatible"),
+            (names(&[]), names(&["b"]), 3, "Model not running"),
+            (names(&["a"]), names(&["b"]), 1, "Model not running"),
+        ];
+        for (no_unix_socket, not_serving, malformed, headline) in cases {
+            let err = ResolveError::NotConnected(Unusable {
+                no_unix_socket: no_unix_socket.clone(),
+                not_serving: not_serving.clone(),
+                malformed,
+            });
+            assert_eq!(err.headline(), headline, "{err:?}");
+            let detail = err.to_string();
+            for name in no_unix_socket.iter().chain(&not_serving) {
+                assert!(detail.contains(name.as_str()), "{detail}");
+            }
+            assert_eq!(detail.contains("provider.env"), malformed > 0, "{detail}");
+        }
+    }
+
+    #[test]
+    fn several_models_are_headlined_as_such() {
+        let err = ResolveError::Ambiguous(vec!["a".into(), "b".into()]);
+        assert_eq!(err.headline(), "Several models connected");
     }
 
     #[test]

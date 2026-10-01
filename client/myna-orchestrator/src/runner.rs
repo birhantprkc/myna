@@ -21,6 +21,7 @@ use tokio::sync::mpsc;
 use crate::audio::AudioSource;
 use crate::backend::{BackendClient, BackendError};
 use crate::driver::{run_session, OrchestratorControl, OrchestratorInput};
+use crate::failure::Failure;
 use crate::fsm::SessionOutcome;
 use crate::sink::TextSink;
 use crate::task::TaskGuard;
@@ -85,14 +86,6 @@ where
     // The session is terminal; whatever capture still holds is not wanted.
     capture.cancel().await;
     outcome
-}
-
-/// What the user is told about a fault the utterance was salvaged from. A
-/// salvage always lost the audio from the fault onwards - the rest of what the
-/// user was saying into a dead device, or the speech an overloaded buffer
-/// refused - so the message says so instead of reading like a clean end.
-fn lost_message(fault: &CaptureError) -> String {
-    format!("some audio was lost: {fault}")
 }
 
 /// Capture from the press: move audio into `audio` as fast as the driver takes
@@ -185,9 +178,13 @@ async fn pump_capture<S: AudioSource>(
             if let Some(err) = &fault {
                 reported = true;
                 ended = true;
-                let message = lost_message(err);
+                // A salvage always lost the audio from the fault onwards - the
+                // rest of what the user was saying into a dead device, or the
+                // speech an overloaded buffer refused - so it says so instead
+                // of reading like a clean end.
+                let fault = Failure::audio_lost(err);
                 let _ = control
-                    .send(OrchestratorControl::CaptureLost { message })
+                    .send(OrchestratorControl::CaptureLost { fault })
                     .await;
             }
         }
@@ -198,9 +195,9 @@ async fn pump_capture<S: AudioSource>(
         if !stream_open && pending.is_none() {
             match fault.take() {
                 Some(err) if !accepted => {
-                    let message = err.to_string();
+                    let fault = Failure::capture(&err);
                     let _ = control
-                        .send(OrchestratorControl::CaptureFailed { message })
+                        .send(OrchestratorControl::CaptureFailed { fault })
                         .await;
                     return;
                 }

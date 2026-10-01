@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-28 20:43+0100\n"
+"POT-Creation-Date: 2026-10-01 02:04+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,59 +17,62 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/backend/mod.rs:76
-#, c-format
-msgid "cannot reach backend: %s"
+#: src/backend/mod.rs:79
+msgid "Model not reachable"
 msgstr ""
 
-#: src/backend/mod.rs:79
-#, c-format
-msgid "handshake failed: %s"
+#: src/backend/mod.rs:82 src/backend/share.rs:78
+msgid "Model not compatible"
 msgstr ""
 
 #: src/backend/mod.rs:84
-#, c-format
-msgid "session rejected: %1$s: %2$s"
+msgid "Model error"
 msgstr ""
 
-#: src/backend/mod.rs:91
-#, c-format
-msgid "malformed event from backend: %s"
-msgstr ""
-
-#: src/backend/mod.rs:93
-msgid "backend connection closed unexpectedly"
-msgstr ""
-
-#: src/backend/mod.rs:95
-#, c-format
-msgid "transport error: %s"
+#: src/backend/mod.rs:85
+msgid "Model stopped"
 msgstr ""
 
 #: src/backend/share.rs:73
-msgid ""
-"no backend is connected - install one and connect it, e.g. `sudo snap "
-"connect myna:backend myna-whisper`"
+msgid "Model not connected"
 msgstr ""
 
-#: src/backend/share.rs:80
-#, c-format
-msgid "%s is connected but offers no Unix socket"
+#: src/backend/share.rs:76
+msgid "Model not running"
 msgstr ""
 
-#: src/backend/share.rs:85
-#, c-format
-msgid "%s is connected but its server is not running"
+#: src/backend/share.rs:79
+msgid "Several models connected"
 msgstr ""
 
-#: src/backend/share.rs:91
-#, c-format
-msgid "connected shares with an unreadable provider.env: %s"
+#: src/failure.rs:37
+msgid "Some audio lost"
 msgstr ""
 
-#: src/backend/share.rs:101
-#, c-format
-msgid ""
-"%1$s backends are connected (%2$s); disconnect all but one (`snap "
-"connections myna`)"
+#: src/failure.rs:46
+msgid "Microphone unavailable"
+msgstr ""
+
+#: src/failure.rs:47
+msgid "Microphone format unsupported"
+msgstr ""
+
+#: src/failure.rs:48
+msgid "Audio system error"
+msgstr ""
+
+#: src/failure.rs:49
+msgid "System overloaded"
+msgstr ""
+
+#: src/failure.rs:55
+msgid "Transcription failed"
+msgstr ""
+
+#: src/failure.rs:60
+msgid "Model not responding"
+msgstr ""
+
+#: src/failure.rs:65
+msgid "Model connection lost"
 msgstr ""

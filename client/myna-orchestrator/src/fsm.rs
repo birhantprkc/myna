@@ -27,6 +27,7 @@
 //! Resident` ([`Fsm::accepts_audio`]). The driver does not read audio while the
 //! gate is closed, so audio waits in capture rather than being dropped.
 
+use crate::failure::{self, Failure};
 use myna_core::{
     ErrorData, PcmChunk, Progress, TranscriptionEvent, PHASE_PREPARING, PHASE_READY,
     PHASE_TRANSCRIBING,
@@ -108,7 +109,7 @@ pub enum OrchestratorEvent {
     /// recoverable/advisory errors, the disposition must ride the wire — e.g.
     /// an `error.recoverable` field — and the §3B retry branch returns here.
     /// Do not reintroduce it as client-side string-matching on codes.)
-    Error { code: String, message: String },
+    Error { code: String, failure: Failure },
     /// A chunk was dropped by the accept-gate, because the session was not
     /// accepting audio: after end-of-audio, or on a terminal session. There is
     /// no second reason - audio before readiness waits in capture instead.
@@ -118,7 +119,7 @@ pub enum OrchestratorEvent {
     /// failure lands with the terminal [`OrchestratorEvent::Error`] once that
     /// transcript is in. A UI shows the finishing phase from here, never a
     /// completion.
-    CaptureLost { message: String },
+    CaptureLost { fault: Failure },
 }
 
 /// A side effect the driver must perform after a transition. Keeping effects as
@@ -149,13 +150,13 @@ pub enum Input {
     /// [`Input::Abort`] this is not a deliberate user cancel — it carries a
     /// diagnostic and surfaces as a `Failed` outcome so the fault is visible,
     /// while still closing the backend session with nothing committed.
-    CaptureFailed { message: String },
+    CaptureFailed { fault: Failure },
     /// Local audio capture faulted with audio already accepted, which is queued
     /// ahead of this. Not terminal, and not a gate change: the accepted audio
     /// keeps flowing and the end-of-audio behind it still finishes the
     /// utterance, so the user gets the words they had already said. The fault
     /// is held until the terminal, where it becomes the session's failure.
-    CaptureLost { message: String },
+    CaptureLost { fault: Failure },
     /// A transcript event arrived from the backend.
     Backend(TranscriptionEvent),
     /// The backend connection closed (optionally with a wire-error reason).
@@ -170,7 +171,7 @@ pub enum SessionOutcome {
     /// `transcription.done` — the full committed transcript.
     Completed { transcript: String },
     /// Terminal error or unexpected disconnect.
-    Failed { code: String, message: String },
+    Failed { code: String, failure: Failure },
     /// The client aborted; nothing committed.
     Aborted,
 }
@@ -182,12 +183,12 @@ pub struct Fsm {
     session: SessionState,
     residency: Residency,
     transcript: String,
-    failure: Option<(String, String)>,
+    failure: Option<(String, Failure)>,
     /// A capture fault the utterance is being salvaged from (see
     /// [`Input::CaptureLost`]): held here until the terminal, where it fails
     /// the session on its own or is folded into whatever failed first, so the
     /// device is never the failure nobody hears about.
-    capture_fault: Option<String>,
+    capture_fault: Option<Failure>,
 }
 
 impl Default for Fsm {
@@ -230,11 +231,13 @@ impl Fsm {
                 transcript: self.transcript.clone(),
             }),
             SessionState::Failed => {
-                let (code, message) = self
-                    .failure
-                    .clone()
-                    .unwrap_or_else(|| ("internal".into(), String::new()));
-                Some(SessionOutcome::Failed { code, message })
+                let (code, failure) = self.failure.clone().unwrap_or_else(|| {
+                    (
+                        "internal".into(),
+                        Failure::new(failure::transcription_failed(), String::new()),
+                    )
+                });
+                Some(SessionOutcome::Failed { code, failure })
             }
             SessionState::Aborted => Some(SessionOutcome::Aborted),
             SessionState::Active | SessionState::Finalizing => None,
@@ -248,8 +251,8 @@ impl Fsm {
             Input::Audio(chunk) => self.on_audio(chunk, &mut actions),
             Input::EndOfAudio => self.on_end_of_audio(&mut actions),
             Input::Abort => self.on_abort(&mut actions),
-            Input::CaptureFailed { message } => self.on_capture_failed(message, &mut actions),
-            Input::CaptureLost { message } => self.on_capture_lost(message, &mut actions),
+            Input::CaptureFailed { fault } => self.on_capture_failed(fault, &mut actions),
+            Input::CaptureLost { fault } => self.on_capture_lost(fault, &mut actions),
             Input::Backend(event) => self.on_backend(event, &mut actions),
             Input::BackendClosed { error } => self.on_backend_closed(error, &mut actions),
             Input::Stalled => self.on_stalled(&mut actions),
@@ -281,18 +284,18 @@ impl Fsm {
         }
     }
 
-    fn on_capture_failed(&mut self, message: String, out: &mut Vec<Action>) {
+    fn on_capture_failed(&mut self, fault: Failure, out: &mut Vec<Action>) {
         // A capture fault is terminal like an abort (close the backend session,
         // commit nothing) but must be visible: land in `Failed` with a stable
         // client-local code, not silently in `Aborted`.
         if !self.session.is_terminal() {
             self.session = SessionState::Failed;
-            self.failure = Some(("capture_failed".into(), message));
+            self.failure = Some(("capture_failed".into(), fault));
             out.push(Action::SendAbort);
         }
     }
 
-    fn on_capture_lost(&mut self, message: String, out: &mut Vec<Action>) {
+    fn on_capture_lost(&mut self, fault: Failure, out: &mut Vec<Action>) {
         // Not a terminal, and not a gate change: the audio accepted before the
         // fault is queued behind this and still has to be sent, finished and
         // transcribed. Only the first fault is kept - the one that ended
@@ -300,8 +303,8 @@ impl Fsm {
         if self.session.is_terminal() || self.capture_fault.is_some() {
             return;
         }
-        self.capture_fault = Some(message.clone());
-        out.push(Action::Emit(OrchestratorEvent::CaptureLost { message }));
+        self.capture_fault = Some(fault.clone());
+        out.push(Action::Emit(OrchestratorEvent::CaptureLost { fault }));
     }
 
     fn on_backend(&mut self, event: TranscriptionEvent, out: &mut Vec<Action>) {
@@ -333,7 +336,7 @@ impl Fsm {
                 // failure it was salvaged from, which the user has not been
                 // told about yet.
                 match self.capture_fault.take() {
-                    Some(message) => self.terminate("capture_failed", message, out),
+                    Some(fault) => self.terminate("capture_failed", fault, out),
                     None => self.session = SessionState::Done,
                 }
             }
@@ -379,7 +382,11 @@ impl Fsm {
         // actual contract (both dialects treat `transcription.error`/`error`
         // as utterance-terminal). See the `OrchestratorEvent::Error` note for
         // where a T31 recoverable disposition would slot back in.
-        self.fail(&e.code, e.message, out);
+        self.fail(
+            &e.code,
+            Failure::new(failure::transcription_failed(), e.message),
+            out,
+        );
     }
 
     fn on_stalled(&mut self, out: &mut Vec<Action>) {
@@ -389,7 +396,10 @@ impl Fsm {
         out.push(Action::SendAbort);
         self.fail(
             "backend_unresponsive",
-            "the transcription service stopped responding".to_string(),
+            Failure::new(
+                failure::model_not_responding(),
+                "the transcription service stopped responding",
+            ),
             out,
         );
     }
@@ -399,30 +409,38 @@ impl Fsm {
             // Expected: the backend closes right after its terminal event.
             return;
         }
-        let message = error
+        let detail = error
             .unwrap_or_else(|| "backend connection closed before the session completed".into());
-        self.fail("connection_closed", message, out);
+        self.fail(
+            "connection_closed",
+            Failure::new(failure::model_connection_lost(), detail),
+            out,
+        );
     }
 
     /// Fail the session, keeping a capture fault the utterance was being
     /// salvaged from: whatever went wrong while finishing is the failure, but
-    /// the device that started it is not dropped from the story.
-    fn fail(&mut self, code: &str, message: String, out: &mut Vec<Action>) {
-        let message = match self.capture_fault.take() {
-            Some(fault) => format!("{message} ({fault})"),
-            None => message,
+    /// the device that started it is not dropped from the story. The headline
+    /// is the primary failure's; the fault survives in the detail.
+    fn fail(&mut self, code: &str, failure: Failure, out: &mut Vec<Action>) {
+        let failure = match self.capture_fault.take() {
+            Some(fault) => Failure {
+                detail: format!("{} ({})", failure.detail, fault.detail),
+                ..failure
+            },
+            None => failure,
         };
-        self.terminate(code, message, out);
+        self.terminate(code, failure, out);
     }
 
     /// Surface a failure and end the session with it. The one place a `Failed`
     /// outcome is built from an error the user is shown.
-    fn terminate(&mut self, code: &str, message: String, out: &mut Vec<Action>) {
+    fn terminate(&mut self, code: &str, failure: Failure, out: &mut Vec<Action>) {
         out.push(Action::Emit(OrchestratorEvent::Error {
             code: code.to_string(),
-            message: message.clone(),
+            failure: failure.clone(),
         }));
-        self.failure = Some((code.to_string(), message));
+        self.failure = Some((code.to_string(), failure));
         self.session = SessionState::Failed;
     }
 }
@@ -624,16 +642,20 @@ mod tests {
         fsm.on_input(Input::EndOfAudio);
         let a = fsm.on_input(Input::Stalled);
         assert!(matches!(a.first(), Some(Action::SendAbort)));
+        let failure = Failure::new(
+            "Model not responding",
+            "the transcription service stopped responding",
+        );
         let error = OrchestratorEvent::Error {
             code: "backend_unresponsive".into(),
-            message: "the transcription service stopped responding".into(),
+            failure: failure.clone(),
         };
         assert_eq!(emitted(&a), vec![error]);
         assert_eq!(
             fsm.outcome(),
             Some(SessionOutcome::Failed {
                 code: "backend_unresponsive".into(),
-                message: "the transcription service stopped responding".into(),
+                failure,
             })
         );
         assert!(fsm.on_input(Input::Stalled).is_empty());
@@ -652,7 +674,7 @@ mod tests {
             emitted(&a),
             vec![OrchestratorEvent::Error {
                 code: "internal".into(),
-                message: "boom".into(),
+                failure: Failure::new("Transcription failed", "boom"),
             }]
         );
         assert_eq!(fsm.state().session, SessionState::Failed);
@@ -660,7 +682,7 @@ mod tests {
             fsm.outcome(),
             Some(SessionOutcome::Failed {
                 code: "internal".into(),
-                message: "boom".into(),
+                failure: Failure::new("Transcription failed", "boom"),
             })
         );
     }
@@ -740,21 +762,25 @@ mod tests {
         fsm.on_input(Input::Backend(progress(PHASE_READY)));
         // Same wire effect as an abort (close, commit nothing) …
         let a = fsm.on_input(Input::CaptureFailed {
-            message: "PipeWire capture stream error: node vanished mid-capture".into(),
+            fault: Failure::new(
+                "Audio system error",
+                "PipeWire capture stream error: node vanished mid-capture",
+            ),
         });
         assert!(matches!(a.as_slice(), [Action::SendAbort]));
         // … but the outcome carries the diagnostic under a stable code.
         match fsm.outcome() {
-            Some(SessionOutcome::Failed { code, message }) => {
+            Some(SessionOutcome::Failed { code, failure }) => {
                 assert_eq!(code, "capture_failed");
-                assert!(message.contains("vanished mid-capture"));
+                assert_eq!(failure.headline, "Audio system error");
+                assert!(failure.detail.contains("vanished mid-capture"));
             }
             other => panic!("expected Failed, got {other:?}"),
         }
         // Idempotent after terminal.
         assert!(fsm
             .on_input(Input::CaptureFailed {
-                message: "again".into()
+                fault: Failure::new("x", "again")
             })
             .is_empty());
     }
@@ -766,9 +792,11 @@ mod tests {
     fn salvaging(fsm: &mut Fsm) -> Vec<Action> {
         fsm.on_input(Input::Backend(progress(PHASE_READY)));
         fsm.on_input(Input::Audio(chunk()));
-        fsm.on_input(Input::CaptureLost {
-            message: "some audio was lost: device vanished".into(),
-        })
+        fsm.on_input(Input::CaptureLost { fault: lost() })
+    }
+
+    fn lost() -> Failure {
+        Failure::new("Some audio lost", "some audio was lost: device vanished")
     }
 
     #[test]
@@ -777,9 +805,7 @@ mod tests {
         let a = salvaging(&mut fsm);
         assert_eq!(
             emitted(&a),
-            vec![OrchestratorEvent::CaptureLost {
-                message: "some audio was lost: device vanished".into()
-            }]
+            vec![OrchestratorEvent::CaptureLost { fault: lost() }]
         );
         // Not terminal, not a gate change: the audio queued behind the fault
         // still has to go.
@@ -810,7 +836,7 @@ mod tests {
                 OrchestratorEvent::Done("what I said".into()),
                 OrchestratorEvent::Error {
                     code: "capture_failed".into(),
-                    message: "some audio was lost: device vanished".into(),
+                    failure: lost(),
                 },
             ],
             "the transcript comes first, then the device that failed",
@@ -819,36 +845,50 @@ mod tests {
             fsm.outcome(),
             Some(SessionOutcome::Failed {
                 code: "capture_failed".into(),
-                message: "some audio was lost: device vanished".into(),
+                failure: lost(),
             })
         );
     }
 
     #[test]
     fn a_failure_while_salvaging_keeps_the_device_fault_too() {
-        for (input, code) in [
+        for (input, code, headline, primary) in [
             (
                 Input::Backend(error("inference_failed")),
                 "inference_failed",
+                "Transcription failed",
+                "boom",
             ),
             (
                 Input::BackendClosed {
                     error: Some("reset".into()),
                 },
                 "connection_closed",
+                "Model connection lost",
+                "reset",
             ),
-            (Input::Stalled, "backend_unresponsive"),
+            (
+                Input::Stalled,
+                "backend_unresponsive",
+                "Model not responding",
+                "the transcription service stopped responding",
+            ),
         ] {
             let mut fsm = Fsm::new();
             salvaging(&mut fsm);
             fsm.on_input(Input::EndOfAudio);
             fsm.on_input(input);
             match fsm.outcome() {
-                Some(SessionOutcome::Failed { code: got, message }) => {
+                Some(SessionOutcome::Failed { code: got, failure }) => {
                     assert_eq!(got, code, "the failure that ended it names itself");
-                    assert!(
-                        message.contains("device vanished"),
-                        "the device fault was swallowed by {code}: {message}"
+                    assert_eq!(
+                        failure.headline, headline,
+                        "the primary failure heads it, not the device"
+                    );
+                    assert_eq!(
+                        failure.detail,
+                        format!("{primary} (some audio was lost: device vanished)"),
+                        "the device fault was swallowed by {code}"
                     );
                 }
                 other => panic!("expected {code}, got {other:?}"),
@@ -862,15 +902,15 @@ mod tests {
         salvaging(&mut fsm);
         assert!(fsm
             .on_input(Input::CaptureLost {
-                message: "a later fault".into()
+                fault: Failure::new("x", "a later fault")
             })
             .is_empty());
         fsm.on_input(Input::EndOfAudio);
         fsm.on_input(Input::Backend(done("hi")));
-        let Some(SessionOutcome::Failed { message, .. }) = fsm.outcome() else {
+        let Some(SessionOutcome::Failed { failure, .. }) = fsm.outcome() else {
             panic!("expected a failed session");
         };
-        assert_eq!(message, "some audio was lost: device vanished");
+        assert_eq!(failure, lost());
     }
 
     #[test]
@@ -892,7 +932,7 @@ mod tests {
         fsm.on_input(Input::Backend(done("hi")));
         assert!(fsm
             .on_input(Input::CaptureLost {
-                message: "too late".into()
+                fault: Failure::new("x", "too late")
             })
             .is_empty());
         assert_eq!(
@@ -914,14 +954,14 @@ mod tests {
             emitted(&a),
             vec![OrchestratorEvent::Error {
                 code: "connection_closed".into(),
-                message: "reset".into(),
+                failure: Failure::new("Model connection lost", "reset"),
             }]
         );
         assert_eq!(
             fsm.outcome(),
             Some(SessionOutcome::Failed {
                 code: "connection_closed".into(),
-                message: "reset".into(),
+                failure: Failure::new("Model connection lost", "reset"),
             })
         );
     }

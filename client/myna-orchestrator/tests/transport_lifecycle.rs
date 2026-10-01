@@ -19,8 +19,8 @@ use myna_core::{
 };
 use myna_orchestrator::{
     run_dictation, run_session, BackendClient, BackendError, BackendHandle, CollectingSink,
-    OrchestratorControl, OrchestratorEvent, OrchestratorInput, SessionOutcome, WsUnixBackend,
-    WsUnixIe115Backend, BACKEND_PROGRESS_TIMEOUT,
+    Failure, OrchestratorControl, OrchestratorEvent, OrchestratorInput, SessionOutcome,
+    WsUnixBackend, WsUnixIe115Backend, BACKEND_PROGRESS_TIMEOUT,
 };
 use serde_json::{json, Value};
 use tokio::net::{UnixListener, UnixStream};
@@ -322,9 +322,9 @@ async fn bounded<F: std::future::Future>(what: &str, future: F) -> F::Output {
         .unwrap_or_else(|_| panic!("{what} did not happen within {BOUND:?}"))
 }
 
-fn failed_with(outcome: Result<SessionOutcome, BackendError>) -> (String, String) {
+fn failed_with(outcome: Result<SessionOutcome, BackendError>) -> (String, Failure) {
     match outcome {
-        Ok(SessionOutcome::Failed { code, message }) => (code, message),
+        Ok(SessionOutcome::Failed { code, failure }) => (code, failure),
         other => panic!("expected a failed session, got {other:?}"),
     }
 }
@@ -348,8 +348,10 @@ async fn microphone_open_failure_is_reported_while_the_backend_is_loading() {
             futures_util::future::join(server.run(mic, &mut sink), serve),
         )
         .await;
-        let (code, message) = failed_with(outcome);
+        let (code, failure) = failed_with(outcome);
+        let message = &failure.detail;
         assert_eq!(code, "capture_failed", "{dialect:?}");
+        assert_eq!(failure.headline, "Microphone unavailable", "{dialect:?}");
         assert!(
             message.contains("no microphone here"),
             "{dialect:?}: {message}"
@@ -395,8 +397,10 @@ async fn capture_overload_before_ready_is_salvaged_once_the_backend_is_ready() {
             futures_util::future::join(server.run(mic, &mut sink), serve),
         )
         .await;
-        let (code, message) = failed_with(outcome);
+        let (code, failure) = failed_with(outcome);
+        let message = &failure.detail;
         assert_eq!(code, "capture_failed", "{dialect:?}");
+        assert_eq!(failure.headline, "Some audio lost", "{dialect:?}");
         assert!(message.contains("overflow"), "{dialect:?}: {message}");
         assert!(message.contains("audio was lost"), "{dialect:?}: {message}");
         assert_eq!(

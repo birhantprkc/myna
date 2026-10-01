@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 use crate::backend::{BackendClient, BackendError, BackendSink, Outbound};
+use crate::failure::Failure;
 use crate::fsm::{Action, Fsm, Input, OrchestratorEvent, SessionOutcome};
 use myna_core::{PcmChunk, SessionConfig};
 
@@ -47,12 +48,12 @@ pub enum OrchestratorControl {
     /// never opened, or it died with an empty buffer). There is nothing to
     /// transcribe, so this ends the utterance at once, as a `Failed` outcome
     /// rather than a silent abort.
-    CaptureFailed { message: String },
+    CaptureFailed { fault: Failure },
     /// Local audio capture faulted with audio already accepted, which is
     /// queued ahead of this. Capture is over - so the progress deadline arms -
     /// but the utterance finishes with the audio it has, and the fault becomes
     /// the outcome once the transcript is in.
-    CaptureLost { message: String },
+    CaptureLost { fault: Failure },
     /// Capture has ended, though its audio may still be queued. From here the
     /// client is only waiting on the backend, so the progress deadline arms.
     CaptureEnded,
@@ -183,14 +184,12 @@ fn control_input(
 ) -> Option<Input> {
     match control {
         Some(OrchestratorControl::Abort) => Some(Input::Abort),
-        Some(OrchestratorControl::CaptureFailed { message }) => {
-            Some(Input::CaptureFailed { message })
-        }
-        Some(OrchestratorControl::CaptureLost { message }) => {
+        Some(OrchestratorControl::CaptureFailed { fault }) => Some(Input::CaptureFailed { fault }),
+        Some(OrchestratorControl::CaptureLost { fault }) => {
             // Capture has ended, however badly: from here the client is only
             // waiting on the backend, exactly as after a release.
             deadline.arm();
-            Some(Input::CaptureLost { message })
+            Some(Input::CaptureLost { fault })
         }
         Some(OrchestratorControl::CaptureEnded) => {
             deadline.arm();
@@ -417,7 +416,7 @@ mod tests {
             outcome,
             SessionOutcome::Failed {
                 code: "inference_failed".into(),
-                message: "decode blew up".into()
+                failure: Failure::new("Transcription failed", "decode blew up"),
             }
         );
     }
@@ -547,10 +546,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn capture_failure_is_handled_while_outbound_audio_is_congested() {
         let (session, mut end) = congested().await;
-        let message = "microphone unplugged".to_string();
+        let fault = Failure::new("Microphone unavailable", "microphone unplugged");
         session
             .control
-            .send(OrchestratorControl::CaptureFailed { message })
+            .send(OrchestratorControl::CaptureFailed { fault })
             .await
             .unwrap();
         let outcome = session.run.await.unwrap().unwrap();
@@ -569,15 +568,16 @@ mod tests {
         session
             .control
             .send(OrchestratorControl::CaptureLost {
-                message: "some audio was lost: device vanished".into(),
+                fault: Failure::new("Some audio lost", "some audio was lost: device vanished"),
             })
             .await
             .unwrap();
         let outcome = session.run.await.unwrap().unwrap();
         match outcome {
-            SessionOutcome::Failed { code, message } => {
+            SessionOutcome::Failed { code, failure } => {
                 assert_eq!(code, "backend_unresponsive");
-                assert!(message.contains("device vanished"), "{message}");
+                assert_eq!(failure.headline, "Model not responding");
+                assert!(failure.detail.contains("device vanished"), "{failure:?}");
             }
             other => panic!("expected a failed session, got {other:?}"),
         }
@@ -612,10 +612,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_capture_fault_during_the_handshake_fails_without_waiting_for_it() {
         let session = start(NeverOpens);
-        let message = "no microphone".to_string();
+        let fault = Failure::new("Microphone unavailable", "no microphone");
         session
             .control
-            .send(OrchestratorControl::CaptureFailed { message })
+            .send(OrchestratorControl::CaptureFailed {
+                fault: fault.clone(),
+            })
             .await
             .unwrap();
         let outcome = session.run.await.unwrap().unwrap();
@@ -623,7 +625,7 @@ mod tests {
             outcome,
             SessionOutcome::Failed {
                 code: "capture_failed".into(),
-                message: "no microphone".into()
+                failure: fault,
             }
         );
     }

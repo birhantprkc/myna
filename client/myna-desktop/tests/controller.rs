@@ -19,8 +19,8 @@ use myna_desktop::indicator::IndicatorState;
 use myna_desktop::inject::mock::{AcquireOutcome, MockInjector};
 use myna_desktop::{DesktopController, DictationState, Live};
 use myna_orchestrator::{
-    run_dictation, FakeBackend, OrchestratorEvent, ScriptedTrigger, SessionOutcome, StopHandle,
-    TriggerEdge,
+    run_dictation, Failure, FakeBackend, OrchestratorEvent, ScriptedTrigger, SessionOutcome,
+    StopHandle, TriggerEdge,
 };
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
@@ -1220,7 +1220,7 @@ fn failing_session(
         let run: SessionRun = Box::pin(async {
             Ok(SessionOutcome::Failed {
                 code: "decode_failed".into(),
-                message: "boom".into(),
+                failure: Failure::new("Transcription failed", "boom"),
             })
         });
         (run, StopHandle::default())
@@ -1794,7 +1794,10 @@ async fn salvaged_utterance(
     Vec<IndicatorState>,
     DictationState,
 ) {
-    let message = "some audio was lost: audio device unavailable: mic unplugged";
+    let lost = Failure::new(
+        "Some audio lost",
+        "some audio was lost: audio device unavailable: mic unplugged",
+    );
     let injector = MockInjector::new();
     let inject_log = injector.log();
     let indicator = MockIndicator::new();
@@ -1802,7 +1805,7 @@ async fn salvaged_utterance(
     let mut events = vec![
         OrchestratorEvent::Ready,
         OrchestratorEvent::CaptureLost {
-            message: message.into(),
+            fault: lost.clone(),
         },
     ];
     if !transcript.is_empty() {
@@ -1811,7 +1814,7 @@ async fn salvaged_utterance(
     events.push(OrchestratorEvent::Done(transcript.into()));
     events.push(OrchestratorEvent::Error {
         code: "capture_failed".into(),
-        message: message.into(),
+        failure: lost.clone(),
     });
     let mut controller = DesktopController::builder()
         .trigger(ProbeTrigger::new(Then::WaitForResync))
@@ -1821,7 +1824,7 @@ async fn salvaged_utterance(
             events,
             SessionOutcome::Failed {
                 code: "capture_failed".into(),
-                message: message.into(),
+                failure: lost,
             },
         ))
         .build();

@@ -163,7 +163,9 @@ pub fn event_to_indicator(
             Some(message) => IndicatorState::critical(message.to_string()),
             None => completion_indicator_state(text, delivery, quality),
         }),
-        OrchestratorEvent::Error { message, .. } => Some(IndicatorState::critical(message.clone())),
+        OrchestratorEvent::Error { failure, .. } => {
+            Some(IndicatorState::critical(failure.detail.clone()))
+        }
         OrchestratorEvent::Snippet(_)
         | OrchestratorEvent::Final(_)
         | OrchestratorEvent::Unstable(_)
@@ -783,7 +785,8 @@ impl DesktopController {
                     // the next toggle is a fresh Press, not a stray Release.
                     self.trigger.resync().await;
                 }
-                Ok(SessionOutcome::Failed { message, .. }) => {
+                Ok(SessionOutcome::Failed { failure, .. }) => {
+                    let message = failure.detail;
                     myna_core::info_log!("ctrl", "utterance FAILED: {message}");
                     report_critical(self.indicator.as_mut(), message).await;
                     finalize_state(&mut self.state, DictationState::Error);
@@ -933,7 +936,8 @@ async fn route_event(
             advance(state, DictationState::Transcribing);
         }
     }
-    if let OrchestratorEvent::CaptureLost { message } = &event {
+    if let OrchestratorEvent::CaptureLost { fault: lost } = &event {
+        let message = &lost.detail;
         // Capture is over, however badly. The utterance is not: it is being
         // finished with the audio captured before the fault, so the indicator
         // shows finishing rather than listening, and the failure is held for
@@ -1493,7 +1497,7 @@ mod tests {
             event_to_indicator(
                 &OrchestratorEvent::Error {
                     code: "x".into(),
-                    message: "boom".into()
+                    failure: myna_orchestrator::Failure::new("Model error", "boom"),
                 },
                 DictationState::Recording,
                 Delivery::Landed,

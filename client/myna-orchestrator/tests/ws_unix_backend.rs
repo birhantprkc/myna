@@ -149,8 +149,8 @@ async fn fake_server_round_trip() {
             OrchestratorEvent::Loading => loading = true,
             OrchestratorEvent::Transcribing => transcribing = true,
             OrchestratorEvent::Final(text) => finals.push(text),
-            OrchestratorEvent::Error { code, message } => {
-                panic!("unexpected error event: {code}: {message}")
+            OrchestratorEvent::Error { code, failure } => {
+                panic!("unexpected error event: {code}: {}", failure.detail)
             }
             _ => {}
         }

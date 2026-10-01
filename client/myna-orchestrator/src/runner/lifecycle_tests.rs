@@ -163,7 +163,7 @@ where
 
 fn failure(outcome: &Result<SessionOutcome, BackendError>) -> (&str, &str) {
     match outcome {
-        Ok(SessionOutcome::Failed { code, message }) => (code, message),
+        Ok(SessionOutcome::Failed { code, failure }) => (code, &failure.detail),
         other => panic!("expected a failed session, got {other:?}"),
     }
 }
