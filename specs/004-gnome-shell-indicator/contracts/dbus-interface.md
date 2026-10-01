@@ -41,7 +41,7 @@ this interface.
 | `HudStyle` | `s` | a `hud-style` settings nick (`bar`\|`ribbon`\|`vumeter`\|`progress`, additive); `""` from a publisher predating the property | **(2026-09-09)** which audio-level presentation the renderer should draw. The publisher is the only settings reader; the renderer is told, and resolves an unknown or empty nick to its default (C8). |
 | `AudioDroppedNotActive` | `t` | count, cumulative per session | chunks refused because the session was already over. Only ever a bug. |
 | `LastError` | `s` | content-free publisher-owned headline; `""` until the first failure | **(2026-10-01)** the headline of the latest failure, exactly as `StatusMessage` showed it (without the `Error: ` prefix). Sticky: set on every failure report, outside the `State`/`StatusMessage` dedup, and never cleared by the auto-hide or by a later success. |
-| `LastErrorDetail` | `s` | untranslated error text; `""` until the first failure | **(2026-10-01)** the cause behind `LastError` (e.g. `cannot reach backend: ...`). May name filesystem paths, commands or server-supplied text: consumers redact it before showing or exporting it. |
+| `LastErrorDetail` | `s` | untranslated error text; `""` until the first failure | **(2026-10-01)** the cause behind `LastError` (e.g. `cannot reach the model: ...`). May name filesystem paths, commands or server-supplied text: consumers redact it before showing or exporting it. |
 | `LastErrorTime` | `x` | microseconds since the Unix epoch; `0` for never | **(2026-10-01)** when `LastError` was set. Updated even when the headline repeats. |
 
 The drop counter is a count, never samples or content, and exists because the

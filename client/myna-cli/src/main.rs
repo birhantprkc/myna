@@ -733,7 +733,7 @@ mod tests {
         let (headline, detail) = err.split_once('\n').expect("two lines");
         assert_eq!(headline, "Model not connected");
         assert!(
-            detail.starts_with("/nonexistent/share: no backend is connected"),
+            detail.starts_with("/nonexistent/share: no model snap is connected"),
             "{err}"
         );
     }

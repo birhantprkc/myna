@@ -97,13 +97,13 @@ impl fmt::Display for BackendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BackendError::Resolve(e) => write!(f, "{e}"),
-            BackendError::Connect(inner) => write!(f, "cannot reach backend: {inner}"),
+            BackendError::Connect(inner) => write!(f, "cannot reach the model: {inner}"),
             BackendError::Handshake(inner) => write!(f, "handshake failed: {inner}"),
             BackendError::Rejected { code, message } => {
                 write!(f, "session rejected: {code}: {message}")
             }
-            BackendError::Wire(e) => write!(f, "malformed event from backend: {e}"),
-            BackendError::Closed => write!(f, "backend connection closed unexpectedly"),
+            BackendError::Wire(e) => write!(f, "malformed event from the model: {e}"),
+            BackendError::Closed => write!(f, "the model closed the connection unexpectedly"),
             BackendError::Transport(inner) => write!(f, "transport error: {inner}"),
         }
     }
@@ -287,7 +287,7 @@ mod tests {
     fn errors_render_their_details_untranslated() {
         assert_eq!(
             BackendError::Connect("no socket".into()).to_string(),
-            "cannot reach backend: no socket"
+            "cannot reach the model: no socket"
         );
         assert_eq!(
             BackendError::Handshake("timeout".into()).to_string(),
@@ -303,7 +303,7 @@ mod tests {
         );
         assert_eq!(
             BackendError::Closed.to_string(),
-            "backend connection closed unexpectedly"
+            "the model closed the connection unexpectedly"
         );
         assert_eq!(
             BackendError::Transport("reset".into()).to_string(),

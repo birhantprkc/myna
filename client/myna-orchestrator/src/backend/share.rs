@@ -52,7 +52,8 @@ impl Unusable {
 ///
 /// [`ResolveError::headline`] is what the user is told, translated through
 /// this crate's gettext domain; `Display` is the untranslated detail, which
-/// names the snaps involved and the command that fixes it.
+/// names the snaps involved. Diagnostics shows it, so it names no command:
+/// Myna Settings is where a model is installed and connected.
 #[derive(Debug)]
 pub enum ResolveError {
     /// No usable backend is connected; carries what was connected instead.
@@ -84,10 +85,9 @@ impl ResolveError {
 impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ResolveError::NotConnected(unusable) if unusable.is_empty() => write!(
-                f,
-                "no backend is connected - install one and connect it, e.g. `sudo snap connect myna:backend myna-whisper`"
-            ),
+            ResolveError::NotConnected(unusable) if unusable.is_empty() => {
+                write!(f, "no model snap is connected to the myna:backend plug")
+            }
             ResolveError::NotConnected(unusable) => {
                 let mut parts = Vec::new();
                 for name in &unusable.no_unix_socket {
@@ -106,7 +106,7 @@ impl fmt::Display for ResolveError {
             }
             ResolveError::Ambiguous(names) => write!(
                 f,
-                "{} backends are connected ({}); disconnect all but one (`snap connections myna`)",
+                "{} model snaps are connected ({}); only one may be",
                 names.len(),
                 names.join(", ")
             ),
@@ -462,8 +462,7 @@ mod tests {
         let err = resolve(&dir).expect_err("ambiguous");
         assert_eq!(
             err.to_string(),
-            "2 backends are connected (myna-parakeet, myna-whisper); \
-             disconnect all but one (`snap connections myna`)"
+            "2 model snaps are connected (myna-parakeet, myna-whisper); only one may be"
         );
         assert!(matches!(err, ResolveError::Ambiguous(names) if names.len() == 2));
     }
@@ -500,12 +499,13 @@ mod tests {
     }
 
     #[test]
-    fn no_backend_detail_is_the_install_hint() {
+    fn no_backend_detail_names_the_empty_plug() {
         let err = ResolveError::NotConnected(Unusable::default());
         assert_eq!(err.headline(), "Model not connected");
-        assert!(err
-            .to_string()
-            .starts_with("no backend is connected - install one"));
+        assert_eq!(
+            err.to_string(),
+            "no model snap is connected to the myna:backend plug"
+        );
     }
 
     /// One headline for any mix of unusable shares: a model whose server is

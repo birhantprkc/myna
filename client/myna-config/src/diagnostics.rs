@@ -1000,18 +1000,18 @@ mod tests {
     fn the_last_error_is_shown_with_its_detail_redacted() {
         let report = present_diagnostics(running_daemon(Some(LastError {
             headline: "Model not connected".into(),
-            detail: "/nonexistent/share: no backend is connected; \
-                     cannot reach backend: /run/user/1000/snap.myna/backend/provider/myna.sock"
+            detail: "/nonexistent/share: no model snap is connected; \
+                     cannot reach the model: /run/user/1000/snap.myna/backend/provider/myna.sock"
                 .into(),
             at: "2026-10-01 09:30:00".into(),
         })));
         let text = report.copy_text();
         assert_eq!(
             field_value(&text, "Last error"),
-            Some("Model not connected (<path>: no backend is connected; cannot reach backend: <path>), 2026-10-01 09:30:00"),
+            Some("Model not connected (<path>: no model snap is connected; cannot reach the model: <path>), 2026-10-01 09:30:00"),
             "{text}"
         );
-        assert!(text.contains("no backend is connected"), "{text}");
+        assert!(text.contains("no model snap is connected"), "{text}");
         assert!(text.contains(", 2026-10-01 09:30:00"), "{text}");
         assert!(!text.contains("/nonexistent"), "{text}");
         assert!(!text.contains("myna.sock"), "{text}");
