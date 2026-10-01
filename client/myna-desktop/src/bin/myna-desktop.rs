@@ -838,9 +838,18 @@ fn bind_control(path: &std::path::Path) -> Result<Box<dyn Trigger>, BindFailure>
 
 /// The indicator, heard as well as seen while the `sounds` setting is on. A
 /// daemon that cannot start the player thread dictates silently.
-fn with_sounds(indicator: impl Indicator + 'static, live: &LiveSettings) -> Box<dyn Indicator> {
+fn with_sounds(
+    indicator: impl Indicator + 'static,
+    live: &LiveSettings,
+    readiness: Readiness,
+) -> Box<dyn Indicator> {
     match Player::spawn() {
-        Ok(chime) => Box::new(Chiming::new(indicator, chime, live.sounds.clone())),
+        Ok(chime) => Box::new(Chiming::new(
+            indicator,
+            chime,
+            live.sounds.clone(),
+            readiness,
+        )),
         Err(e) => {
             eprintln!("myna-desktop: no sound player ({e}); cues are off");
             Box::new(indicator)
@@ -880,7 +889,7 @@ async fn run_controller(
 
     let builder = DesktopController::builder()
         .injector(LazyInjector::new(IbusConnect))
-        .indicator(with_sounds(indicator, &live))
+        .indicator(with_sounds(indicator, &live, readiness.clone()))
         .session(make_session(
             &args,
             &live,
