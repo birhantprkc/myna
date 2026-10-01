@@ -23,6 +23,7 @@ src/myna_settings.rs
 src/model_family.rs
 src/presentation.rs
 src/ui/install_control.rs
+src/ui/status_page.rs
 ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml
 data/com.canonical.Myna.Config.metainfo.xml
 data/com.canonical.Myna.Config.desktop

@@ -239,7 +239,7 @@ fn performance_warnings(facts: &PerformanceFacts) -> Vec<Warning> {
                 ghz(hardware_max_khz),
             ),
             remedy: gettextrs::gettext(
-                "Dictation will be slow. Raise scaling_max_freq, or find the power tool that lowered it.",
+                "Dictation will be slow. A power tool has capped the CPU clock.",
             ),
         }),
         ClockVerdict::LowPowerProfile {
@@ -349,7 +349,7 @@ fn classify_onboarding(input: &DiagnosticInput) -> OnboardingState {
 /// Localized, user-facing label for an onboarding state.
 pub fn onboarding_state_label(state: OnboardingState) -> String {
     match state {
-        OnboardingState::NoMyna => gettextrs::gettext("Myna is not installed"),
+        OnboardingState::NoMyna => gettextrs::gettext("Dictation is not installed"),
         OnboardingState::NoBackend => gettextrs::gettext("No model installed"),
         OnboardingState::Ready => gettextrs::gettext("Ready"),
         OnboardingState::Unavailable => gettextrs::gettext("Installation status unavailable"),
@@ -594,8 +594,9 @@ fn clock_summary(class: &ClockClass) -> String {
         ghz(class.hardware_max_khz),
     );
     if class.policy_max_khz < class.hardware_max_khz {
+        // The knob is named here, in the report, not in the warning.
         summary.push_str(&format!(
-            " ({} {})",
+            " ({} {}, scaling_max_freq)",
             gettextrs::gettext("policy allows"),
             ghz(class.policy_max_khz)
         ));
@@ -798,7 +799,7 @@ mod tests {
         });
         let text = report.copy_text();
         assert!(text.contains("Myna Settings "));
-        assert!(text.contains("Onboarding: Myna is not installed"));
+        assert!(text.contains("Onboarding: Dictation is not installed"));
         assert!(!text.contains("snap install"));
         assert!(text.contains("Models:\n  (none discovered)"));
         assert!(text.contains("Problems:\n  (none)"));

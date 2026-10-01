@@ -37,8 +37,8 @@ template $OnboardingComponents: Adw.Bin {
           ]
 
           Adw.ActionRow flag_row {
-            title: _("Enable user daemons experimental support");
-            subtitle: _("Required by the Dictation app");
+            title: _("Let Myna run in the background");
+            subtitle: _("Dictation needs it. Sets experimental.user-daemons in snapd.");
             activatable-widget: flag_switch;
 
             [suffix]
@@ -47,7 +47,7 @@ template $OnboardingComponents: Adw.Bin {
               valign: center;
 
               accessibility {
-                label: _("Enabling user daemons");
+                label: _("Letting Myna run in the background");
               }
             }
 

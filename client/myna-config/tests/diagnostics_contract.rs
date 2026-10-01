@@ -143,7 +143,7 @@ fn diagnostics_status_values_are_translatable_user_facing_labels() {
 
     let pot = include_str!("../po/myna-config.pot");
     for label in [
-        "Myna is not installed",
+        "Dictation is not installed",
         "No model installed",
         "Ready",
         "Installation status unavailable",
@@ -282,12 +282,17 @@ mod performance_warnings {
             warning.cause
         );
         assert!(
-            warning.remedy.contains("scaling_max_freq"),
+            warning
+                .remedy
+                .contains("A power tool has capped the CPU clock"),
             "{}",
             warning.remedy
         );
+        assert!(!warning.remedy.contains("scaling_max_freq"));
         assert!(
-            report.copy_text().contains("(policy allows 1.50 GHz)"),
+            report
+                .copy_text()
+                .contains("(policy allows 1.50 GHz, scaling_max_freq)"),
             "{}",
             report.copy_text()
         );

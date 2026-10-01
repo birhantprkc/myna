@@ -550,22 +550,21 @@ fn map_system_error(error: SystemConfiguratorError) -> ApplyFailure {
     }
 }
 
+/// Why the restart is not confirmed, for the report's details: a sentence,
+/// then the raw reason on the next line when there is one.
 fn readiness_failure(snapshot: &BackendSnapshot, restart_impact: RestartImpact) -> Option<String> {
     if !restart_impact.requires_readiness() {
         return None;
     }
+    let unconfirmed = || gettextrs::gettext("The model's restart could not be confirmed.");
 
     if let Some(error) = snapshot.error(BackendSurface::Status) {
-        // TRANSLATORS: {reason} is the error reading the model's status, in English.
-        let frame = gettextrs::gettext("The model's restart could not be confirmed: {reason}");
-        return Some(frame.replace("{reason}", error.message()));
+        return Some(format!("{}\n{}", unconfirmed(), error.message()));
     }
 
     if let Some(status) = snapshot.status() {
         if status.services().is_empty() {
-            return Some(gettextrs::gettext(
-                "The model's restart could not be confirmed: no service health was reported.",
-            ));
+            return Some(format!("{}\nno service health was reported", unconfirmed()));
         }
         let failing: Vec<String> = status
             .services()
@@ -580,14 +579,14 @@ fn readiness_failure(snapshot: &BackendSnapshot, restart_impact: RestartImpact) 
             })
             .collect();
         if !failing.is_empty() {
-            // TRANSLATORS: {services} lists services and their states, such as "myna-whisper.server (failed)".
-            let frame = gettextrs::gettext("The model did not restart: {services}");
-            return Some(frame.replace("{services}", &failing.join(", ")));
+            return Some(format!(
+                "{}\n{}",
+                gettextrs::gettext("The model did not restart."),
+                failing.join(", ")
+            ));
         }
     } else {
-        return Some(gettextrs::gettext(
-            "The model's restart could not be confirmed.",
-        ));
+        return Some(unconfirmed());
     }
 
     None

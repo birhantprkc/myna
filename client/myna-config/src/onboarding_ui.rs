@@ -628,7 +628,10 @@ impl OnboardingUi {
     }
 
     fn announce_flag_failure(&self, error: &SystemConfiguratorError) {
-        self.announce_failure(gettextrs::gettext("Enabling user daemons failed"), error);
+        self.announce_failure(
+            gettextrs::gettext("Could not let Myna run in the background"),
+            error,
+        );
     }
 
     fn announce_failure(&self, heading: String, error: &SystemConfiguratorError) {
@@ -761,6 +764,13 @@ impl OnboardingUi {
                 // Dismissing the prompt was the user's answer; Next asks again.
                 Err(SetupError::Cancelled) => {}
                 Err(SetupError::Failed(message)) => ui.announce_setup_failure(message),
+                Err(SetupError::Busy(change)) => ui.toast_report(
+                    gettextrs::gettext("Could not set up Dictation"),
+                    gettextrs::gettext(
+                        "The system is busy installing software. Try again in a moment.",
+                    ),
+                    change,
+                ),
                 Err(SetupError::Step(error)) => {
                     ui.announce_failure(gettextrs::gettext("Could not set up Dictation"), &error)
                 }
@@ -867,7 +877,9 @@ impl OnboardingUi {
         let status = match &*self.stage.borrow() {
             Some(stage) if setting_up => Some(stage_text(stage)),
             _ if step == Step::Components && needs_onboarding(&components) => {
-                self.problem.borrow().clone()
+                self.problem.borrow().as_ref().map(|_| {
+                    gettextrs::gettext("Setup status unavailable. The log has the details.")
+                })
             }
             _ => None,
         };
@@ -910,7 +922,7 @@ impl OnboardingUi {
         let flag_subtitle = if pending {
             gettextrs::gettext("Enabling…")
         } else {
-            gettextrs::gettext("Required by the Dictation app")
+            gettextrs::gettext("Dictation needs it. Sets experimental.user-daemons in snapd.")
         };
         flag_row.set_subtitle(&flag_subtitle);
         flag_row.update_property(&[gtk::accessible::Property::Description(&flag_subtitle)]);
@@ -980,7 +992,7 @@ impl OnboardingUi {
                 "Log out and back in to use it. Until then, Dictation shows its status in notifications.",
             ),
             (_, RowAction::Unavailable(Unavailable::ShadowedByUserCopy)) => gettextrs::gettext(
-                "A copy in ~/.local/share/gnome-shell/extensions hides it. Remove that copy, then log out and back in.",
+                "Hidden by a copy in your home folder. Remove it, then log out and back in.",
             ),
             (_, RowAction::Unavailable(Unavailable::ExtensionsOff)) => gettextrs::gettext(
                 "Extensions are turned off. Turn them on in the Extensions app to use it. Until then, Dictation shows its status in notifications.",
@@ -1179,11 +1191,8 @@ async fn read_machine(
             0
         });
     problems.dedup();
-    let problem = (!problems.is_empty()).then(|| {
-        // TRANSLATORS: {error} is snapd's own message, in English.
-        let frame = gettextrs::gettext("Cannot read what snapd has set up: {error}");
-        frame.replace("{error}", &problems.join("; "))
-    });
+    // snapd's own words, for the log; the step shows a plain sentence.
+    let problem = (!problems.is_empty()).then(|| problems.join("; "));
     let machine = Machine {
         user_daemons,
         extension: extensions.extension_state(SHELL_EXTENSION_UUID).await,

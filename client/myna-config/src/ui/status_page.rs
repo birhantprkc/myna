@@ -55,6 +55,24 @@ impl StatusPage {
         status.set_icon_name(Some(icon_name));
     }
 
+    /// Put `details` - raw error text, for a bug report - under a collapsed
+    /// "Details" expander below the description.
+    pub fn set_details(&self, details: &str) {
+        let label = gtk::Label::builder()
+            .label(details)
+            .selectable(true)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .xalign(0.0)
+            .css_classes(["monospace"])
+            .build();
+        let expander = gtk::Expander::builder()
+            .label(gettextrs::gettext("Details"))
+            .child(&label)
+            .build();
+        self.imp().status.get().set_child(Some(&expander));
+    }
+
     pub fn status(&self) -> adw::StatusPage {
         self.imp().status.get()
     }
@@ -80,6 +98,25 @@ mod tests {
         crate::ui::on_gtk_thread(|| {
             let page = StatusPage::new();
             assert!(!has_header_bar(page.upcast_ref()));
+        });
+    }
+
+    #[test]
+    fn details_wait_collapsed_under_the_description() {
+        crate::ui::on_gtk_thread(|| {
+            let page = StatusPage::new();
+            page.set_details("schema com.canonical.Myna not found");
+            let expander = page
+                .status()
+                .child()
+                .and_downcast::<gtk::Expander>()
+                .expect("an expander");
+            assert!(!expander.is_expanded());
+            let label = expander
+                .child()
+                .and_downcast::<gtk::Label>()
+                .expect("a label");
+            assert_eq!(label.label(), "schema com.canonical.Myna not found");
         });
     }
 }

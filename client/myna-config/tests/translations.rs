@@ -204,9 +204,7 @@ fn the_model_tab_settings_and_apply_reports_are_translatable() {
             "selector value must be text",
             "the model's settings command could not be found",
             "the model's restart command could not be built",
-            "The model's restart could not be confirmed: {reason}",
-            "The model's restart could not be confirmed: no service health was reported.",
-            "The model did not restart: {services}",
+            "The model did not restart.",
             "The model's restart could not be confirmed.",
         ]
         .map(str::to_owned),

@@ -505,9 +505,12 @@ fn onboarding_probe() -> glib::ExitCode {
         || !flag
             .ancestor(gtk::ListBox::static_type())
             .is_some_and(|list| list.has_css_class("boxed-list"))
-        || page.flag_row().title() != gettextrs::gettext("Enable user daemons experimental support")
+        || page.flag_row().title() != gettextrs::gettext("Let Myna run in the background")
         || page.flag_row().subtitle().as_deref()
-            != Some(gettextrs::gettext("Required by the Dictation app").as_str())
+            != Some(
+                gettextrs::gettext("Dictation needs it. Sets experimental.user-daemons in snapd.")
+                    .as_str(),
+            )
     {
         eprintln!("the component step offers no boxed switch for the flag");
         return glib::ExitCode::FAILURE;
@@ -562,10 +565,7 @@ fn onboarding_probe() -> glib::ExitCode {
     // only that both components are missing.
     let unreadable = || {
         let status = window.setup_status();
-        status.is_mapped()
-            && status
-                .label()
-                .starts_with("Cannot read what snapd has set up: ")
+        status.is_mapped() && status.label().starts_with("Setup status unavailable.")
     };
     for _ in 0..100 {
         if unreadable() {
@@ -964,7 +964,7 @@ fn onboarding_probe() -> glib::ExitCode {
         (
             crate::onboarding::ExtensionState::ShadowedByUserCopy,
             gettextrs::gettext(
-                "A copy in ~/.local/share/gnome-shell/extensions hides it. Remove that copy, then log out and back in.",
+                "Hidden by a copy in your home folder. Remove it, then log out and back in.",
             ),
         ),
         (
@@ -3966,7 +3966,7 @@ fn backends_probe() -> glib::ExitCode {
         widget.is::<adw::ActionRow>()
     })
     .and_then(|row| row.downcast::<adw::ActionRow>().ok());
-    if setup_row.is_none() || first_group.title() != "No speech model installed" {
+    if setup_row.is_none() || first_group.title() != "No model installed" {
         eprintln!(
             "the setup group is not the first group on Diagnostics: {:?}",
             first_group.title()
@@ -4543,7 +4543,7 @@ fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
     let announced = || {
         toast_texts()
             == [
-                gettextrs::gettext("Enabling user daemons failed"),
+                gettextrs::gettext("Could not let Myna run in the background"),
                 gettextrs::gettext("Details"),
             ]
     };
@@ -4682,7 +4682,12 @@ fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
             && row.can_target()
             && list.is_sensitive()
             && row.subtitle().as_deref()
-                == Some(gettextrs::gettext("Required by the Dictation app").as_str())
+                == Some(
+                    gettextrs::gettext(
+                        "Dictation needs it. Sets experimental.user-daemons in snapd.",
+                    )
+                    .as_str(),
+                )
     };
     if !until(&on) || rows_offer(&page) != ["Install", "Install", "Installed"] {
         return Err(format!(
@@ -5104,12 +5109,18 @@ fn status_page(title: &str, description: &str, icon: &str) -> adw::NavigationPag
     page.upcast()
 }
 
+/// The page in place of settings that could not load: a plain sentence, the
+/// raw error under Details and in the log.
 fn error_page(detail: &str) -> adw::NavigationPage {
-    status_page(
+    glib::g_warning!(crate::LOG_DOMAIN, "settings unavailable: {detail}");
+    let page = ui::StatusPage::new();
+    page.set_status(
         &gettextrs::gettext("Myna Settings Unavailable"),
-        detail,
+        &gettextrs::gettext("Myna Settings could not start."),
         "dialog-error-symbolic",
-    )
+    );
+    page.set_details(detail);
+    page.upcast()
 }
 
 #[derive(Clone)]

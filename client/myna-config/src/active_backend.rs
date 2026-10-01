@@ -277,6 +277,9 @@ pub enum SetupError {
     Cancelled,
     /// What went wrong, for the report.
     Failed(String),
+    /// snapd was still working on one of the snaps when the wait ran out;
+    /// carries its change summary, in snapd's English, for the details.
+    Busy(String),
     /// A step that failed as snapd or systemctl reported it, whose report
     /// names that step.
     Step(SystemConfiguratorError),
@@ -289,6 +292,7 @@ impl std::fmt::Display for SetupError {
                 formatter.write_str(&gettextrs::gettext("The change was cancelled."))
             }
             Self::Failed(message) => formatter.write_str(message),
+            Self::Busy(change) => write!(formatter, "snapd is still busy with \"{change}\""),
             Self::Step(error) => write!(formatter, "{error}"),
         }
     }
@@ -350,7 +354,7 @@ pub async fn ensure_backend_active(
         .cloned()
     else {
         return Err(SetupError::Failed(gettextrs::gettext(
-            "No speech-to-text model appeared in snap connections.",
+            "No model is connected.",
         )));
     };
     let plan = SwitchPlan::new(&snapshot, selected.clone()).map_err(|_| {
@@ -394,12 +398,7 @@ async fn wait_for_snapd(
             return Ok(waited > Duration::ZERO);
         };
         if waited >= wait.timeout {
-            return Err(SetupError::Failed(
-                gettextrs::gettext(
-                    "snapd is still busy with “{change}”. Try again once it has finished.",
-                )
-                .replace("{change}", change.summary()),
-            ));
+            return Err(SetupError::Busy(change.summary().to_owned()));
         }
         report(SetupStage::Waiting(change.progress()));
         (wait.sleep)(wait.interval).await;

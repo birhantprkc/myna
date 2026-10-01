@@ -1649,10 +1649,14 @@ impl BackendUi {
             }
             ControllerEvent::DiscoveryFailed(error) => {
                 self.rebuild_diagnostics_page();
-                self.overlay.add_toast(adw::Toast::new(&format!(
-                    "{}: {}",
-                    gettextrs::gettext("Could not read the installed models"),
+                // The cause is on the Diagnostics page, rebuilt above.
+                glib::g_warning!(
+                    crate::LOG_DOMAIN,
+                    "discovery failed: {}",
                     diagnostics::redact_text(error.message())
+                );
+                self.overlay.add_toast(adw::Toast::new(&gettextrs::gettext(
+                    "Could not read the installed models.",
                 )));
             }
         }
@@ -1988,7 +1992,7 @@ impl BackendUi {
         // What is missing installs from the wizard, never from a terminal.
         let missing = match report.onboarding() {
             OnboardingState::NoMyna => Some(gettextrs::gettext("Dictation is not installed")),
-            OnboardingState::NoBackend => Some(gettextrs::gettext("No speech model installed")),
+            OnboardingState::NoBackend => Some(gettextrs::gettext("No model installed")),
             OnboardingState::Ready | OnboardingState::Unavailable => None,
         };
         let setup_group = widget.setup_group();
@@ -2520,7 +2524,7 @@ fn populate_backend_page(page_widget: &ui::BackendPage, page: &BackendPage, ui: 
             ConnectionKind::Contested => {
                 gettextrs::gettext("Several models are connected. Only one should be active.")
             }
-            ConnectionKind::Disconnected => gettextrs::gettext("Not connected to the Myna daemon."),
+            ConnectionKind::Disconnected => gettextrs::gettext("Not connected to Myna."),
         }))
         .build();
     overview.add(&health);
@@ -3020,7 +3024,7 @@ fn switch_report(outcome: &SwitchOutcome) -> (String, String) {
             push_completed_operations(&mut details, completed);
             details.push_str(&gettextrs::gettext("Error:\n"));
             details.push_str(&system_error_details(error));
-            gettextrs::gettext("snapd could not make the change.")
+            gettextrs::gettext("The change could not be made.")
         }
         SwitchOutcome::Disagreed {
             completed,
@@ -4232,7 +4236,7 @@ mod tests {
             final_snapshot: None,
             discovery_error: Some(unread.clone()),
         });
-        assert_eq!(summary, "snapd could not make the change.");
+        assert_eq!(summary, "The change could not be made.");
         for fact in [
             "Final connections could not be verified: snap connections failed",
             "snap disconnect myna:backend",
@@ -4383,7 +4387,7 @@ mod tests {
 
         let (snapshot, notice) = apply_report(Err(ApplyFailure::RestartReadiness {
             snapshot: Box::new(parakeet_snapshot()),
-            message: "The model did not restart: server (failed)".to_owned(),
+            message: "The model did not restart.\nserver (failed)".to_owned(),
         }));
         let notice = notice.expect("reported");
         assert!(snapshot.is_some());
