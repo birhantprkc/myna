@@ -55,9 +55,10 @@ use myna_core::{AudioFormat, SessionConfig};
 use myna_desktop::controller::{ChannelSink, SessionRun};
 use myna_desktop::dbus::serve::{ServeError, ZbusBus};
 use myna_desktop::dbus::{DictationService, PropertyValue, SharedBus};
-use myna_desktop::indicator::dbus::{DbusIndicator, Readiness, ReadinessTee};
+use myna_desktop::indicator::dbus::DbusIndicator;
 use myna_desktop::indicator::dynamic::DynamicIndicator;
 use myna_desktop::indicator::notify::NotifyIndicator;
+use myna_desktop::indicator::readiness::{Readiness, ReadinessTee};
 use myna_desktop::inject::lazy::{IbusConnect, LazyInjector};
 use myna_desktop::shortcut::control::{default_socket_path, send_toggle, ControlTrigger};
 use myna_desktop::shortcut::portal::{ActivationMode, GlobalShortcutTrigger, TriggerError};
@@ -576,7 +577,7 @@ fn toggle_hint_for(activation: Activation, hotkey: Option<&str>) -> Vec<String> 
 fn make_session(
     args: &Args,
     live: &LiveSettings,
-    readiness: Option<Readiness>,
+    readiness: Readiness,
     pump_bus: Option<SharedBus>,
     restart: Arc<tokio::sync::Notify>,
 ) -> impl FnMut(mpsc::Sender<OrchestratorEvent>) -> Session + Send + 'static {
@@ -602,9 +603,7 @@ fn make_session(
         // the controller ever reads it, so only one clean loading→recording
         // transition is published. Before resolving the backend, too: a
         // press with no model to reach is a session that never got Ready.
-        if let Some(r) = &readiness {
-            r.reset();
-        }
+        readiness.reset();
         // Re-resolved per Press, so a backend connected (or refreshed, or
         // swapped) after the daemon started is picked up without a restart.
         let socket = match backend_socket.resolve() {
@@ -648,18 +647,10 @@ fn make_session(
             if let Some((bus, stats)) = pump {
                 tokio::spawn(myna_desktop::dbus::pump::run(bus, stats));
             }
-            // Tee the event stream so the publisher can split loading/recording
-            // (R4) when in --dbus mode.
-            match readiness {
-                Some(r) => {
-                    let mut sink = ReadinessTee::new(ChannelSink(events), r);
-                    run_dictation(&backend, config, source, &mut sink).await
-                }
-                None => {
-                    let mut sink = ChannelSink(events);
-                    run_dictation(&backend, config, source, &mut sink).await
-                }
-            }
+            // Tee the event stream so the indicators can tell loading from
+            // listening (R4).
+            let mut sink = ReadinessTee::new(ChannelSink(events), readiness);
+            run_dictation(&backend, config, source, &mut sink).await
         });
         Session {
             run,
@@ -876,7 +867,7 @@ async fn run_controller(
     args: Args,
     resolved: Resolved,
     indicator: impl Indicator + 'static,
-    readiness: Option<Readiness>,
+    readiness: Readiness,
     pump_bus: Option<SharedBus>,
     bus_lost: Option<BoxFuture<'static, ()>>,
     bound: Arc<tokio::sync::Notify>,
@@ -1530,7 +1521,7 @@ fn run_headless(args: Args, resolved: Resolved) -> ExitCode {
             args,
             resolved,
             NotifyIndicator::new(),
-            None,
+            Readiness::new(),
             None,
             None,
             Arc::default(),
@@ -1565,7 +1556,7 @@ async fn run_headless_dbus(args: Args, resolved: Resolved) -> ExitCode {
                 args,
                 resolved,
                 indicator,
-                Some(readiness),
+                readiness,
                 Some(pump_bus),
                 Some(bus_lost),
                 bound,
@@ -1585,7 +1576,7 @@ async fn run_headless_dbus(args: Args, resolved: Resolved) -> ExitCode {
                 args,
                 resolved,
                 NotifyIndicator::new(),
-                None,
+                Readiness::new(),
                 None,
                 None,
                 bound,
@@ -1602,7 +1593,7 @@ async fn run_headless_dbus(args: Args, resolved: Resolved) -> ExitCode {
                 args,
                 resolved,
                 NotifyIndicator::new(),
-                None,
+                Readiness::new(),
                 None,
                 None,
                 bound,
@@ -2266,7 +2257,7 @@ mod tests {
         };
         let live = LiveSettings::new(&resolved(&args, &unset()));
         assert!(live.preedit.get());
-        let mut factory = make_session(&args, &live, None, None, Arc::default());
+        let mut factory = make_session(&args, &live, Readiness::new(), None, Arc::default());
         let (events_tx, _events_rx) = mpsc::channel(16);
         let session = factory(events_tx);
         session.stop.stop();
@@ -2341,7 +2332,7 @@ mod tests {
         let mut factory = make_session(
             &args,
             &LiveSettings::new(&resolved),
-            Some(readiness.clone()),
+            readiness.clone(),
             None,
             Arc::default(),
         );

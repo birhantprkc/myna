@@ -4,7 +4,8 @@
 //! is the env-gated `dbus_hw.rs`.
 
 use myna_desktop::dbus::{DictationService, FakeBus, PropertyValue};
-use myna_desktop::indicator::dbus::{DbusIndicator, Readiness};
+use myna_desktop::indicator::dbus::DbusIndicator;
+use myna_desktop::indicator::readiness::Readiness;
 use myna_desktop::indicator::{Indicator, IndicatorState};
 
 fn str_prop(value: &str) -> Option<PropertyValue> {

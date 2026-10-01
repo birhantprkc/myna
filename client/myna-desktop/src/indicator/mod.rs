@@ -13,6 +13,7 @@ pub mod dbus;
 pub mod dynamic;
 pub mod mock;
 pub mod notify;
+pub mod readiness;
 
 /// The distinct, screen-reader-perceivable indicator states (FR-017/019). Never
 /// carries transcript text.
