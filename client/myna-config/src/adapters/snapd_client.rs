@@ -1014,6 +1014,27 @@ fn do_request(
     )
 }
 
+/// One `read` bounded by `deadline`. A signal (SIGCHLD from a child this
+/// process spawned, a SIGCONT) interrupts a socket read that has a timeout
+/// even under `SA_RESTART`; that is not snapd's doing, so it is retried.
+fn read_some(
+    stream: &mut UnixStream,
+    scratch: &mut [u8],
+    start: Instant,
+    deadline: Instant,
+    context: SnapdTimeoutContext,
+) -> Result<usize, SnapdError> {
+    loop {
+        stream
+            .set_read_timeout(Some(remaining(deadline, start, context)?))
+            .map_err(|error| transport_err(error, start, context))?;
+        match stream.read(scratch) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            other => return other.map_err(|error| transport_err(error, start, context)),
+        }
+    }
+}
+
 fn transport_err(error: io::Error, start: Instant, context: SnapdTimeoutContext) -> SnapdError {
     if error.kind() == io::ErrorKind::WouldBlock || error.kind() == io::ErrorKind::TimedOut {
         SnapdError::Timeout {
@@ -1078,12 +1099,7 @@ fn read_response(
                 body: String::new(),
             });
         }
-        stream
-            .set_read_timeout(Some(remaining(deadline, start, timeout_context)?))
-            .map_err(|error| transport_err(error, start, timeout_context))?;
-        let bytes = stream
-            .read(&mut scratch)
-            .map_err(|error| transport_err(error, start, timeout_context))?;
+        let bytes = read_some(stream, &mut scratch, start, deadline, timeout_context)?;
         if bytes == 0 {
             return Err(SnapdError::Protocol {
                 message: "snapd closed the connection before completing headers".to_owned(),
@@ -1108,12 +1124,7 @@ fn read_response(
             if cancellation.is_cancelled() {
                 return Err(SnapdError::Cancelled);
             }
-            stream
-                .set_read_timeout(Some(remaining(deadline, start, timeout_context)?))
-                .map_err(|error| transport_err(error, start, timeout_context))?;
-            let bytes = stream
-                .read(&mut scratch)
-                .map_err(|error| transport_err(error, start, timeout_context))?;
+            let bytes = read_some(stream, &mut scratch, start, deadline, timeout_context)?;
             if bytes == 0 {
                 return Err(SnapdError::Protocol {
                     message: "snapd closed the connection before Content-Length was satisfied"
@@ -1141,12 +1152,7 @@ fn read_response(
                     if pending.len() >= MAX_CHUNK_BYTES {
                         return Err(SnapdError::ResponseTooLarge);
                     }
-                    stream
-                        .set_read_timeout(Some(remaining(deadline, start, timeout_context)?))
-                        .map_err(|error| transport_err(error, start, timeout_context))?;
-                    let bytes = stream
-                        .read(&mut scratch)
-                        .map_err(|error| transport_err(error, start, timeout_context))?;
+                    let bytes = read_some(stream, &mut scratch, start, deadline, timeout_context)?;
                     if bytes == 0 {
                         return Err(SnapdError::Protocol {
                             message: "snapd closed the connection during chunked transfer"
@@ -1173,12 +1179,7 @@ fn read_response(
             if cancellation.is_cancelled() {
                 return Err(SnapdError::Cancelled);
             }
-            stream
-                .set_read_timeout(Some(remaining(deadline, start, timeout_context)?))
-                .map_err(|error| transport_err(error, start, timeout_context))?;
-            let bytes = stream
-                .read(&mut scratch)
-                .map_err(|error| transport_err(error, start, timeout_context))?;
+            let bytes = read_some(stream, &mut scratch, start, deadline, timeout_context)?;
             if bytes == 0 {
                 break;
             }
@@ -1413,6 +1414,46 @@ fn parse_headers(text: &str) -> Result<Headers, SnapdError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    extern "C" fn ignore_signal(_: libc::c_int) {}
+
+    /// A child exiting delivers SIGCHLD, which interrupts a socket read that
+    /// has a timeout even under `SA_RESTART`. That must not fail the request.
+    #[test]
+    fn a_signal_during_a_read_does_not_fail_it() {
+        // SAFETY: installs a no-op handler, so SIGUSR1 to this test binary
+        // no longer terminates it; nothing else in the binary uses SIGUSR1.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = ignore_signal as extern "C" fn(libc::c_int) as usize;
+            action.sa_flags = libc::SA_RESTART;
+            assert_eq!(
+                libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+        let (mut reader, mut writer) = UnixStream::pair().unwrap();
+        // SAFETY: pthread_self has no preconditions.
+        let me = unsafe { libc::pthread_self() } as usize;
+        let poker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            // SAFETY: `me` is the test thread, alive until it joins us.
+            unsafe { libc::pthread_kill(me as libc::pthread_t, libc::SIGUSR1) };
+            std::thread::sleep(Duration::from_millis(100));
+            writer.write_all(b"ok").unwrap();
+        });
+        let start = Instant::now();
+        let mut scratch = [0u8; 8];
+        let read = read_some(
+            &mut reader,
+            &mut scratch,
+            start,
+            start + Duration::from_secs(10),
+            SnapdTimeoutContext::Request,
+        );
+        poker.join().unwrap();
+        assert_eq!(read, Ok(2));
+    }
 
     #[test]
     fn snap_name_validation_matches_grammar() {
