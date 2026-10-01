@@ -32,6 +32,15 @@ use crate::audio::{AudioFormat, PcmChunk};
 pub enum CaptureError {
     #[error("audio device unavailable: {0}")]
     DeviceUnavailable(String),
+    /// The audio service never answered: nothing to capture from at all.
+    #[error("audio service not responding: {0}")]
+    ServiceUnresponsive(String),
+    /// The audio graph has no usable capture source.
+    #[error("audio device unavailable: {0}")]
+    NoSource(String),
+    /// The capture stream opened, but no audio flowed from it.
+    #[error("audio device unavailable: {0}")]
+    NoFlow(String),
     #[error("requested format {0:?} cannot be produced")]
     UnsupportedFormat(AudioFormat),
     #[error("capture backend failed: {0}")]

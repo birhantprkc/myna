@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-30 17:26+0100\n"
+"POT-Creation-Date: 2026-10-01 02:06+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -66,28 +66,20 @@ msgstr ""
 msgid "⚠️ Dictation error"
 msgstr ""
 
-#: src/controller.rs:215 src/controller.rs:824 src/inject/mod.rs:61
+#: src/controller.rs:217 src/inject/mod.rs:53
 msgid "Focus lost"
 msgstr ""
 
-#: src/controller.rs:217
+#: src/controller.rs:219
 msgid "No speech detected"
 msgstr ""
 
-#: src/controller.rs:219
+#: src/controller.rs:221
 msgid "Background noise is high"
 msgstr ""
 
-#: src/controller.rs:755
+#: src/controller.rs:757
 msgid "Dictation target closed"
-msgstr ""
-
-#: src/controller.rs:820
-msgid "Refusing to type into a password field"
-msgstr ""
-
-#: src/controller.rs:821
-msgid "No text field is focused"
 msgstr ""
 
 #. TRANSLATORS: the keyboard shortcut's name in the desktop's dialog and settings.
@@ -100,25 +92,22 @@ msgstr ""
 msgid "Dictation (hold to talk)"
 msgstr ""
 
-#: src/shortcut/retry.rs:282
-#, c-format
-msgid "dictation hotkey unavailable: %s"
+#: src/shortcut/retry.rs:283
+msgid "Shortcut unavailable"
+msgstr ""
+
+#: src/inject/mod.rs:51
+msgid "Password field skipped"
+msgstr ""
+
+#: src/inject/mod.rs:52
+msgid "No text field focused"
+msgstr ""
+
+#: src/inject/mod.rs:54
+msgid "Typing unavailable"
 msgstr ""
 
 #: src/inject/mod.rs:55
-msgid "focused field is secure (password); refusing to inject"
-msgstr ""
-
-#: src/inject/mod.rs:59
-msgid "no editable target is focused"
-msgstr ""
-
-#: src/inject/mod.rs:65
-#, c-format
-msgid "injection backend unavailable: %s"
-msgstr ""
-
-#: src/inject/mod.rs:70
-#, c-format
-msgid "injection backend error: %s"
+msgid "Typing failed"
 msgstr ""

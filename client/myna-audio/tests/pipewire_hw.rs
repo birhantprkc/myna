@@ -280,8 +280,12 @@ async fn health_to_end(
 
 fn device_unavailable(state: Option<&CaptureHealth>) -> String {
     match state {
-        Some(CaptureHealth::Faulted(CaptureError::DeviceUnavailable(msg))) => msg.clone(),
-        other => panic!("expected a DeviceUnavailable fault, got {other:?}"),
+        Some(CaptureHealth::Faulted(
+            CaptureError::DeviceUnavailable(msg)
+            | CaptureError::NoSource(msg)
+            | CaptureError::NoFlow(msg),
+        )) => msg.clone(),
+        other => panic!("expected a device fault, got {other:?}"),
     }
 }
 
@@ -404,13 +408,13 @@ async fn no_session_manager_faults_loudly() {
 
     assert!(chunks.is_empty(), "a source-less graph must yield no audio");
     match fault {
-        Some(CaptureError::DeviceUnavailable(msg)) => {
+        Some(CaptureError::NoSource(msg)) => {
             assert!(
                 msg.contains("session manager"),
                 "message should name the cause: {msg}"
             )
         }
-        other => panic!("expected DeviceUnavailable(no source), got {other:?}"),
+        other => panic!("expected NoSource, got {other:?}"),
     }
     assert!(
         started.elapsed() < Duration::from_secs(10),

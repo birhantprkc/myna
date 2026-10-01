@@ -44,6 +44,9 @@ impl Failure {
 pub fn capture_headline(fault: &CaptureError) -> String {
     match fault {
         CaptureError::DeviceUnavailable(_) => tr("Microphone unavailable"),
+        CaptureError::ServiceUnresponsive(_) => tr("Audio system not responding"),
+        CaptureError::NoSource(_) => tr("No microphone found"),
+        CaptureError::NoFlow(_) => tr("Microphone silent"),
         CaptureError::UnsupportedFormat(_) => tr("Microphone format unsupported"),
         CaptureError::Backend(_) => tr("Audio system error"),
         CaptureError::Overloaded(_) => tr("System overloaded"),
@@ -81,6 +84,12 @@ mod tests {
                 CaptureError::UnsupportedFormat(AudioFormat::default()),
                 "Microphone format unsupported",
             ),
+            (
+                CaptureError::ServiceUnresponsive("x".into()),
+                "Audio system not responding",
+            ),
+            (CaptureError::NoSource("x".into()), "No microphone found"),
+            (CaptureError::NoFlow("x".into()), "Microphone silent"),
             (CaptureError::Backend("x".into()), "Audio system error"),
             (CaptureError::Overloaded(2.5), "System overloaded"),
         ];
@@ -126,6 +135,9 @@ mod tests {
         for fault in [
             CaptureError::DeviceUnavailable("x".into()),
             CaptureError::UnsupportedFormat(AudioFormat::default()),
+            CaptureError::ServiceUnresponsive("x".into()),
+            CaptureError::NoSource("x".into()),
+            CaptureError::NoFlow("x".into()),
             CaptureError::Backend("x".into()),
             CaptureError::Overloaded(1.0),
         ] {

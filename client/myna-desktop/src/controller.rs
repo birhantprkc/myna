@@ -819,15 +819,13 @@ impl DesktopController {
     /// A pre-capture failure (secure field / no target / unreachable backend):
     /// show an error, never capture. `acquire` already rolled back.
     async fn abort_before_capture(&mut self, err: InjectError) {
-        let message = match &err {
-            InjectError::SecureField => gettext("Refusing to type into a password field"),
-            InjectError::NoTarget => gettext("No text field is focused"),
-            // The same message a focus loss gets once capture is running: the
-            // field we were handed stopped being ours before it began.
-            InjectError::FocusLost => gettext("Focus lost"),
-            other => other.to_string(),
-        };
-        myna_core::info_log!("ctrl", "acquire failed, aborting before capture: {message}");
+        // A focus loss here reads as one once capture is running: the field we
+        // were handed stopped being ours before it began.
+        let message = err.headline();
+        myna_core::info_log!(
+            "ctrl",
+            "acquire failed, aborting before capture: {message} ({err})"
+        );
         report_critical(self.indicator.as_mut(), message).await;
         advance(&mut self.state, DictationState::Error);
         // A pre-capture abort is not a Release edge — the toggle's Press was

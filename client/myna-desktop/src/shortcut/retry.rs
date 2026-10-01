@@ -278,11 +278,9 @@ impl RetryingTrigger {
                         );
                         self.last_reason = Some(reason);
                     }
-                    self.publish(
-                        &gettext("dictation hotkey unavailable: %s")
-                            .replace("%s", failure.reason()),
-                    )
-                    .await;
+                    // The reason is in the log line above; the user gets the
+                    // headline.
+                    self.publish(&gettext("Shortcut unavailable")).await;
                     // Under the tests' `start_paused` clock tokio auto-advances
                     // whenever every task is parked on a timer, so the real
                     // backoff sequence runs in no wall-clock time.
@@ -442,9 +440,7 @@ mod tests {
 
         assert_eq!(
             bus.property("StatusMessage"),
-            Some(PropertyValue::Str(
-                "dictation hotkey unavailable: global-shortcuts portal unavailable".into()
-            ))
+            Some(PropertyValue::Str("Shortcut unavailable".into()))
         );
     }
 
@@ -599,9 +595,7 @@ mod tests {
 
         assert_eq!(
             bus.property("StatusMessage"),
-            Some(PropertyValue::Str(
-                "dictation hotkey unavailable: no dictation shortcut bound".into()
-            ))
+            Some(PropertyValue::Str("Shortcut unavailable".into()))
         );
     }
 
@@ -666,9 +660,7 @@ mod tests {
 
         assert_eq!(
             bus.property("StatusMessage"),
-            Some(PropertyValue::Str(
-                "dictation hotkey unavailable: no answer within 120s".into()
-            ))
+            Some(PropertyValue::Str("Shortcut unavailable".into()))
         );
     }
 

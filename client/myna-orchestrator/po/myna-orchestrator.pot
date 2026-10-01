@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 02:04+0100\n"
+"POT-Creation-Date: 2026-10-01 02:06+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -54,25 +54,37 @@ msgid "Microphone unavailable"
 msgstr ""
 
 #: src/failure.rs:47
-msgid "Microphone format unsupported"
+msgid "Audio system not responding"
 msgstr ""
 
 #: src/failure.rs:48
-msgid "Audio system error"
+msgid "No microphone found"
 msgstr ""
 
 #: src/failure.rs:49
+msgid "Microphone silent"
+msgstr ""
+
+#: src/failure.rs:50
+msgid "Microphone format unsupported"
+msgstr ""
+
+#: src/failure.rs:51
+msgid "Audio system error"
+msgstr ""
+
+#: src/failure.rs:52
 msgid "System overloaded"
 msgstr ""
 
-#: src/failure.rs:55
+#: src/failure.rs:58
 msgid "Transcription failed"
 msgstr ""
 
-#: src/failure.rs:60
+#: src/failure.rs:63
 msgid "Model not responding"
 msgstr ""
 
-#: src/failure.rs:65
+#: src/failure.rs:68
 msgid "Model connection lost"
 msgstr ""

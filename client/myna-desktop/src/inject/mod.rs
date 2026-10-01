@@ -28,9 +28,8 @@ pub enum FocusEvent {
 
 /// Why an injection operation failed.
 ///
-/// `Display` renders user-facing messages through the desktop gettext domain;
-/// with no .mo installed it is the identity, so the strings below double as
-/// the source templates for translation.
+/// [`InjectError::headline`] is what the user is told, translated through the
+/// desktop gettext domain; `Display` is the untranslated detail for logs.
 #[derive(Debug)]
 pub enum InjectError {
     /// The focused field is a password/secure field — refuse to inject (FR-021).
@@ -45,30 +44,29 @@ pub enum InjectError {
     Backend(String),
 }
 
+impl InjectError {
+    /// The short, translated message the user sees.
+    pub fn headline(&self) -> String {
+        match self {
+            InjectError::SecureField => gettext("Password field skipped"),
+            InjectError::NoTarget => gettext("No text field focused"),
+            InjectError::FocusLost => gettext("Focus lost"),
+            InjectError::Unavailable(_) => gettext("Typing unavailable"),
+            InjectError::Backend(_) => gettext("Typing failed"),
+        }
+    }
+}
+
 impl fmt::Display for InjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             InjectError::SecureField => {
-                write!(
-                    f,
-                    "{}",
-                    gettext("focused field is secure (password); refusing to inject")
-                )
+                write!(f, "focused field is secure (password); refusing to inject")
             }
-            InjectError::NoTarget => {
-                write!(f, "{}", gettext("no editable target is focused"))
-            }
-            InjectError::FocusLost => write!(f, "{}", gettext("Focus lost")),
-            InjectError::Unavailable(inner) => write!(
-                f,
-                "{}",
-                gettext("injection backend unavailable: %s").replace("%s", inner)
-            ),
-            InjectError::Backend(inner) => write!(
-                f,
-                "{}",
-                gettext("injection backend error: %s").replace("%s", inner)
-            ),
+            InjectError::NoTarget => write!(f, "no editable target is focused"),
+            InjectError::FocusLost => write!(f, "focus left the dictation target"),
+            InjectError::Unavailable(inner) => write!(f, "injection backend unavailable: {inner}"),
+            InjectError::Backend(inner) => write!(f, "injection backend error: {inner}"),
         }
     }
 }
@@ -121,4 +119,28 @@ pub trait Target: Send + fmt::Debug {
     /// Give up the target: clear what it shows and restore the input method
     /// it displaced.
     async fn release(self: Box<Self>);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InjectError;
+
+    #[test]
+    fn every_inject_error_has_its_headline() {
+        let cases = [
+            (InjectError::SecureField, "Password field skipped"),
+            (InjectError::NoTarget, "No text field focused"),
+            (InjectError::FocusLost, "Focus lost"),
+            (InjectError::Unavailable("x".into()), "Typing unavailable"),
+            (InjectError::Backend("x".into()), "Typing failed"),
+        ];
+        for (error, headline) in cases {
+            assert_eq!(error.headline(), headline);
+            assert_ne!(error.to_string(), headline, "the detail says more");
+        }
+        assert_eq!(
+            InjectError::Unavailable("no ibus".into()).to_string(),
+            "injection backend unavailable: no ibus"
+        );
+    }
 }

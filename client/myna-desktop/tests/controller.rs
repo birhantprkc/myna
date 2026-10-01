@@ -391,7 +391,7 @@ async fn secure_field_is_refused_before_capture() {
     }
     assert_eq!(
         indicate_log.lock().unwrap().clone(),
-        vec![IndicatorState::critical("Refusing to type into a password field"); 2],
+        vec![IndicatorState::critical("Password field skipped"); 2],
     );
     assert_eq!(controller.state(), DictationState::Idle);
 }

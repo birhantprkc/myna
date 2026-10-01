@@ -148,12 +148,10 @@ impl Supervisor {
             });
         }
         match self.deadline {
-            Some(deadline) if now >= deadline => Some(Ending::Fault(
-                CaptureError::DeviceUnavailable(match self.phase {
-                    Phase::Discovering => no_answer_message(),
-                    _ => no_flow_message(target),
-                }),
-            )),
+            Some(deadline) if now >= deadline => Some(Ending::Fault(match self.phase {
+                Phase::Discovering => CaptureError::ServiceUnresponsive(no_answer_message()),
+                _ => CaptureError::NoFlow(no_flow_message(target)),
+            })),
             _ => None,
         }
     }
@@ -636,10 +634,10 @@ fn no_answer_message() -> String {
 fn no_source_message(target: Option<&str>) -> String {
     match target {
         Some(t) => format!(
-            "no audio source available for '{t}' — is a PipeWire session manager (e.g. WirePlumber) running?"
+            "no audio source available for '{t}' - is a PipeWire session manager (e.g. WirePlumber) running?"
         ),
         None => {
-            "no audio source available — is a PipeWire session manager (e.g. WirePlumber) running?"
+            "no audio source available - is a PipeWire session manager (e.g. WirePlumber) running?"
                 .to_string()
         }
     }
@@ -651,10 +649,10 @@ fn no_source_message(target: Option<&str>) -> String {
 fn no_flow_message(target: Option<&str>) -> String {
     match target {
         Some(t) => format!(
-            "no audio is flowing from '{t}' — the device may be stuck, unplugged, or the graph failed to link"
+            "no audio is flowing from '{t}' - the device may be stuck, unplugged, or the graph failed to link"
         ),
         None => {
-            "no audio is flowing from the capture source — the device may be stuck, unplugged, or the graph failed to link"
+            "no audio is flowing from the capture source - the device may be stuck, unplugged, or the graph failed to link"
                 .to_string()
         }
     }
@@ -889,7 +887,7 @@ fn capture_session(
     match found {
         Ok(true) => {}
         Ok(false) => {
-            return Some(CaptureError::DeviceUnavailable(no_source_message(
+            return Some(CaptureError::NoSource(no_source_message(
                 spec.target.as_deref(),
             )));
         }
@@ -1175,8 +1173,10 @@ mod tests {
 
     fn fault_message(ending: Option<Ending>) -> String {
         match ending {
-            Some(Ending::Fault(CaptureError::DeviceUnavailable(msg))) => msg,
-            other => panic!("expected a DeviceUnavailable fault, got {other:?}"),
+            Some(Ending::Fault(
+                CaptureError::ServiceUnresponsive(msg) | CaptureError::NoFlow(msg),
+            )) => msg,
+            other => panic!("expected a deadline fault, got {other:?}"),
         }
     }
 
@@ -1185,7 +1185,15 @@ mod tests {
         let t0 = Instant::now();
         let sup = Supervisor::new(t0, None);
         assert_eq!(sup.tick(t0 + SILENCE_TIMEOUT - MS, false), None);
-        let msg = fault_message(sup.tick(t0 + SILENCE_TIMEOUT, false));
+        let ending = sup.tick(t0 + SILENCE_TIMEOUT, false);
+        assert!(
+            matches!(
+                ending,
+                Some(Ending::Fault(CaptureError::ServiceUnresponsive(_)))
+            ),
+            "{ending:?}"
+        );
+        let msg = fault_message(ending);
         assert!(msg.contains("did not answer"), "got: {msg}");
     }
 
@@ -1197,8 +1205,12 @@ mod tests {
         sup.linking(connected);
         assert_eq!(sup.tick(t0 + SILENCE_TIMEOUT, false), None);
         assert_eq!(sup.tick(connected + SILENCE_TIMEOUT - MS, false), None);
-        let msg = fault_message(sup.tick(connected + SILENCE_TIMEOUT, false));
-        assert_eq!(msg, no_flow_message(Some("mic")));
+        assert_eq!(
+            sup.tick(connected + SILENCE_TIMEOUT, false),
+            Some(Ending::Fault(CaptureError::NoFlow(no_flow_message(Some(
+                "mic"
+            )))))
+        );
     }
 
     #[test]
