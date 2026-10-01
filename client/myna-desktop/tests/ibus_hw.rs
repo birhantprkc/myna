@@ -42,6 +42,8 @@ const IC_IFACE: &str = "org.freedesktop.IBus.InputContext";
 /// `IBusCapabilite`: the field renders preedit itself and takes focus.
 const CAP_PREEDIT_TEXT: u32 = 1 << 0;
 const CAP_FOCUS: u32 = 1 << 3;
+/// The field reports the text around its cursor when asked.
+const CAP_SURROUNDING_TEXT: u32 = 1 << 5;
 
 /// Served by ibus-engine-simple, which the headless daemon can spawn.
 const PRIOR_ENGINE: &str = "xkb:us::eng";
@@ -257,6 +259,33 @@ impl Field {
             .unwrap_or_else(|_| panic!("global engine never became {engine}"));
     }
 
+    /// Drop what the daemon delivered so far, unread.
+    fn forget_delivered(&mut self) {
+        self.stream = MessageStream::from(&self.conn);
+    }
+
+    /// Wait for the daemon to emit `member` to this field.
+    async fn wait_signal(&mut self, member: &str) {
+        let ic = self.ic.clone();
+        let stream = &mut self.stream;
+        let seen = async move {
+            while let Some(msg) = stream.next().await {
+                let msg = msg.expect("message from IBus");
+                let header = msg.header();
+                if header.message_type() == zbus::message::Type::Signal
+                    && header.path().map(|p| p.as_str()) == Some(ic.as_str())
+                    && header.member().map(|m| m.as_str()) == Some(member)
+                {
+                    return;
+                }
+            }
+            panic!("IBus closed the field's connection");
+        };
+        tokio::time::timeout(HANG_GUARD, seen)
+            .await
+            .unwrap_or_else(|_| panic!("{member} never reached {}", self.ic));
+    }
+
     async fn next(&mut self) -> Seen {
         let ic = self.ic.clone();
         let stream = &mut self.stream;
@@ -323,6 +352,25 @@ fn ibus_text(value: OwnedValue) -> String {
         },
         other => panic!("not an IBusText: {other:?}"),
     }
+}
+
+/// A serialized `IBusText` carrying `text`, as a client sends it.
+fn ibus_text_value(text: &str) -> Value<'static> {
+    let attributes = zbus::zvariant::StructureBuilder::new()
+        .add_field("IBusAttrList".to_string())
+        .add_field(std::collections::HashMap::<String, Value<'static>>::new())
+        .add_field(Vec::<Value<'static>>::new())
+        .build()
+        .expect("IBusAttrList");
+    Value::from(
+        zbus::zvariant::StructureBuilder::new()
+            .add_field("IBusText".to_string())
+            .add_field(std::collections::HashMap::<String, Value<'static>>::new())
+            .add_field(text.to_string())
+            .append_field(Value::Value(Box::new(Value::from(attributes))))
+            .build()
+            .expect("IBusText"),
+    )
 }
 
 async fn global_engine() -> Option<String> {
@@ -416,6 +464,57 @@ async fn ordinary_field_receives_preedit_and_commit() {
         Some(PRIOR_ENGINE),
         "release restores the prior engine"
     );
+    field.close().await;
+}
+
+/// The engine asks for the field's surrounding text on focus, and the target
+/// reports the character before the cursor, which separates a dictation from
+/// the one before it.
+#[tokio::test]
+async fn the_field_reports_the_text_before_its_cursor() {
+    skip_unless_ibus!();
+    let _serial = exclusive().await;
+    let (mut field, mut injector) = session(0, 0).await;
+    field
+        .ic_call(
+            IC_IFACE,
+            "SetCapabilities",
+            &(CAP_PREEDIT_TEXT | CAP_FOCUS | CAP_SURROUNDING_TEXT,),
+        )
+        .await;
+    // The daemon also asks on an activation that first reads `FocusId`, so
+    // only a later one, with both answers cached, shows the engine asking.
+    injector
+        .acquire()
+        .await
+        .expect("acquire an ordinary field")
+        .release()
+        .await;
+    field.forget_delivered();
+    let target = injector.acquire().await.expect("acquire it again");
+    assert_eq!(target.char_before_cursor(), None, "the field has not said");
+
+    field.wait_signal("RequireSurroundingText").await;
+    let text = "how things turned.";
+    let cursor = text.chars().count() as u32;
+    field
+        .ic_call(
+            IC_IFACE,
+            "SetSurroundingText",
+            &(ibus_text_value(text), cursor, cursor),
+        )
+        .await;
+    let mut before = None;
+    for _ in 0..100 {
+        before = target.char_before_cursor();
+        if before.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(before, Some('.'));
+
+    target.release().await;
     field.close().await;
 }
 

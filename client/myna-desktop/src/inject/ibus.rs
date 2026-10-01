@@ -543,6 +543,10 @@ impl Retired {
 struct Lease {
     id: u64,
     binding: Binding,
+    /// The character before the cursor in the focused field, as its latest
+    /// surrounding text says. `None` until the field sends one, and at its
+    /// start.
+    before_cursor: Option<char>,
 }
 
 impl Lease {
@@ -598,6 +602,7 @@ impl EngineState {
             lease: watch::Sender::new(Lease {
                 id: 0,
                 binding: Binding::Lost,
+                before_cursor: None,
             }),
             next_lease: AtomicU64::new(1),
             displaced: watch::Sender::new(None),
@@ -610,6 +615,7 @@ impl EngineState {
         self.lease.send_replace(Lease {
             id,
             binding: Binding::Pending,
+            before_cursor: None,
         });
         id
     }
@@ -620,6 +626,24 @@ impl EngineState {
 
     fn focus(&self, change: FocusChange<'_>) {
         self.lease.send_modify(|lease| lease.focus(change));
+    }
+
+    /// Record the focused field's surrounding text, reduced at once to the
+    /// one character the spacing needs. Ignored unless a lease is focused:
+    /// anything earlier belongs to a field no lease writes to.
+    fn surrounding(&self, before_cursor: Option<char>) {
+        self.lease.send_if_modified(|lease| {
+            if matches!(lease.binding, Binding::Unnamed | Binding::Context(_)) {
+                lease.before_cursor = before_cursor;
+            }
+            false
+        });
+    }
+
+    /// The character before the cursor, while lease `id` is held.
+    fn before_cursor(&self, id: u64) -> Option<char> {
+        let lease = self.lease.borrow();
+        lease.before_cursor.filter(|_| lease.held_by(id))
     }
 
     /// End lease `id`, saying what ending it found.
@@ -736,11 +760,21 @@ impl EngineObject {
         true
     }
 
-    /// Read-only, as in `ibus-engine-simple`. The daemon re-sends the first
-    /// focus as `FocusInId` only once it has read this.
+    /// Read-only. True makes the daemon ask the field for its surrounding
+    /// text on every focus, which separates one dictation from the text
+    /// already before the cursor. The daemon re-sends the first focus as
+    /// `FocusInId` only once it has read this.
     #[zbus(property(emits_changed_signal = "const"))]
     async fn active_surrounding_text(&self) -> bool {
-        false
+        true
+    }
+
+    /// The field's text around the cursor. Only the character before the
+    /// cursor (or the selection the next commit replaces) is kept, and the
+    /// text is never logged.
+    async fn set_surrounding_text(&self, text: OwnedValue, cursor_pos: u32, anchor_pos: u32) {
+        let before = char_before(&text, cursor_pos.min(anchor_pos));
+        self.state.surrounding(before);
     }
 
     /// Write-only, as in `ibus-engine-simple`: the daemon only ever
@@ -780,6 +814,18 @@ impl EngineObject {
     async fn cursor_up(&self) {}
     async fn cursor_down(&self) {}
     async fn candidate_clicked(&self, _index: u32, _button: u32, _state: u32) {}
+}
+
+/// The character before char offset `pos` of a serialized `IBusText`.
+fn char_before(text: &Value<'_>, pos: u32) -> Option<char> {
+    let Value::Structure(text) = text else {
+        return None;
+    };
+    let Some(Value::Str(text)) = text.fields().get(2) else {
+        return None;
+    };
+    let pos = usize::try_from(pos).ok()?.checked_sub(1)?;
+    text.chars().nth(pos)
 }
 
 /// The `org.freedesktop.IBus.Factory` object: the daemon calls `CreateEngine`
@@ -1048,6 +1094,10 @@ impl Target for IbusTarget {
         }
     }
 
+    fn char_before_cursor(&self) -> Option<char> {
+        self.state.before_cursor(self.lease)
+    }
+
     fn focus_events(&self) -> BoxStream<'static, FocusEvent> {
         self.state.loss(self.lease)
     }
@@ -1234,9 +1284,8 @@ mod tests {
             "FocusId=false leaves every focus unnamed"
         );
         assert!(
-            !engine.active_surrounding_text().await,
-            "we consume no surrounding text; claiming otherwise asks the \
-             daemon for content we never read"
+            engine.active_surrounding_text().await,
+            "ActiveSurroundingText=false leaves dictations unseparated"
         );
     }
 
@@ -1578,6 +1627,59 @@ mod tests {
         assert!(!zbus::object_server::Interface::spawn_tasks_for_methods(
             &engine
         ));
+    }
+
+    #[tokio::test]
+    async fn the_character_before_the_cursor_is_kept_for_the_focused_lease() {
+        let state = engine_state();
+        let lease = state.mint();
+        let engine = engine(&state);
+        engine
+            .set_surrounding_text(ibus_text("stale").try_into().unwrap(), 5, 5)
+            .await;
+        assert_eq!(
+            state.before_cursor(lease),
+            None,
+            "text before focus is another field's"
+        );
+
+        engine.focus_in_id(FIELD.into(), "app".into()).await;
+        engine
+            .set_surrounding_text(ibus_text("Hi there. ").try_into().unwrap(), 9, 9)
+            .await;
+        assert_eq!(state.before_cursor(lease), Some('.'));
+        engine
+            .set_surrounding_text(ibus_text("Hi there. ").try_into().unwrap(), 10, 10)
+            .await;
+        assert_eq!(state.before_cursor(lease), Some(' '));
+        engine
+            .set_surrounding_text(ibus_text("Hi there. ").try_into().unwrap(), 8, 3)
+            .await;
+        assert_eq!(
+            state.before_cursor(lease),
+            Some(' '),
+            "a commit replaces the selection, so what precedes it counts"
+        );
+
+        engine.focus_out_id(FIELD.into()).await;
+        assert_eq!(
+            state.before_cursor(lease),
+            None,
+            "a lost lease says nothing"
+        );
+        let next = state.mint();
+        assert_eq!(state.before_cursor(next), None, "nor carries over");
+    }
+
+    #[test]
+    fn the_character_before_is_counted_in_characters() {
+        let text = ibus_text("ça va");
+        assert_eq!(char_before(&text, 0), None, "start of the field");
+        assert_eq!(char_before(&text, 1), Some('ç'));
+        assert_eq!(char_before(&text, 2), Some('a'));
+        assert_eq!(char_before(&text, 5), Some('a'));
+        assert_eq!(char_before(&text, 6), None, "past the end");
+        assert_eq!(char_before(&Value::from("not IBusText"), 1), None);
     }
 
     #[tokio::test]

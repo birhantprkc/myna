@@ -112,6 +112,12 @@ pub trait Target: Send + fmt::Debug {
     /// unstable text here.
     async fn set_preedit(&mut self, _text: &str) {}
 
+    /// The character before the cursor in the field, when the field says.
+    /// `None` at its start and wherever it does not say.
+    fn char_before_cursor(&self) -> Option<char> {
+        None
+    }
+
     /// Yields `FocusOut` once the right to write is gone, including when it
     /// was lost before this call.
     fn focus_events(&self) -> BoxStream<'static, FocusEvent>;

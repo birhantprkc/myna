@@ -1091,7 +1091,9 @@ impl CommitBuffer {
     ///
     /// The separator from already-inserted text is prepended here, but only
     /// when the buffered text doesn't carry its own leading whitespace
-    /// (contract I2 servers) - never a double space.
+    /// (contract I2 servers) - never a double space. The first flush is
+    /// separated from what the field already holds before the cursor, so a
+    /// second dictation does not run on from the first.
     async fn flush(&mut self, target: &mut dyn Target, allowed: bool) -> Ending {
         if self.pending.is_empty() {
             return Ending::None;
@@ -1102,7 +1104,14 @@ impl CommitBuffer {
             return Ending::None;
         }
         let mut text = std::mem::take(&mut self.pending);
-        if self.committed_any && !text.starts_with(char::is_whitespace) {
+        let separate = if self.committed_any {
+            !text.starts_with(char::is_whitespace)
+        } else {
+            target
+                .char_before_cursor()
+                .is_some_and(|before| continues_after(before, &text))
+        };
+        if separate {
             text.insert(0, ' ');
         }
         match target.commit(&text).await {
@@ -1122,6 +1131,42 @@ impl CommitBuffer {
             }
         }
     }
+}
+
+/// Whether `text` dictated after `before` needs a space between them. Not
+/// at the start of a line or after an opening bracket, not before closing
+/// punctuation, and not next to scripts written without spaces.
+fn continues_after(before: char, text: &str) -> bool {
+    let Some(first) = text.chars().next() else {
+        return false;
+    };
+    !before.is_whitespace()
+        && !first.is_whitespace()
+        && !matches!(
+            before,
+            '(' | '[' | '{' | '\u{201C}' | '\u{2018}' | '\u{AB}' | '\u{BF}' | '\u{A1}'
+        )
+        && !matches!(
+            first,
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\u{2026}'
+        )
+        && !written_without_spaces(before)
+        && !written_without_spaces(first)
+}
+
+/// Chinese, Japanese and Thai characters, and the CJK punctuation and
+/// full-width forms that go with them.
+fn written_without_spaces(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x0E00..=0x0E7F
+            | 0x3000..=0x30FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xF900..=0xFAFF
+            | 0xFF00..=0xFFEF
+            | 0x20000..=0x2FA1F
+    )
 }
 
 #[cfg(test)]
@@ -1629,13 +1674,21 @@ mod tests {
     struct ScriptedTarget {
         answer: Option<InjectError>,
         commits: Vec<String>,
+        before_cursor: Option<char>,
     }
 
     impl ScriptedTarget {
         fn refusing(err: InjectError) -> Self {
             Self {
                 answer: Some(err),
-                commits: Vec::new(),
+                ..Self::default()
+            }
+        }
+
+        fn after(before: char) -> Self {
+            Self {
+                before_cursor: Some(before),
+                ..Self::default()
             }
         }
     }
@@ -1650,11 +1703,75 @@ mod tests {
             }
         }
 
+        fn char_before_cursor(&self) -> Option<char> {
+            self.before_cursor
+        }
+
         fn focus_events(&self) -> BoxStream<'static, FocusEvent> {
             futures_util::stream::empty().boxed()
         }
 
         async fn release(self: Box<Self>) {}
+    }
+
+    async fn first_flush(target: &mut ScriptedTarget, text: &str) -> String {
+        let mut buffer = CommitBuffer::default();
+        buffer.push(text);
+        assert_eq!(buffer.flush(target, true).await, Ending::None);
+        target.commits.pop().expect("one commit")
+    }
+
+    #[tokio::test]
+    async fn a_dictation_is_spaced_from_the_text_before_the_cursor() {
+        let mut target = ScriptedTarget::after('.');
+        assert_eq!(first_flush(&mut target, "Many").await, " Many");
+        let mut target = ScriptedTarget::after('d');
+        assert_eq!(
+            first_flush(&mut target, " and").await,
+            " and",
+            "never a double space"
+        );
+        let mut target = ScriptedTarget::after(' ');
+        let mut buffer = CommitBuffer::default();
+        buffer.push("one");
+        buffer.flush(&mut target, true).await;
+        buffer.push("two");
+        buffer.flush(&mut target, true).await;
+        assert_eq!(
+            target.commits,
+            vec!["one", " two"],
+            "later flushes follow this dictation's own text"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dictation_is_not_spaced_where_no_space_belongs() {
+        let unspaced = [
+            (' ', "Many"),
+            ('\n', "Many"),
+            ('(', "Many"),
+            ('\u{201C}', "Many"),
+            ('d', "."),
+            ('d', ", and"),
+            ('d', "?"),
+            ('。', "然后"),
+            ('d', "然后"),
+            ('好', "OK"),
+        ];
+        for (before, text) in unspaced {
+            let mut target = ScriptedTarget::after(before);
+            assert_eq!(
+                first_flush(&mut target, text).await,
+                text,
+                "after {before:?}"
+            );
+        }
+        let mut unknown = ScriptedTarget::default();
+        assert_eq!(
+            first_flush(&mut unknown, "Many").await,
+            "Many",
+            "a field that does not say gets no space"
+        );
     }
 
     #[tokio::test]
