@@ -858,13 +858,17 @@ fn turning_user_daemons_on_puts_the_flag_and_follows_its_change() {
 
 /// snapd answers only once the user has answered polkit, which may take
 /// longer than any read: measured 40 s on Noble for a prompt left open.
+///
+/// The change poll must finish inside `per_request` and `total`, which the
+/// delay has to exceed, so they are seconds, not milliseconds: at 200/400 ms
+/// a ~2 s scheduling stall under sbuild failed it.
 #[test]
 fn the_authorization_prompt_may_outlast_a_request() {
     let fake = FakeSnapd::start(vec![
         step(
             "PUT /v2/snaps/system/conf ",
             http_body(202, "Accepted", CHANGE_9_ACCEPTED),
-            Some(Duration::from_millis(600)),
+            Some(Duration::from_millis(2500)),
         ),
         step(
             "GET /v2/changes/9 ",
@@ -874,10 +878,10 @@ fn the_authorization_prompt_may_outlast_a_request() {
     ]);
     let client =
         UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
-            per_request: Duration::from_millis(200),
-            authorization: Duration::from_secs(3),
+            per_request: Duration::from_secs(2),
+            authorization: Duration::from_secs(60),
             poll_interval: Duration::from_millis(20),
-            total: Duration::from_millis(400),
+            total: Duration::from_secs(2),
         });
 
     assert_eq!(
@@ -900,7 +904,7 @@ fn a_connect_prompt_may_outlast_a_request() {
     let client =
         UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
             per_request: Duration::from_millis(200),
-            authorization: Duration::from_secs(3),
+            authorization: Duration::from_secs(60),
             poll_interval: Duration::from_millis(20),
             total: Duration::from_millis(400),
         });
@@ -1023,7 +1027,7 @@ fn an_install_prompt_may_outlast_a_request() {
     let client =
         UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
             per_request: Duration::from_millis(200),
-            authorization: Duration::from_secs(3),
+            authorization: Duration::from_secs(60),
             poll_interval: Duration::from_millis(20),
             total: Duration::from_millis(400),
         });
