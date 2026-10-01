@@ -1756,7 +1756,7 @@ impl BackendUi {
             ),
         };
         self.detach_spoken_language();
-        let page = model_status_page(&title, &description, "audio-x-generic-symbolic");
+        let page = model_status_page(&title, &description, "emblem-system-symbolic");
         self.backend_nav.replace(&[page]);
     }
 
@@ -3558,6 +3558,11 @@ mod tests {
                 .downcast::<ui::StatusPage>()
                 .expect("a status page");
             assert_eq!(page.status().title(), "No active model");
+            assert_eq!(
+                page.status().icon_name().as_deref(),
+                Some("emblem-system-symbolic"),
+                "the status page wears the Model tab's gear"
+            );
         });
     }
 
