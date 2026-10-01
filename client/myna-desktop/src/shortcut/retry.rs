@@ -288,8 +288,14 @@ impl RetryingTrigger {
                         );
                         self.last_reason = Some(reason);
                     }
-                    self.publish_failure(&gettext("Shortcut unavailable"), failure.reason())
-                        .await;
+                    let headline = gettext("Shortcut unavailable");
+                    if let BindFailure::NotYet(_) = failure {
+                        // Every login races the portal; waiting for it is not
+                        // a fault, so it stays out of the sticky LastError.
+                        self.publish(&headline).await;
+                    } else {
+                        self.publish_failure(&headline, failure.reason()).await;
+                    }
                     // Under the tests' `start_paused` clock tokio auto-advances
                     // whenever every task is parked on a timer, so the real
                     // backoff sequence runs in no wall-clock time.
@@ -516,6 +522,24 @@ mod tests {
             (19..=22).contains(&n),
             "expected ~20 attempts in 10 min, got {n}"
         );
+    }
+
+    /// The portal is still starting at every login, and binds a moment later:
+    /// that wait must not leave a LastError for Diagnostics to report.
+    #[tokio::test(start_paused = true)]
+    async fn a_portal_not_up_yet_records_no_last_error() {
+        let bus = FakeBus::new();
+        let (trigger, _, _) = absent();
+        let mut trigger = trigger.status_on(Arc::new(tokio::sync::Mutex::new(bus.clone())));
+
+        let _ = tokio::time::timeout(Duration::from_secs(5), trigger.next_edge()).await;
+
+        assert_eq!(
+            bus.property("StatusMessage"),
+            Some(PropertyValue::Str("Shortcut unavailable".into()))
+        );
+        assert_eq!(bus.property("LastError"), None);
+        assert_eq!(bus.property("LastErrorDetail"), None);
     }
 
     /// ...and the point of the event is that the wait *ends* on it. The net is
