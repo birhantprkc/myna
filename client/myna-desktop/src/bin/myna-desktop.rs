@@ -578,6 +578,7 @@ fn make_session(
     live: &LiveSettings,
     readiness: Option<Readiness>,
     pump_bus: Option<SharedBus>,
+    restart: Arc<tokio::sync::Notify>,
 ) -> impl FnMut(mpsc::Sender<OrchestratorEvent>) -> Session + Send + 'static {
     let backend_socket = args.backend.clone().expect("daemon requires a backend");
     let language = live.language.clone();
@@ -589,7 +590,12 @@ fn make_session(
         // swapped) after the daemon started is picked up without a restart.
         let socket = match backend_socket.resolve() {
             Ok(provider) => provider.socket,
-            Err(e) => return no_backend(e),
+            Err(e) => {
+                if e.needs_restart() {
+                    restart.notify_one();
+                }
+                return no_backend(e);
+            }
         };
         let backend = WsUnixIe115Backend::new(&socket);
         let mut builder = CaptureSource::builder(AudioFormat::default());
@@ -878,11 +884,18 @@ async fn run_controller(
     // Held for the controller's whole life, and no longer: the subscription
     // exists to serve this controller, and dropping the handle stops it.
     let _settings_watch = live.follow(&args, pump_bus.clone());
+    let restart = Arc::new(tokio::sync::Notify::new());
 
     let builder = DesktopController::builder()
         .injector(LazyInjector::new(IbusConnect))
         .indicator(with_sounds(indicator, &live))
-        .session(make_session(&args, &live, readiness, pump_bus.clone()))
+        .session(make_session(
+            &args,
+            &live,
+            readiness,
+            pump_bus.clone(),
+            restart.clone(),
+        ))
         .preedit(live.preedit.clone())
         .auto_stop(live.auto_stop.clone());
 
@@ -927,8 +940,23 @@ async fn run_controller(
             );
             ExitCode::FAILURE
         }
+        // A model connected after this process started is mounted only in
+        // the namespace a fresh process joins (`Unusable::unmounted`). The
+        // press that found it shows its error for a moment first.
+        () = async {
+            restart.notified().await;
+            tokio::time::sleep(RESTART_GRACE).await;
+        } => {
+            eprintln!(
+                "a model was connected after this daemon started; exiting so the service restarts and can see it"
+            );
+            ExitCode::FAILURE
+        }
     }
 }
+
+/// How long the error of a press that needs a restart shows before it.
+const RESTART_GRACE: Duration = Duration::from_secs(3);
 
 /// Publish the "hotkey not bound yet" reason on `com.canonical.Myna.Dictation` where
 /// there is a bus to publish it on.
@@ -2237,7 +2265,7 @@ mod tests {
         };
         let live = LiveSettings::new(&resolved(&args, &unset()));
         assert!(live.preedit.get());
-        let mut factory = make_session(&args, &live, None, None);
+        let mut factory = make_session(&args, &live, None, None, Arc::default());
         let (events_tx, _events_rx) = mpsc::channel(16);
         let session = factory(events_tx);
         session.stop.stop();
@@ -2304,6 +2332,7 @@ mod tests {
             &LiveSettings::new(&resolved),
             Some(readiness.clone()),
             None,
+            Arc::default(),
         );
         let (events_tx, _events_rx) = mpsc::channel(1);
         // Calling the factory is synchronous; `run` below is deliberately

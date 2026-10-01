@@ -40,11 +40,19 @@ pub struct Unusable {
     /// Shares whose `provider.env` is unreadable, lacks `SNAP_NAME` or names a
     /// socket outside the share.
     pub malformed: usize,
+    /// Shares connected after this process started, whose mount it cannot
+    /// see: snapd mounts a new connection in the snap's mount namespace, but
+    /// each app of a snap with user mounts runs in a namespace of its own,
+    /// which only shows the empty mount point.
+    pub unmounted: usize,
 }
 
 impl Unusable {
     fn is_empty(&self) -> bool {
-        self.no_unix_socket.is_empty() && self.not_serving.is_empty() && self.malformed == 0
+        self.no_unix_socket.is_empty()
+            && self.not_serving.is_empty()
+            && self.malformed == 0
+            && self.unmounted == 0
     }
 }
 
@@ -73,12 +81,23 @@ impl ResolveError {
             ResolveError::NotConnected(unusable) if unusable.is_empty() => {
                 tr("Model not connected")
             }
+            ResolveError::NotConnected(unusable) if unusable.unmounted > 0 => {
+                tr("Model connected. Try again in a moment")
+            }
             ResolveError::NotConnected(unusable) if !unusable.not_serving.is_empty() => {
                 tr("Model not running")
             }
             ResolveError::NotConnected(_) => tr("Model not compatible"),
             ResolveError::Ambiguous(_) => tr("Several models connected"),
         }
+    }
+}
+
+impl ResolveError {
+    /// Whether only a fresh process can see the backend: one was connected
+    /// after this one started (see [`Unusable::unmounted`]).
+    pub fn needs_restart(&self) -> bool {
+        matches!(self, ResolveError::NotConnected(unusable) if unusable.unmounted > 0)
     }
 }
 
@@ -102,6 +121,12 @@ impl fmt::Display for ResolveError {
                         unusable.malformed
                     ));
                 }
+                if unusable.unmounted > 0 {
+                    parts.push(format!(
+                        "shares connected after this process started, not mounted in its namespace: {}",
+                        unusable.unmounted
+                    ));
+                }
                 write!(f, "{}", parts.join("; "))
             }
             ResolveError::Ambiguous(names) => write!(
@@ -120,6 +145,11 @@ impl std::error::Error for ResolveError {}
 /// for every subdirectory in name order. Missing `dir` reads as "not
 /// connected": before the first `snap connect` there is no mount point at all.
 pub fn resolve(dir: &Path) -> Result<Provider, ResolveError> {
+    resolve_with(dir, is_mount_point)
+}
+
+/// [`resolve`], asking `mounted` whether an empty share is a mount point.
+fn resolve_with(dir: &Path, mounted: impl Fn(&Path) -> bool) -> Result<Provider, ResolveError> {
     let mut shares: Vec<PathBuf> = match std::fs::read_dir(dir) {
         Ok(entries) => entries.flatten().map(|entry| entry.path()).collect(),
         // Absent before the first `snap connect`; a broken mount (EIO,
@@ -135,7 +165,15 @@ pub fn resolve(dir: &Path) -> Result<Provider, ResolveError> {
     for share in shares {
         let text = match std::fs::read_to_string(share.join(PROVIDER_ENV)) {
             Ok(text) => text,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                // snapd removes the mount point on disconnect, so an empty one
+                // outside this process's mounts is a connection it missed.
+                // Mounted and empty is a backend yet to start: not counted.
+                if is_empty_dir(&share) && !mounted(&share) {
+                    unusable.unmounted += 1;
+                }
+                continue;
+            }
             Err(_) => {
                 unusable.malformed += 1;
                 continue;
@@ -180,6 +218,51 @@ pub fn resolve(dir: &Path) -> Result<Provider, ResolveError> {
             found.into_iter().filter_map(|p| p.snap_name).collect(),
         )),
     }
+}
+
+fn is_empty_dir(path: &Path) -> bool {
+    std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
+}
+
+/// Whether `path` is a mount point in this process's mount namespace.
+fn is_mount_point(path: &Path) -> bool {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    std::fs::read_to_string("/proc/self/mountinfo")
+        .is_ok_and(|table| mount_points(&table).any(|point| point == path))
+}
+
+/// The mount points `/proc/self/mountinfo` lists, its octal escapes decoded.
+fn mount_points(table: &str) -> impl Iterator<Item = PathBuf> + '_ {
+    table
+        .lines()
+        .filter_map(|line| line.split(' ').nth(4))
+        .map(unescape_mountinfo)
+}
+
+fn unescape_mountinfo(field: &str) -> PathBuf {
+    use std::os::unix::ffi::OsStringExt;
+    let bytes = field.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let octal = bytes
+            .get(i + 1..i + 4)
+            .filter(|digits| bytes[i] == b'\\' && digits.iter().all(|d| (b'0'..=b'7').contains(d)))
+            .and_then(|digits| u8::from_str_radix(std::str::from_utf8(digits).ok()?, 8).ok());
+        match octal {
+            Some(byte) => {
+                out.push(byte);
+                i += 4;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    PathBuf::from(std::ffi::OsString::from_vec(out))
 }
 
 /// A `provider.env`: `KEY=value` lines, blank lines and `#` comments ignored,
@@ -323,6 +406,58 @@ mod tests {
         std::fs::create_dir_all(dir.join("run")).expect("subdir");
         let _held = UnixListener::bind(dir.join("run/myna.sock")).expect("bind");
         assert_eq!(not_connected(resolve(&dir)), Unusable::default());
+    }
+
+    /// What a running app of the snap sees after a `snap connect`: the mount
+    /// point snapd made, empty, because the mount went to another namespace.
+    #[test]
+    fn an_empty_share_this_process_cannot_see_mounted_needs_a_restart() {
+        let dir = tmpdir();
+        std::fs::create_dir_all(dir.join("provider")).expect("mount point");
+        let error = resolve_with(&dir, |_| false).expect_err("nothing to connect to");
+        assert!(error.needs_restart(), "{error:?}");
+        assert_eq!(
+            not_connected(Err(error)),
+            Unusable {
+                unmounted: 1,
+                ..Unusable::default()
+            }
+        );
+        let error = resolve_with(&dir, |_| false).expect_err("still nothing");
+        assert_eq!(error.headline(), "Model connected. Try again in a moment");
+        assert!(
+            error
+                .to_string()
+                .contains("not mounted in its namespace: 1"),
+            "{error}"
+        );
+    }
+
+    /// Mounted but empty is a backend that has not written its share yet.
+    #[test]
+    fn an_empty_mounted_share_is_not_a_missed_connection() {
+        let dir = tmpdir();
+        std::fs::create_dir_all(dir.join("provider")).expect("mount point");
+        let error = resolve_with(&dir, |_| true).expect_err("nothing to connect to");
+        assert!(!error.needs_restart());
+        assert_eq!(not_connected(Err(error)), Unusable::default());
+    }
+
+    #[test]
+    fn mount_points_are_read_from_mountinfo_with_escapes_decoded() {
+        let table =
+            "36 35 98:0 /mnt1 /mnt/with\\040space rw,noatime master:1 - ext3 /dev/root rw\n\
+                     40 30 0:5 / /var/snap/myna/x5/backend/provider rw - ext4 /dev/sda1 rw\n";
+        let points: Vec<PathBuf> = mount_points(table).collect();
+        assert_eq!(
+            points,
+            [
+                PathBuf::from("/mnt/with space"),
+                PathBuf::from("/var/snap/myna/x5/backend/provider")
+            ]
+        );
+        assert!(is_mount_point(Path::new("/")), "the root is always one");
+        assert!(!is_mount_point(&tmpdir()), "a plain directory is not");
     }
 
     #[test]
@@ -527,6 +662,7 @@ mod tests {
                 no_unix_socket: no_unix_socket.clone(),
                 not_serving: not_serving.clone(),
                 malformed,
+                unmounted: 0,
             });
             assert_eq!(err.headline(), headline, "{err:?}");
             let detail = err.to_string();

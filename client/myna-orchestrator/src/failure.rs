@@ -124,6 +124,7 @@ mod tests {
                 no_unix_socket: no_unix_socket.iter().map(|s| s.to_string()).collect(),
                 not_serving: not_serving.iter().map(|s| s.to_string()).collect(),
                 malformed,
+                unmounted: 0,
             })
         };
         let mut headlines = vec![
@@ -148,6 +149,10 @@ mod tests {
             unusable(&["a"], &[], 0),
             unusable(&[], &["b"], 0),
             unusable(&[], &[], 1),
+            ResolveError::NotConnected(Unusable {
+                unmounted: 1,
+                ..Unusable::default()
+            }),
             ResolveError::Ambiguous(vec!["a".into(), "b".into()]),
         ] {
             headlines.push(resolve.headline());

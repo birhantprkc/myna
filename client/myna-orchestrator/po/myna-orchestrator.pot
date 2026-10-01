@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 03:47+0100\n"
+"POT-Creation-Date: 2026-10-01 06:24+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -21,7 +21,7 @@ msgstr ""
 msgid "Model not reachable"
 msgstr ""
 
-#: src/backend/mod.rs:82 src/backend/share.rs:79
+#: src/backend/mod.rs:82 src/backend/share.rs:90
 msgid "Model not compatible"
 msgstr ""
 
@@ -33,15 +33,19 @@ msgstr ""
 msgid "Model stopped"
 msgstr ""
 
-#: src/backend/share.rs:74
+#: src/backend/share.rs:82
 msgid "Model not connected"
 msgstr ""
 
-#: src/backend/share.rs:77
+#: src/backend/share.rs:85
+msgid "Model connected. Try again in a moment"
+msgstr ""
+
+#: src/backend/share.rs:88
 msgid "Model not running"
 msgstr ""
 
-#: src/backend/share.rs:80
+#: src/backend/share.rs:91
 msgid "Several models connected"
 msgstr ""
 
