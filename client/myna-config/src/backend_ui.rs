@@ -4327,7 +4327,7 @@ mod tests {
         let errors = [
             crate::domain::BackendSurfaceError::new(
                 crate::domain::BackendSurface::ModelctlConfig,
-                "command exited unsuccessfully with status Some(1)",
+                "command exited with status 1: no such key",
                 "private config output",
             ),
             crate::domain::BackendSurfaceError::new(

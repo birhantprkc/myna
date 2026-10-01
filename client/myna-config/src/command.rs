@@ -103,6 +103,15 @@ pub enum OutputStream {
     Stderr,
 }
 
+impl std::fmt::Display for OutputStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        })
+    }
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum CommandError {
     #[error("command not found: {executable}")]
@@ -113,23 +122,64 @@ pub enum CommandError {
         kind: io::ErrorKind,
         message: String,
     },
-    #[error("command timed out after {timeout:?}")]
+    #[error("command timed out after {}", duration_text(*timeout))]
     Timeout { timeout: Duration },
     #[error("command was cancelled")]
     Cancelled,
-    #[error("command exited unsuccessfully with status {exit_status:?}")]
+    #[error("{}", non_zero_text(*exit_status, stdout, stderr))]
     NonZero {
         exit_status: Option<i32>,
         stdout: String,
         stderr: String,
     },
-    #[error("{stream:?} was not valid UTF-8: {message}")]
+    #[error("{stream} was not valid UTF-8: {message}")]
     InvalidUtf8 {
         stream: OutputStream,
         message: String,
     },
     #[error("fake command runner has no scripted outcome")]
     FakeScriptExhausted,
+}
+
+/// Longest stretch of a failed command's output a one-line message quotes.
+const QUOTED_OUTPUT_CHARS: usize = 300;
+
+/// How the command ended, then the last line it printed, which names the
+/// cause: a traceback or a log ends in it.
+fn non_zero_text(exit_status: Option<i32>, stdout: &str, stderr: &str) -> String {
+    let mut text = match exit_status {
+        Some(code) => format!("command exited with status {code}"),
+        None => "command was killed by a signal".to_owned(),
+    };
+    let last_line = |output: &str| {
+        output
+            .lines()
+            .map(str::trim)
+            .rfind(|line| !line.is_empty())
+            .map(str::to_owned)
+    };
+    if let Some(line) = last_line(stderr).or_else(|| last_line(stdout)) {
+        text.push_str(": ");
+        match line.char_indices().nth(QUOTED_OUTPUT_CHARS) {
+            Some((cut, _)) => {
+                text.push_str(&line[..cut]);
+                text.push('…');
+            }
+            None => text.push_str(&line),
+        }
+    }
+    text
+}
+
+/// A duration as a person reads it: "30 s", "250 ms", "1.5 s".
+pub fn duration_text(duration: Duration) -> String {
+    if duration.subsec_nanos() == 0 {
+        format!("{} s", duration.as_secs())
+    } else if duration < Duration::from_secs(1) {
+        format!("{} ms", duration.as_millis())
+    } else {
+        format!("{:.1} s", duration.as_secs_f64())
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -477,5 +527,73 @@ mod tests {
 
         assert_eq!(error, CommandError::Cancelled);
         assert!(token.is_cancelled());
+    }
+
+    fn non_zero(exit_status: Option<i32>, stdout: &str, stderr: &str) -> String {
+        CommandError::NonZero {
+            exit_status,
+            stdout: stdout.to_owned(),
+            stderr: stderr.to_owned(),
+        }
+        .to_string()
+    }
+
+    /// modelctl list-engines on a backend without hardware-observe: the
+    /// message must carry the cause, not `Some(1)`.
+    #[test]
+    fn a_failed_command_says_how_it_ended_and_its_last_stderr_line() {
+        let text = non_zero(
+            Some(1),
+            "partial listing\n",
+            "Traceback (most recent call last):\n  ...\n\
+             PermissionError: [Errno 13] Permission denied: '/sys/bus/usb/devices'\n\n",
+        );
+        assert_eq!(
+            text,
+            "command exited with status 1: PermissionError: [Errno 13] \
+             Permission denied: '/sys/bus/usb/devices'"
+        );
+        assert!(!text.contains("Some("), "{text}");
+    }
+
+    #[test]
+    fn a_signalled_command_says_so_and_falls_back_to_stdout() {
+        assert_eq!(non_zero(None, "", ""), "command was killed by a signal");
+        assert_eq!(
+            non_zero(None, "out of memory\n", "  \n"),
+            "command was killed by a signal: out of memory"
+        );
+    }
+
+    #[test]
+    fn a_long_output_line_is_cut() {
+        let text = non_zero(Some(2), "", &"é".repeat(QUOTED_OUTPUT_CHARS + 5));
+        assert!(text.ends_with('…'), "{text}");
+        assert_eq!(
+            text.chars().filter(|&c| c == 'é').count(),
+            QUOTED_OUTPUT_CHARS
+        );
+    }
+
+    #[test]
+    fn timeouts_and_streams_read_as_words() {
+        let timeout = |duration| CommandError::Timeout { timeout: duration }.to_string();
+        assert_eq!(
+            timeout(Duration::from_secs(10)),
+            "command timed out after 10 s"
+        );
+        assert_eq!(
+            timeout(Duration::from_millis(250)),
+            "command timed out after 250 ms"
+        );
+        assert_eq!(
+            timeout(Duration::from_millis(1500)),
+            "command timed out after 1.5 s"
+        );
+        let invalid = CommandError::InvalidUtf8 {
+            stream: OutputStream::Stderr,
+            message: "bad byte".to_owned(),
+        };
+        assert_eq!(invalid.to_string(), "stderr was not valid UTF-8: bad byte");
     }
 }

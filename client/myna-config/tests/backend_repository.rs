@@ -380,6 +380,35 @@ fn a_backend_with_no_engine_selected_is_a_state_not_a_failure() {
     assert!(snapshot.engines().is_some());
 }
 
+/// A sideloaded backend without hardware-observe: Diagnostics showed
+/// "command exited unsuccessfully with status Some(1)" and nothing else.
+#[test]
+fn a_failed_surface_carries_what_modelctl_said() {
+    let (repository, _) = repository([
+        ok(PARAKEET_INFO),
+        ok(VERSION),
+        ok(STATUS),
+        ok(GET),
+        ok(MODELS),
+        refused("Error: listing engines: open /sys/bus/usb/devices: permission denied\n"),
+    ]);
+
+    let snapshot = block_on(repository.read_snapshot(
+        &BackendIdentity::new("myna-parakeet", "provider"),
+        CancellationToken::new(),
+    ));
+
+    let message = snapshot
+        .error(BackendSurface::Engines)
+        .expect("list-engines failed")
+        .message();
+    assert_eq!(
+        message,
+        "command exited with status 1: Error: listing engines: \
+         open /sys/bus/usb/devices: permission denied"
+    );
+}
+
 #[test]
 fn likely_modelctl_command_after_irrelevant_apps_is_probed_within_budget() {
     let info = "\
