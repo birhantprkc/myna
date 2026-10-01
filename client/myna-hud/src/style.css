@@ -147,9 +147,11 @@ window.myna-hud-window {
     background-color: color-mix(in srgb, var(--error-bg-color) 20%, black);
 }
 
+/* Lightened: the raw error colour on its own 20% mix reads at ~3.6:1, under
+ * WCAG AA's 4.5:1 for 11pt text; 60% towards white gives ~6.5:1. */
 .myna-hud-pill.myna-hud-severity-critical .myna-hud-icon,
 .myna-hud-pill.myna-hud-severity-critical .myna-hud-label {
-    color: var(--error-bg-color);
+    color: color-mix(in srgb, var(--error-bg-color) 60%, white);
 }
 
 .myna-hud-pill.myna-hud-phase-loading {
