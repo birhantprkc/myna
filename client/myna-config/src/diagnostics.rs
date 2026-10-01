@@ -135,6 +135,7 @@ pub struct DiagnosticReport {
     onboarding: OnboardingState,
     warnings: Vec<Warning>,
     body: String,
+    hanging: Vec<usize>,
 }
 
 impl DiagnosticReport {
@@ -148,6 +149,12 @@ impl DiagnosticReport {
 
     pub fn copy_text(&self) -> String {
         self.body.clone()
+    }
+
+    /// Per line of [`Self::copy_text`], the column its wrapped continuation
+    /// lines align to: a field's value column, else the line's own indent.
+    pub fn continuation_columns(&self) -> &[usize] {
+        &self.hanging
     }
 }
 
@@ -218,11 +225,12 @@ pub fn present_diagnostics(input: DiagnosticInput) -> DiagnosticReport {
         .as_ref()
         .map(performance_warnings)
         .unwrap_or_default();
-    let body = align_fields(&render_body(&input, onboarding, &warnings));
+    let (body, hanging) = align_fields(&render_body(&input, onboarding, &warnings));
     DiagnosticReport {
         onboarding,
         warnings,
         body,
+        hanging,
     }
 }
 
@@ -657,8 +665,9 @@ fn field(out: &mut String, label: &str, value: &str) {
 }
 
 /// Pads every field label to the widest one, so the values form one column
-/// whatever the translation's label lengths.
-fn align_fields(body: &str) -> String {
+/// whatever the translation's label lengths. Also returns each line's
+/// continuation column (see [`DiagnosticReport::continuation_columns`]).
+fn align_fields(body: &str) -> (String, Vec<usize>) {
     let width = body
         .lines()
         .filter_map(|line| line.split_once(FIELD_SEPARATOR))
@@ -666,14 +675,21 @@ fn align_fields(body: &str) -> String {
         .max()
         .unwrap_or(0);
     let mut out = String::with_capacity(body.len());
+    let mut hanging = Vec::new();
     for line in body.lines() {
         match line.split_once(FIELD_SEPARATOR) {
-            Some((label, value)) => out.push_str(&format!("{label:<width$} {value}")),
-            None => out.push_str(line),
+            Some((label, value)) => {
+                out.push_str(&format!("{label:<width$} {value}"));
+                hanging.push(width + 1);
+            }
+            None => {
+                out.push_str(line);
+                hanging.push(line.chars().take_while(|c| *c == ' ').count());
+            }
         }
         out.push('\n');
     }
-    out
+    (out, hanging)
 }
 
 /// Always printed when the daemon is up: a confirmed zero is the fact worth
@@ -831,6 +847,30 @@ mod tests {
                 .filter(|rest| rest.starts_with(' '))
                 .map(str::trim_start)
         })
+    }
+
+    /// A wrapped value continues under its own column, not at the margin.
+    #[test]
+    fn continuations_align_to_the_value_or_the_indent() {
+        let report = present_diagnostics(DiagnosticInput {
+            extension: Some(ExtensionReport::NotInstalled),
+            ..running_daemon(None)
+        });
+        let text = report.copy_text();
+        let columns = report.continuation_columns();
+        assert_eq!(text.lines().count(), columns.len());
+        for (line, &column) in text.lines().zip(columns) {
+            if field_value(line, "Last error").is_some() {
+                assert_eq!(
+                    line.len() - field_value(line, "Last error").unwrap().len(),
+                    column
+                );
+            } else if line.starts_with("  ") && !line.starts_with("    ") {
+                assert_eq!(column, 2, "{line:?}");
+            } else if !line.starts_with(' ') {
+                assert_eq!(column, 0, "{line:?}");
+            }
+        }
     }
 
     /// Labels of every length line their values up in one column, so a long

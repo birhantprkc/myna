@@ -71,6 +71,42 @@ impl ModelRow {
 /// A model row's accessible description: its subtitle, then the pill's text
 /// when it is recommended. libadwaita describes the row by its subtitle
 /// label, which GTK 4.14 reads out as nothing, so the rows say it instead.
+/// Indents each line's wrapped continuation to `columns[line]` characters of
+/// the view's monospace font, so a long value wraps under itself.
+fn hang_continuations(view: &gtk::TextView, columns: &[usize]) {
+    let buffer = view.buffer();
+    let table = buffer.tag_table();
+    for (line, &column) in columns.iter().enumerate() {
+        if column == 0 {
+            continue;
+        }
+        let name = format!("hang-{column}");
+        let tag = table.lookup(&name).unwrap_or_else(|| {
+            let width = view
+                .create_pango_layout(Some(&" ".repeat(column)))
+                .pixel_size()
+                .0;
+            // Pango's negative indent keeps the first line at the margin
+            // and moves the others in by its size.
+            let tag = gtk::TextTag::builder()
+                .name(name.as_str())
+                .indent(-width)
+                .build();
+            table.add(&tag);
+            tag
+        });
+        let Ok(line) = i32::try_from(line) else {
+            break;
+        };
+        let (Some(start), Some(mut end)) = (buffer.iter_at_line(line), buffer.iter_at_line(line))
+        else {
+            continue;
+        };
+        end.forward_to_line_end();
+        buffer.apply_tag(&tag, &start, &end);
+    }
+}
+
 fn model_description(subtitle: Option<&str>, pill: Option<&str>) -> Option<String> {
     let parts: Vec<&str> = [subtitle, pill]
         .into_iter()
@@ -1988,6 +2024,7 @@ impl BackendUi {
         // Fill the read-only report view.
         let report_view = widget.report_view();
         report_view.buffer().set_text(&report.copy_text());
+        hang_continuations(&report_view, report.continuation_columns());
         report_view.update_property(&[gtk::accessible::Property::Label(&gettextrs::gettext(
             "Diagnostic report",
         ))]);
