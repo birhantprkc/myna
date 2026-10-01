@@ -13,7 +13,8 @@ use gio::glib::{self, Variant, VariantDict, VariantTy};
 use gio::prelude::*;
 
 use crate::onboarding::{
-    extension_state, ExtensionCopies, ExtensionInfo, ExtensionRun, ExtensionState,
+    extension_state, ExtensionCopies, ExtensionCopy, ExtensionInfo, ExtensionReport, ExtensionRun,
+    ExtensionState,
 };
 use crate::ports::{ShellExtensions, SystemConfiguratorError};
 
@@ -34,6 +35,8 @@ const STATE_ENABLED: i64 = 1;
 const STATE_ACTIVATING: i64 = 8;
 /// `ExtensionState.OUT_OF_DATE`.
 const STATE_OUT_OF_DATE: i64 = 4;
+/// `ExtensionState.ERROR`.
+const STATE_ERROR: i64 = 3;
 
 pub struct GnomeShellExtensions {
     connection: Option<gio::DBusConnection>,
@@ -252,6 +255,64 @@ fn raw_state(info: &Variant) -> Option<i64> {
     Some(state as i64)
 }
 
+/// What gnome-shell says about `uuid`, for Diagnostics. Synchronous, like the
+/// page's other reads: it refreshes on demand.
+pub fn extension_report(uuid: &str) -> ExtensionReport {
+    let reply =
+        gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).and_then(|connection| {
+            connection.call_sync(
+                Some(SHELL_NAME),
+                SHELL_PATH,
+                EXTENSIONS_INTERFACE,
+                "GetExtensionInfo",
+                Some(&(uuid,).to_variant()),
+                Some(VariantTy::new("(a{sv})").expect("valid type")),
+                gio::DBusCallFlags::NO_AUTO_START,
+                CALL_TIMEOUT.as_millis() as i32,
+                gio::Cancellable::NONE,
+            )
+        });
+    match reply {
+        Ok(reply) => parse_report(&reply.child_value(0), &glib::user_data_dir()),
+        Err(_) => ExtensionReport::NoShell,
+    }
+}
+
+/// One `GetExtensionInfo` reply as Diagnostics reports it.
+pub fn parse_report(info: &Variant, user_data_dir: &std::path::Path) -> ExtensionReport {
+    let dict = VariantDict::new(Some(info));
+    let Some(state) = raw_state(info) else {
+        return ExtensionReport::NotInstalled;
+    };
+    let path: String = dict.lookup("path").ok().flatten().unwrap_or_default();
+    let error = (state == STATE_ERROR)
+        .then(|| dict.lookup::<String>("error").ok().flatten())
+        .flatten()
+        .filter(|error| !error.is_empty());
+    ExtensionReport::Known {
+        state: state_name(state),
+        copy: ExtensionCopy::of(std::path::Path::new(&path), user_data_dir),
+        error,
+    }
+}
+
+/// gnome-shell's `ExtensionState` names, as `gnome-extensions info` prints
+/// them.
+fn state_name(state: i64) -> String {
+    match state {
+        1 => "active".into(),
+        2 => "inactive".into(),
+        3 => "error".into(),
+        4 => "out of date".into(),
+        5 => "downloading".into(),
+        6 => "initialized".into(),
+        7 => "deactivating".into(),
+        8 => "activating".into(),
+        99 => "uninstalled".into(),
+        other => format!("state {other}"),
+    }
+}
+
 /// The call as a failure report names it.
 fn enable_call(uuid: &str) -> String {
     format!("{EXTENSIONS_INTERFACE}.EnableExtension({uuid:?})")
@@ -307,6 +368,69 @@ mod tests {
             dict.insert_value(key, value);
         }
         dict.end()
+    }
+
+    #[test]
+    fn the_report_names_the_running_copy_never_its_path() {
+        let home = std::path::Path::new("/home/alice/.local/share");
+        let report = |path: &str, state: f64| {
+            parse_report(
+                &reply(&[
+                    ("type", 1.0.to_variant()),
+                    ("state", state.to_variant()),
+                    ("path", path.to_variant()),
+                    ("error", "boom at /home/alice/x.js".to_variant()),
+                ]),
+                home,
+            )
+        };
+        let cases = [
+            (
+                "/usr/share/gnome/gnome-shell/extensions/myna-shell@canonical.com",
+                ExtensionCopy::MynaConfigPackage,
+            ),
+            (
+                "/usr/share/gnome-shell/extensions/myna-shell@canonical.com",
+                ExtensionCopy::UbuntuPackage,
+            ),
+            (
+                "/usr/share/ubuntu/gnome-shell/extensions/myna-shell@canonical.com",
+                ExtensionCopy::DevelopmentOverride,
+            ),
+            (
+                "/home/alice/.local/share/gnome-shell/extensions/myna-shell@canonical.com",
+                ExtensionCopy::UserCopy,
+            ),
+            (
+                "/opt/x/gnome-shell/extensions/myna-shell@canonical.com",
+                ExtensionCopy::OtherSystemCopy,
+            ),
+            ("", ExtensionCopy::OtherSystemCopy),
+        ];
+        for (path, copy) in cases {
+            assert_eq!(
+                report(path, 1.0),
+                ExtensionReport::Known {
+                    state: "active".into(),
+                    copy,
+                    error: None,
+                },
+                "{path}"
+            );
+        }
+        assert_eq!(
+            report("/usr/share/gnome-shell/extensions/x", 3.0),
+            ExtensionReport::Known {
+                state: "error".into(),
+                copy: ExtensionCopy::UbuntuPackage,
+                error: Some("boom at /home/alice/x.js".into()),
+            },
+            "only the error state carries gnome-shell's error"
+        );
+        assert_eq!(
+            parse_report(&reply(&[]), home),
+            ExtensionReport::NotInstalled
+        );
     }
 
     #[test]

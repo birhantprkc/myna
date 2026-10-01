@@ -190,6 +190,58 @@ pub fn extension_state(
     }
 }
 
+/// Which copy of the extension gnome-shell runs, named by where it lives.
+/// Diagnostics shows this, never the path itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExtensionCopy {
+    /// `/usr/share/gnome/gnome-shell/extensions`, from the myna-config deb.
+    MynaConfigPackage,
+    /// `/usr/share/gnome-shell/extensions`, from Ubuntu's own package.
+    UbuntuPackage,
+    /// `/usr/share/ubuntu/gnome-shell/extensions`, a development override
+    /// that shadows both packages.
+    DevelopmentOverride,
+    /// The user's data dir, as the development tree installs it.
+    UserCopy,
+    /// Any other directory.
+    OtherSystemCopy,
+}
+
+impl ExtensionCopy {
+    /// Classify the extension directory gnome-shell reported.
+    pub fn of(path: &std::path::Path, user_data_dir: &std::path::Path) -> Self {
+        let under = |dir: &std::path::Path| path.starts_with(dir.join("gnome-shell/extensions"));
+        if under(user_data_dir) {
+            Self::UserCopy
+        } else if under(std::path::Path::new("/usr/share/gnome")) {
+            Self::MynaConfigPackage
+        } else if under(std::path::Path::new("/usr/share/ubuntu")) {
+            Self::DevelopmentOverride
+        } else if under(std::path::Path::new("/usr/share")) {
+            Self::UbuntuPackage
+        } else {
+            Self::OtherSystemCopy
+        }
+    }
+}
+
+/// What Diagnostics says about the extension.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtensionReport {
+    /// No gnome-shell answered.
+    NoShell,
+    /// gnome-shell knows no extension by this uuid.
+    NotInstalled,
+    Known {
+        /// gnome-shell's own state name, such as `active` or `error`.
+        state: String,
+        copy: ExtensionCopy,
+        /// gnome-shell's error for an extension in the error state. Error
+        /// text: may name paths, redact before showing it.
+        error: Option<String>,
+    },
+}
+
 /// The model the wizard installs and what installing it downloads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModelOffer {

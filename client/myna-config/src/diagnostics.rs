@@ -12,6 +12,7 @@
 use std::time::Duration;
 
 use crate::machine::{bytes, AudioDrops, DaemonReport, LastError, MachineFacts, ProcessMemory};
+use crate::onboarding::{ExtensionCopy, ExtensionReport};
 use crate::performance::{
     assess_clock, assess_pressure, ClockClass, ClockVerdict, PerformanceFacts, PressureWarning,
 };
@@ -92,6 +93,8 @@ pub struct DiagnosticInput {
     pub daemon: Option<ProcessMemory>,
     /// What the running daemon publishes; `None` when it is not reachable.
     pub daemon_report: Option<DaemonReport>,
+    /// Which copy of the shell extension runs; `None` when not read.
+    pub extension: Option<ExtensionReport>,
     /// `None` until the probe has run once; the report says so rather than
     /// claiming a clock it did not measure.
     pub performance: Option<PerformanceFacts>,
@@ -493,6 +496,13 @@ fn render_body(
             &gettextrs::gettext("not installed"),
         ),
     }
+    if let Some(extension) = &input.extension {
+        field(
+            &mut out,
+            &gettextrs::gettext("Shell extension"),
+            &extension_summary(extension),
+        );
+    }
 
     out.push('\n');
     out.push_str(&gettextrs::gettext("Models"));
@@ -636,6 +646,29 @@ fn drops_summary(drops: AudioDrops) -> String {
         drops.not_active,
         gettextrs::gettext("chunks dropped this session")
     )
+}
+
+/// `<state>, <copy>`, plus gnome-shell's error when it has one. The copy is
+/// a classification, never the path: this page promises no paths.
+fn extension_summary(report: &ExtensionReport) -> String {
+    match report {
+        ExtensionReport::NoShell => gettextrs::gettext("gnome-shell did not answer"),
+        ExtensionReport::NotInstalled => gettextrs::gettext("not installed"),
+        ExtensionReport::Known { state, copy, error } => {
+            let copy = match copy {
+                ExtensionCopy::MynaConfigPackage => gettextrs::gettext("myna-config package"),
+                ExtensionCopy::UbuntuPackage => gettextrs::gettext("Ubuntu package"),
+                ExtensionCopy::DevelopmentOverride => gettextrs::gettext("development override"),
+                ExtensionCopy::UserCopy => gettextrs::gettext("user copy"),
+                ExtensionCopy::OtherSystemCopy => gettextrs::gettext("other system copy"),
+            };
+            let mut summary = format!("{state}, {copy}");
+            if let Some(error) = error {
+                summary.push_str(&format!(" ({})", redact_text(error)));
+            }
+            summary
+        }
+    }
 }
 
 /// `<headline> (<detail>), <local time>`, or "none". The detail is the one
@@ -838,6 +871,11 @@ mod tests {
                 drops: Some(AudioDrops { not_active: 3 }),
                 last_error: None,
             }),
+            extension: Some(ExtensionReport::Known {
+                state: "active".into(),
+                copy: ExtensionCopy::MynaConfigPackage,
+                error: None,
+            }),
             performance: None,
             backends: vec![BackendDiagnostic {
                 snap_name: "myna-parakeet".into(),
@@ -868,6 +906,10 @@ mod tests {
         assert!(text.contains("parakeet-tdt-0.6b-v3"), "{text}");
         assert!(text.contains("3 chunks dropped this session"), "{text}");
         assert!(text.contains("Last error none"), "{text}");
+        assert!(
+            text.contains("Shell extension active, myna-config package"),
+            "{text}"
+        );
         assert!(text.contains("Problems:\n  (none)"), "{text}");
         // Nothing in the report came from outside this crate.
         assert!(!text.contains('/'), "{text}");
@@ -913,6 +955,35 @@ mod tests {
         assert!(!text.contains("/nonexistent"), "{text}");
         assert!(!text.contains("myna.sock"), "{text}");
         assert!(!text.contains('/'), "{text}");
+    }
+
+    #[test]
+    fn a_failed_extension_shows_gnome_shells_error_without_paths() {
+        let report = present_diagnostics(DiagnosticInput {
+            extension: Some(ExtensionReport::Known {
+                state: "error".into(),
+                copy: ExtensionCopy::UserCopy,
+                error: Some("SyntaxError at /home/alice/x/extension.js: bad".into()),
+            }),
+            ..running_daemon(None)
+        });
+        let text = report.copy_text();
+        assert!(
+            text.contains("Shell extension error, user copy (SyntaxError at <path>: bad)"),
+            "{text}"
+        );
+        assert!(!text.contains('/'), "{text}");
+        for (extension, line) in [
+            (ExtensionReport::NoShell, "gnome-shell did not answer"),
+            (ExtensionReport::NotInstalled, "not installed"),
+        ] {
+            let text = present_diagnostics(DiagnosticInput {
+                extension: Some(extension),
+                ..running_daemon(None)
+            })
+            .copy_text();
+            assert!(text.contains(&format!("Shell extension {line}")), "{text}");
+        }
     }
 
     /// An older daemon publishes no last error; that reads as "none", never

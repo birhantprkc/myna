@@ -1917,6 +1917,9 @@ impl BackendUi {
             machine: Some(crate::machine::machine_facts()),
             daemon: crate::machine::snap_process("myna"),
             daemon_report: crate::machine::daemon_report(),
+            extension: Some(crate::adapters::shell_extensions::extension_report(
+                crate::onboarding::SHELL_EXTENSION_UUID,
+            )),
             performance: self.performance.borrow().clone(),
             backends: pages
                 .iter()
