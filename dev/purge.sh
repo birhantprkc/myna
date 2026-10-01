@@ -51,6 +51,29 @@ run() {
     [ "$DRY" -eq 1 ] || "$@"
 }
 
+# Whether a dpkg-owned copy of the extension stays installed: the myna-config
+# deb's under /usr/share/gnome, or Ubuntu's. It keeps its enablement; a
+# hand-made copy does not. The deb's own copy does not count under --deb.
+# /usr/share/ubuntu and /usr/share/gnome are named because this may run
+# outside a session's environment.
+packaged_extension() {
+    local dir path owner
+    local IFS=:
+    for dir in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share} /usr/share/ubuntu /usr/share/gnome; do
+        # dpkg -S matches paths literally: /usr/share/ in XDG_DATA_DIRS
+        # would make a // it never finds.
+        path=${dir%/}/gnome-shell/extensions/$EXTENSION
+        [ -e "$path" ] || continue
+        owner=$(dpkg -S "$path" 2>/dev/null | cut -d: -f1) || continue
+        [ -n "$owner" ] || continue
+        if [ "$DEB" -eq 1 ] && [ "$owner" = myna-config ]; then
+            continue
+        fi
+        return 0
+    done
+    return 1
+}
+
 # Print a GVariant string array without one element, or nothing when the
 # element is absent.
 without() {
@@ -134,8 +157,7 @@ if [ -f "$ICONS/icon-theme.cache" ]; then
     run gtk-update-icon-cache -f -t -q "$ICONS"
 fi
 remove_path "$HOME/.local/share/gnome-shell/extensions/$EXTENSION"
-# A packaged copy (gnome-shell-ubuntu-extensions) keeps its enablement.
-if [ ! -e "/usr/share/gnome-shell/extensions/$EXTENSION" ]; then
+if ! packaged_extension; then
     dconf_drop /org/gnome/shell/enabled-extensions "$EXTENSION"
 fi
 if [ -e "$LEGACY_SCHEMA" ] && ! dpkg -S "$LEGACY_SCHEMA" >/dev/null 2>&1; then
