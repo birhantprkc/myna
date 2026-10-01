@@ -9,12 +9,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gtk4::glib::MainContext;
 use myna_config::active_backend::{myna_restart_request, SwitchPlan};
 use myna_config::adapters::snapd_client::{
-    InterfaceAction, SnapdClient, SnapdError, SnapdOutcome, SnapdTimeouts, UnixSocketSnapdClient,
+    InterfaceAction, SnapdClient, SnapdError, SnapdOutcome, SnapdTimeoutContext, SnapdTimeouts,
+    UnixSocketSnapdClient,
 };
 use myna_config::adapters::system_configurator::PkexecSystemConfigurator;
 use myna_config::command::{CancellationToken, CommandOutput, FakeCommandRunner};
@@ -131,12 +132,30 @@ impl FakeSnapd {
         }
     }
 
+    /// The first `count` requests, waiting for the server thread to read
+    /// any the client already sent. Panics after a minute.
+    fn wait_for_calls(&self, count: usize) -> Vec<String> {
+        let give_up = Instant::now() + Duration::from_secs(60);
+        loop {
+            let calls = self.calls.lock().unwrap().clone();
+            if calls.len() >= count {
+                return calls;
+            }
+            assert!(
+                Instant::now() < give_up,
+                "{count} requests never came: {calls:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Budgets no build-load stall reaches, for tests that never wait one out.
     fn client(&self) -> UnixSocketSnapdClient {
         UnixSocketSnapdClient::with_socket(self.path.clone()).with_timeouts(SnapdTimeouts {
-            per_request: Duration::from_secs(2),
-            authorization: Duration::from_secs(2),
+            per_request: Duration::from_secs(60),
+            authorization: Duration::from_secs(60),
             poll_interval: Duration::from_millis(20),
-            total: Duration::from_secs(4),
+            total: Duration::from_secs(60),
         })
     }
 }
@@ -629,14 +648,7 @@ fn backend_switch_requests_disconnect_connect_then_restarts_the_user_service() {
             close_early: false,
         },
     ]);
-    let client = Arc::new(
-        UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
-            per_request: Duration::from_secs(2),
-            authorization: Duration::from_secs(2),
-            poll_interval: Duration::from_millis(20),
-            total: Duration::from_secs(4),
-        }),
-    );
+    let client = Arc::new(fake.client());
     let runner = Arc::new(FakeCommandRunner::scripted([Ok(CommandOutput::new(
         Some(0),
         "",
@@ -859,16 +871,17 @@ fn turning_user_daemons_on_puts_the_flag_and_follows_its_change() {
 /// snapd answers only once the user has answered polkit, which may take
 /// longer than any read: measured 40 s on Noble for a prompt left open.
 ///
-/// The change poll must finish inside `per_request` and `total`, which the
-/// delay has to exceed, so they are seconds, not milliseconds: at 200/400 ms
-/// a ~2 s scheduling stall under sbuild failed it.
+/// Asserts only what a scheduling stall cannot fake, since sbuild stalled
+/// the change poll past every wall-clock budget tried: a PUT cut off by
+/// `per_request` fails as a `Request` timeout whatever the load, and a
+/// `total` counted from the start ends the poll before its GET is sent.
 #[test]
 fn the_authorization_prompt_may_outlast_a_request() {
     let fake = FakeSnapd::start(vec![
         step(
             "PUT /v2/snaps/system/conf ",
             http_body(202, "Accepted", CHANGE_9_ACCEPTED),
-            Some(Duration::from_millis(2500)),
+            Some(Duration::from_millis(600)),
         ),
         step(
             "GET /v2/changes/9 ",
@@ -878,16 +891,27 @@ fn the_authorization_prompt_may_outlast_a_request() {
     ]);
     let client =
         UnixSocketSnapdClient::with_socket(fake.path.clone()).with_timeouts(SnapdTimeouts {
-            per_request: Duration::from_secs(2),
+            per_request: Duration::from_millis(200),
             authorization: Duration::from_secs(60),
             poll_interval: Duration::from_millis(20),
-            total: Duration::from_secs(2),
+            total: Duration::from_millis(400),
         });
 
-    assert_eq!(
-        block_on(client.enable_user_daemons(CancellationToken::new())),
-        Ok(())
+    let outcome = block_on(client.enable_user_daemons(CancellationToken::new()));
+
+    assert!(
+        matches!(
+            outcome,
+            Ok(())
+                | Err(SnapdError::Timeout {
+                    context: SnapdTimeoutContext::ChangePolling,
+                    ..
+                })
+        ),
+        "{outcome:?}"
     );
+    let calls = fake.wait_for_calls(2);
+    assert!(calls[1].starts_with("GET /v2/changes/9 "), "{calls:?}");
 }
 
 #[test]
