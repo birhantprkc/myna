@@ -2,12 +2,11 @@
 //!
 //! GTK-independent so it can be exercised headlessly. The report is built from
 //! facts this crate produces itself - machine shape, process memory, engine and
-//! model names, versions - and never embeds a command line, stderr, or any
-//! other text that came from outside. That is what keeps the privacy contract
-//! (no audio, no transcript, no filesystem path) true by construction rather
-//! than by scrubbing. The one exception is the daemon's last error detail,
-//! which is error text and may name paths, so it goes through
-//! [`redact_text`].
+//! model names, versions - plus error text from outside: the daemon's last
+//! error detail, gnome-shell's extension error and each backend surface's
+//! failure. None of those sources carries audio or dictated text, so the
+//! privacy contract holds by construction; error text only goes through
+//! [`redact_text`] for secrets and paths.
 
 use std::time::Duration;
 
@@ -25,20 +24,6 @@ pub const BACKEND_REFRESH_PROCESS_BUDGET: usize = 9;
 
 const PLACEHOLDER_PATH: &str = "<path>";
 const PLACEHOLDER_REDACTED: &str = "[redacted]";
-
-/// Keys that indicate freeform user content. Any field containing one of
-/// these assignments is replaced in full.
-const SENSITIVE_LINE_KEYS: &[&str] = &[
-    "audio",
-    "transcript",
-    "phrase",
-    "phrases",
-    "text",
-    "content",
-    "prompt",
-    "dictation",
-    "utterance",
-];
 
 /// Substrings that mark a `--flag=value` (or `flag=value`) pair as carrying a
 /// secret whose value must be scrubbed.
@@ -755,26 +740,13 @@ fn memory_summary(memory: ProcessMemory) -> String {
     )
 }
 
-/// Redact a single-line value: strip filesystem paths and any embedded
-/// `key=value` pairs whose key looks sensitive.
+/// Redact a value from outside this crate: strip filesystem paths and any
+/// embedded `key=value` pairs whose key looks sensitive. Everything else
+/// stays, since an error is useless without its words; no source that
+/// reaches here carries dictated text.
 pub fn redact_text(value: &str) -> String {
-    if contains_sensitive_content(value) {
-        return PLACEHOLDER_REDACTED.to_owned();
-    }
     let scrubbed = scrub_secret_assignments(value);
     scrub_paths(&scrubbed)
-}
-
-fn contains_sensitive_content(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    SENSITIVE_LINE_KEYS.iter().any(|key| {
-        lower.match_indices(key).any(|(index, _)| {
-            let before = lower[..index].chars().next_back();
-            let after = lower[index + key.len()..].chars().next();
-            !before.is_some_and(|character| character.is_ascii_alphanumeric())
-                && matches!(after, Some('=' | ':' | ' '))
-        })
-    })
 }
 
 fn scrub_paths(value: &str) -> String {
@@ -917,6 +889,26 @@ mod tests {
         assert!(text.contains("<path>"));
         assert!(!text.contains("abc123"));
         assert!(!text.contains("/home/alice"));
+    }
+
+    #[test]
+    fn an_error_that_mentions_dictation_or_audio_is_kept() {
+        for error in [
+            "dictation failed: x",
+            "audio device busy",
+            "text: input rejected",
+            "prompt too long",
+        ] {
+            assert_eq!(redact_text(error), error);
+        }
+    }
+
+    #[test]
+    fn a_secret_assignment_is_still_scrubbed() {
+        assert_eq!(
+            redact_text("dictation failed: token=abc123 password=hunter2 rest"),
+            "dictation failed: token=[redacted] password=[redacted] rest"
+        );
     }
 
     #[test]
