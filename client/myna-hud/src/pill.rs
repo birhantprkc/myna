@@ -32,21 +32,19 @@ use crate::states::Descriptor;
 
 /// The pill's resting width: a floor just above the natural content width
 /// (icon + the bar's own 160px minimum) for a one-line status, so the pill
-/// hugs its content the way GNOME's OSD does. A long error reason still
-/// grows past it and wraps (bounded by [`LABEL_MAX_CHARS`]).
+/// hugs its content the way GNOME's OSD does. A longer status grows the
+/// pill up to [`LABEL_MAX_CHARS`], then wraps.
 pub const PILL_WIDTH: i32 = 240;
 
-/// The label's wrap width, in characters — what actually keeps the pill at
-/// [`PILL_WIDTH`] when a long reason arrives.
+/// The label's wrap width, in characters: a status up to this long stays on
+/// one line and the pill grows to fit it; a longer one wraps at it.
 ///
 /// GTK offers no pixel maximum for a widget, and the alternatives do not
 /// work here (all measured): `AdwClamp` bounds the child's *allocation*, not
 /// the window's natural size, so the window grew to 700px; a
 /// `GtkScrolledWindow` hands its child unlimited width, so the label stops
 /// wrapping altogether and the window reached 1280px. `max-width-chars` is
-/// the lever that does bound a wrapping label, and holding the pill to one
-/// width — rather than letting it grow to some larger ceiling — also stops
-/// the overlay changing width underneath the user as messages change.
+/// the lever that does bound a wrapping label.
 pub const LABEL_MAX_CHARS: i32 = 30;
 
 /// The pill's resting height with the default (`bar`) indicator: padding,

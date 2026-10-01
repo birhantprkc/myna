@@ -80,8 +80,8 @@ impl HudWindow {
             .build();
         window.add_css_class("myna-hud-window");
         // The default size keeps the window from remapping at GTK's 200x200
-        // fallback on a return from idle. The pill grows the window past
-        // this for a wrapped error; this is only the resting floor.
+        // fallback on a return from idle. `fit_width` widens it for a
+        // longer status; this is only the resting floor.
         window.set_default_size(PILL_WIDTH, RESTING_HEIGHT);
         // The HUD must never take focus from the app being dictated into.
         // The host enforces this by DOCK-typing the window at creation,
@@ -134,8 +134,20 @@ impl HudWindow {
     pub fn apply_descriptor(self: &Rc<Self>, descriptor: Descriptor) {
         let hidden = descriptor.hidden;
         self.pill.apply_descriptor(descriptor);
+        self.fit_width();
         self.set_hidden_faded(hidden);
         self.apply_input_region();
+    }
+
+    /// Size the window to the pill's natural width, never below
+    /// [`PILL_WIDTH`]. A non-resizable toplevel takes its default width as
+    /// long as that meets the minimum, so without this a headline that
+    /// would fit on one line within [`crate::pill::LABEL_MAX_CHARS`] wraps
+    /// at the resting width instead.
+    fn fit_width(&self) {
+        let (_, natural, _, _) = self.pill.widget().measure(gtk::Orientation::Horizontal, -1);
+        self.window
+            .set_default_size(natural.max(PILL_WIDTH), RESTING_HEIGHT);
     }
 
     /// Fade the pill to/from `hidden`, mapping or unmapping the surface only

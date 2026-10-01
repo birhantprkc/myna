@@ -11,7 +11,9 @@
 //   2. the level does not reach the fill (the bar is empty or pinned full, the
 //      meter lights no segment or all of them);
 //   3. the colour is not the theme's (a grey accent bar, an uncoloured meter);
-//   4. the style switch leaves the other indicator painting too.
+//   4. the style switch leaves the other indicator painting too;
+//   5. a headline that fits within the label's character bound wraps
+//      instead of widening the overlay, or the overlay stays wide after it.
 //
 // Run with:  xvfb-run -a -s "-screen 0 640x480x24" \
 //                cargo run -p myna-hud --example render_check
@@ -27,10 +29,11 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 use myna_hud::hud_logic::HudStyle;
-use myna_hud::pill::Pill;
+use myna_hud::pill::{Pill, PILL_WIDTH};
 use myna_hud::segmented_meter::BAR_COUNT;
 use myna_hud::simulator::envelope_to_levels;
 use myna_hud::states::{state_to_descriptor, wire};
+use myna_hud::window::HudWindow;
 
 /// The level the check drives, as the lab's slider would.
 const ENVELOPE: f64 = 0.5;
@@ -186,6 +189,78 @@ fn check(pill: &Pill, style: HudStyle, problems: &mut Vec<String>) {
     }
 }
 
+/// Lines in the first label under `widget`.
+fn label_lines(widget: &gtk::Widget) -> Option<i32> {
+    if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+        return Some(label.layout().line_count());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(lines) = label_lines(&current) {
+            return Some(lines);
+        }
+        child = current.next_sibling();
+    }
+    None
+}
+
+/// Run `then` once `done` holds for the overlay, or with false at the
+/// deadline.
+fn when_window(
+    hud: Rc<HudWindow>,
+    done: impl Fn(&gtk::ApplicationWindow) -> bool + 'static,
+    then: impl FnOnce(bool) + 'static,
+) {
+    let started = std::time::Instant::now();
+    let mut then = Some(then);
+    glib::timeout_add_local(Duration::from_millis(20), move || {
+        let window = hud.window();
+        let ready = window.is_mapped() && done(window);
+        if !ready && started.elapsed() < MAP_DEADLINE {
+            return glib::ControlFlow::Continue;
+        }
+        then.take().expect("runs once")(ready);
+        glib::ControlFlow::Break
+    });
+}
+
+/// The overlay widens for a headline within the label's character bound
+/// rather than wrapping it, and returns to its resting width after.
+fn check_fit(app: &adw::Application, then: impl FnOnce(Vec<String>) + 'static) {
+    const HEADLINE: &str = "Error: Model not connected";
+    let hud = HudWindow::new(app);
+    hud.apply_descriptor(state_to_descriptor(Some(wire::ERROR), HEADLINE));
+    let one_line = |window: &gtk::ApplicationWindow| {
+        window.width() > PILL_WIDTH && label_lines(window.upcast_ref()) == Some(1)
+    };
+    let back = hud.clone();
+    when_window(hud.clone(), one_line, move |fits| {
+        let window = back.window();
+        println!(
+            "render-check: {HEADLINE:?} {}px, {:?} lines",
+            window.width(),
+            label_lines(window.upcast_ref())
+        );
+        let mut problems = Vec::new();
+        if !fits {
+            problems.push(format!(
+                "fit: {HEADLINE:?} wraps or does not widen the overlay"
+            ));
+        }
+        back.apply_descriptor(state_to_descriptor(Some(wire::RECORDING), "Listening"));
+        let resting = |window: &gtk::ApplicationWindow| window.width() == PILL_WIDTH;
+        when_window(back.clone(), resting, move |rests| {
+            if !rests {
+                problems.push(format!(
+                    "fit: the overlay stays {}px after Listening",
+                    back.window().width()
+                ));
+            }
+            then(problems);
+        });
+    });
+}
+
 /// Run `then` `SETTLE` after `widget`, mapped and allocated, has painted: a
 /// widget's paintable replays its last painted frame, so until one is painted
 /// it renders nothing. Neither a fixed delay nor a later frame of the clock
@@ -244,15 +319,19 @@ fn main() {
                         .push("Vumeter: never reached the screen".into());
                 }
                 check(&pill, HudStyle::Vumeter, &mut problems.borrow_mut());
-                let problems = problems.borrow();
-                for p in problems.iter() {
-                    eprintln!("render-check: FAIL — {p}");
-                }
-                if problems.is_empty() {
-                    println!("render-check: OK — every style rendered");
-                }
-                app.quit();
-                std::process::exit(i32::from(!problems.is_empty()));
+                let app = app.clone();
+                check_fit(&app.clone(), move |fit| {
+                    let mut problems = problems.borrow_mut();
+                    problems.extend(fit);
+                    for p in problems.iter() {
+                        eprintln!("render-check: FAIL — {p}");
+                    }
+                    if problems.is_empty() {
+                        println!("render-check: OK — every style rendered");
+                    }
+                    app.quit();
+                    std::process::exit(i32::from(!problems.is_empty()));
+                });
             });
         });
     });
