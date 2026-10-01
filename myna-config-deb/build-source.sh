@@ -19,8 +19,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 out=${1:-$root/target/deb}
 
-if [ -n "$(git -C "$root" status --porcelain -- client myna-config-deb)" ]; then
-    echo "warning: uncommitted changes under client/ or myna-config-deb/ are not staged (git archive reads HEAD)" >&2
+if [ -n "$(git -C "$root" status --porcelain -- client myna-config-deb extensions/myna-shell dev/stage-extension.sh dev/check-shell-version.sh)" ]; then
+    echo "warning: uncommitted changes under client/, myna-config-deb/, extensions/myna-shell/ or the dev/ staging scripts are not staged (git archive reads HEAD)" >&2
 fi
 
 changelog_version=$(dpkg-parsechangelog -l "$here/debian/changelog" -S Version)
@@ -62,6 +62,14 @@ git -C "$root" archive HEAD client/Cargo.toml client/Cargo.lock client/build-sup
     | tar -x -C "$stage" --strip-components=1
 # The binaries report the version build-support/version.rs finds staged here.
 echo "$upstream" > "$stage/.version"
+
+# The GNOME Shell extension, as gnome-shell loads it: a <uuid>/ directory
+# with metadata.json stamped like .version, so debian/rules needs no python3.
+ext_tmp=$(mktemp -d)
+trap 'rm -rf "$ext_tmp"' EXIT
+git -C "$root" archive HEAD extensions/myna-shell | tar -x -C "$ext_tmp"
+"$root/dev/check-shell-version.sh" "$ext_tmp/extensions/myna-shell/metadata.json" "$series"
+"$root/dev/stage-extension.sh" "$ext_tmp/extensions/myna-shell" "$stage/extensions" "$upstream" >/dev/null
 
 # Tests that read the repository (snapcraft.yaml, docs, dev/) have nothing to read here.
 rm "$stage/myna-config/tests/snap_packaging.rs" "$stage/myna-config/tests/client_version.rs"

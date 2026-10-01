@@ -35,3 +35,6 @@ Description: settings and onboarding for Myna dictation
  commands as root through polkit, which a confined snap cannot do. The
  GSettings schema the daemon and this application share is installed by this
  package.
+ .
+ It also ships the Myna Dictation Indicator GNOME Shell extension, which
+ shows dictation status as a focus-safe overlay.
