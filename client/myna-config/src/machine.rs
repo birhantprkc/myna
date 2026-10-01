@@ -195,12 +195,31 @@ pub fn bytes(value: u64) -> String {
 /// This session's accept-gate drop count, read from the running daemon.
 ///
 /// The one capture-health fact with no host-side source: only the daemon sees
-/// a chunk refused. Read through `gio`'s D-Bus rather than a zbus client -
-/// `gio` is already a dependency, the call is synchronous, and this page
-/// refreshes on demand rather than subscribing.
+/// a chunk refused.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AudioDrops {
     pub not_active: u64,
+}
+
+/// The daemon's latest failure, kept after its HUD pill is gone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastError {
+    /// The headline the user was shown.
+    pub headline: String,
+    /// The untranslated cause. May name paths: redact before showing it.
+    pub detail: String,
+    /// When it happened, in local time.
+    pub at: String,
+}
+
+/// What the running daemon publishes for this page.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DaemonReport {
+    /// `None` on a daemon older than the property - the report omits the line
+    /// rather than claiming a clean session it cannot see.
+    pub drops: Option<AudioDrops>,
+    /// `None` when nothing has failed, or the daemon predates the property.
+    pub last_error: Option<LastError>,
 }
 
 const DICTATION_BUS: &str = "com.canonical.Myna.Dictation";
@@ -208,7 +227,11 @@ const DICTATION_PATH: &str = "/com/canonical/Myna/Dictation";
 
 /// `None` when the daemon is not running, which is not an error: "not running"
 /// is a perfectly good diagnostic answer and the report says so.
-pub fn audio_drops() -> Option<AudioDrops> {
+///
+/// Read through `gio`'s D-Bus rather than a zbus client - `gio` is already a
+/// dependency, the call is synchronous, and this page refreshes on demand
+/// rather than subscribing.
+pub fn daemon_report() -> Option<DaemonReport> {
     use gio::glib::variant::ToVariant;
 
     let connection = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).ok()?;
@@ -225,12 +248,83 @@ pub fn audio_drops() -> Option<AudioDrops> {
             gio::Cancellable::NONE,
         )
         .ok()?;
-    let properties = gio::glib::VariantDict::new(Some(&reply.child_value(0)));
-    // Absent, not zero, on a daemon older than this property - the report
-    // omits the line rather than claiming a clean session it cannot see.
+    Some(parse_daemon_report(&reply.child_value(0)))
+}
+
+/// Read a `GetAll` reply's `a{sv}`. A property this daemon does not publish is
+/// absent, never an error: a Settings app newer than the daemon is normal.
+fn parse_daemon_report(all: &gio::glib::Variant) -> DaemonReport {
+    let properties = gio::glib::VariantDict::new(Some(all));
     // VariantDict lookup unboxes the value from GetAll's a{sv} reply.
-    let read = |name: &str| properties.lookup::<u64>(name).ok().flatten();
-    Some(AudioDrops {
-        not_active: read("AudioDroppedNotActive")?,
-    })
+    let drops = properties
+        .lookup::<u64>("AudioDroppedNotActive")
+        .ok()
+        .flatten()
+        .map(|not_active| AudioDrops { not_active });
+    let text = |name: &str| properties.lookup::<String>(name).ok().flatten();
+    let time = properties.lookup::<i64>("LastErrorTime").ok().flatten();
+    let last_error = match (text("LastError"), time) {
+        (Some(headline), Some(usec)) if !headline.is_empty() && usec > 0 => Some(LastError {
+            headline,
+            detail: text("LastErrorDetail").unwrap_or_default(),
+            at: local_time(usec),
+        }),
+        _ => None,
+    };
+    DaemonReport { drops, last_error }
+}
+
+fn local_time(usec: i64) -> String {
+    gio::glib::DateTime::from_unix_local(usec / 1_000_000)
+        .ok()
+        .and_then(|time| time.format("%Y-%m-%d %H:%M:%S").ok())
+        .map(|time| time.to_string())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gio::glib::variant::ToVariant;
+
+    fn reply(properties: &[(&str, gio::glib::Variant)]) -> gio::glib::Variant {
+        let dict = gio::glib::VariantDict::new(None);
+        for (name, value) in properties {
+            dict.insert_value(name, value);
+        }
+        dict.end()
+    }
+
+    /// A daemon that predates the properties reads as "nothing to report",
+    /// never as a failure of the page.
+    #[test]
+    fn an_older_daemon_has_no_last_error_and_no_drop_count() {
+        let report = parse_daemon_report(&reply(&[("State", "idle".to_variant())]));
+        assert_eq!(report, DaemonReport::default());
+    }
+
+    #[test]
+    fn a_daemon_that_never_failed_has_no_last_error() {
+        let report = parse_daemon_report(&reply(&[
+            ("AudioDroppedNotActive", 0u64.to_variant()),
+            ("LastError", "".to_variant()),
+            ("LastErrorDetail", "".to_variant()),
+            ("LastErrorTime", 0i64.to_variant()),
+        ]));
+        assert_eq!(report.drops, Some(AudioDrops { not_active: 0 }));
+        assert_eq!(report.last_error, None);
+    }
+
+    #[test]
+    fn the_last_error_is_read_with_its_time() {
+        let report = parse_daemon_report(&reply(&[
+            ("LastError", "Model not running".to_variant()),
+            ("LastErrorDetail", "x is connected".to_variant()),
+            ("LastErrorTime", 1_759_276_800_000_000i64.to_variant()),
+        ]));
+        let last = report.last_error.expect("a last error");
+        assert_eq!(last.headline, "Model not running");
+        assert_eq!(last.detail, "x is connected");
+        assert!(last.at.starts_with("2025-"), "{}", last.at);
+    }
 }

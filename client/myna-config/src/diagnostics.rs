@@ -5,11 +5,13 @@
 //! model names, versions - and never embeds a command line, stderr, or any
 //! other text that came from outside. That is what keeps the privacy contract
 //! (no audio, no transcript, no filesystem path) true by construction rather
-//! than by scrubbing.
+//! than by scrubbing. The one exception is the daemon's last error detail,
+//! which is error text and may name paths, so it goes through
+//! [`redact_text`].
 
 use std::time::Duration;
 
-use crate::machine::{bytes, AudioDrops, MachineFacts, ProcessMemory};
+use crate::machine::{bytes, AudioDrops, DaemonReport, LastError, MachineFacts, ProcessMemory};
 use crate::performance::{
     assess_clock, assess_pressure, ClockClass, ClockVerdict, PerformanceFacts, PressureWarning,
 };
@@ -88,7 +90,8 @@ pub struct DiagnosticInput {
     pub installed_snaps: Vec<InstalledSnap>,
     pub machine: Option<MachineFacts>,
     pub daemon: Option<ProcessMemory>,
-    pub drops: Option<AudioDrops>,
+    /// What the running daemon publishes; `None` when it is not reachable.
+    pub daemon_report: Option<DaemonReport>,
     /// `None` until the probe has run once; the report says so rather than
     /// claiming a clock it did not measure.
     pub performance: Option<PerformanceFacts>,
@@ -462,13 +465,19 @@ fn render_body(
                 &gettextrs::gettext("Memory"),
                 &memory_summary(memory),
             );
-            if let Some(drops) = input.drops {
+            let report = input.daemon_report.clone().unwrap_or_default();
+            if let Some(drops) = report.drops {
                 field(
                     &mut out,
                     &gettextrs::gettext("Audio"),
                     &drops_summary(drops),
                 );
             }
+            field(
+                &mut out,
+                &gettextrs::gettext("Last error"),
+                &last_error_summary(report.last_error.as_ref()),
+            );
         }
         (Some(snap), None) => {
             field(&mut out, &gettextrs::gettext("Version"), &snap.version);
@@ -628,6 +637,22 @@ fn drops_summary(drops: AudioDrops) -> String {
     )
 }
 
+/// `<headline> (<detail>), <local time>`, or "none". The detail is the one
+/// value here that came from outside, so it is redacted like any other.
+fn last_error_summary(last: Option<&LastError>) -> String {
+    let Some(last) = last else {
+        return gettextrs::gettext("none");
+    };
+    let mut summary = last.headline.clone();
+    if !last.detail.is_empty() {
+        summary.push_str(&format!(" ({})", redact_text(&last.detail)));
+    }
+    if !last.at.is_empty() {
+        summary.push_str(&format!(", {}", last.at));
+    }
+    summary
+}
+
 fn memory_summary(memory: ProcessMemory) -> String {
     format!(
         "{} now, {} peak (pid {})",
@@ -671,9 +696,18 @@ fn scrub_paths(value: &str) -> String {
             cursor = start + 1;
             continue;
         }
+        // A path may hold spaces, so it runs to a separator - including the
+        // `: ` of `<path>: <error>`, so the error after it survives.
         let end = after_slash
             .char_indices()
-            .find(|(_, character)| matches!(character, '\n' | '\r' | ',' | ';' | '"' | '\''))
+            .find(|&(offset, character)| {
+                matches!(character, '\n' | '\r' | ',' | ';' | '"' | '\'')
+                    || (character == ':'
+                        && after_slash[offset + 1..]
+                            .chars()
+                            .next()
+                            .is_some_and(char::is_whitespace))
+            })
             .map_or(value.len(), |(offset, _)| start + 1 + offset);
         out.push_str(PLACEHOLDER_PATH);
         cursor = end;
@@ -715,6 +749,15 @@ fn split_trailing_whitespace(token: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_ends_at_the_colon_before_its_error() {
+        assert_eq!(
+            redact_text("/run/a b/x.sock: connection refused"),
+            "<path>: connection refused"
+        );
+        assert_eq!(redact_text("at /srv/x:8080 now"), "at <path>");
+    }
 
     #[test]
     fn sanitize_replaces_paths_and_secrets() {
@@ -790,7 +833,10 @@ mod tests {
                 resident: 16 * 1024 * 1024,
                 peak: 18 * 1024 * 1024,
             }),
-            drops: Some(AudioDrops { not_active: 3 }),
+            daemon_report: Some(DaemonReport {
+                drops: Some(AudioDrops { not_active: 3 }),
+                last_error: None,
+            }),
             performance: None,
             backends: vec![BackendDiagnostic {
                 snap_name: "myna-parakeet".into(),
@@ -820,8 +866,65 @@ mod tests {
         );
         assert!(text.contains("parakeet-tdt-0.6b-v3"), "{text}");
         assert!(text.contains("3 chunks dropped this session"), "{text}");
+        assert!(text.contains("Last error none"), "{text}");
         assert!(text.contains("Problems:\n  (none)"), "{text}");
         // Nothing in the report came from outside this crate.
         assert!(!text.contains('/'), "{text}");
+    }
+
+    fn running_daemon(last_error: Option<LastError>) -> DiagnosticInput {
+        DiagnosticInput {
+            installed_snaps: vec![InstalledSnap {
+                name: "myna".into(),
+                version: "0.1.0".into(),
+            }],
+            daemon: Some(ProcessMemory {
+                pid: 42,
+                resident: 1024,
+                peak: 1024,
+            }),
+            daemon_report: Some(DaemonReport {
+                drops: None,
+                last_error,
+            }),
+            ..DiagnosticInput::default()
+        }
+    }
+
+    /// The page and the exported report are the same text, and the detail is
+    /// the one value in it that came from outside: its paths are scrubbed.
+    #[test]
+    fn the_last_error_is_shown_with_its_detail_redacted() {
+        let report = present_diagnostics(running_daemon(Some(LastError {
+            headline: "Model not connected".into(),
+            detail: "/nonexistent/share: no backend is connected; \
+                     cannot reach backend: /run/user/1000/snap.myna/backend/provider/myna.sock"
+                .into(),
+            at: "2026-10-01 09:30:00".into(),
+        })));
+        let text = report.copy_text();
+        assert!(
+            text.contains("Last error Model not connected (<path>: no backend is connected; cannot reach backend: <path>), 2026-10-01 09:30:00"),
+            "{text}"
+        );
+        assert!(text.contains("no backend is connected"), "{text}");
+        assert!(text.contains(", 2026-10-01 09:30:00"), "{text}");
+        assert!(!text.contains("/nonexistent"), "{text}");
+        assert!(!text.contains("myna.sock"), "{text}");
+        assert!(!text.contains('/'), "{text}");
+    }
+
+    /// An older daemon publishes no last error; that reads as "none", never
+    /// as a problem.
+    #[test]
+    fn no_last_error_reads_as_none() {
+        let report = present_diagnostics(running_daemon(None));
+        assert!(report.copy_text().contains("Last error none"));
+        let report = present_diagnostics(DiagnosticInput {
+            daemon_report: None,
+            ..running_daemon(None)
+        });
+        assert!(report.copy_text().contains("Last error none"));
+        assert!(report.copy_text().contains("Problems:\n  (none)"));
     }
 }

@@ -1912,7 +1912,7 @@ impl BackendUi {
             inventory_complete: self.inventory_complete.get(),
             machine: Some(crate::machine::machine_facts()),
             daemon: crate::machine::snap_process("myna"),
-            drops: crate::machine::audio_drops(),
+            daemon_report: crate::machine::daemon_report(),
             performance: self.performance.borrow().clone(),
             backends: pages
                 .iter()
