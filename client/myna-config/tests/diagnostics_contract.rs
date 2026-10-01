@@ -54,6 +54,7 @@ fn onboarding_uses_discovered_backend_identities_not_snap_name_prefixes() {
         inventory_complete: true,
         backends: vec![BackendDiagnostic {
             snap_name: "community-asr".into(),
+            connection: DiagnosticConnection::Connected,
             ..BackendDiagnostic::default()
         }],
         ..DiagnosticInput::default()

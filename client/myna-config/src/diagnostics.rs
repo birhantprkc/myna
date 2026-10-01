@@ -109,7 +109,10 @@ pub enum OnboardingState {
     NoMyna,
     /// The Myna snap is installed but no backend snap has been seen.
     NoBackend,
-    /// Nothing to onboard; discovery has at least one backend.
+    /// A model is installed but none is connected to `myna:backend`, so
+    /// dictation fails with "Model not connected".
+    NoModelConnected,
+    /// Nothing to onboard; at least one discovered model is connected.
     Ready,
     /// Installation state could not be determined.
     Unavailable,
@@ -346,6 +349,13 @@ fn classify_onboarding(input: &DiagnosticInput) -> OnboardingState {
     if input.backends.is_empty() {
         return OnboardingState::NoBackend;
     }
+    if input
+        .backends
+        .iter()
+        .all(|backend| backend.connection == DiagnosticConnection::NotConnected)
+    {
+        return OnboardingState::NoModelConnected;
+    }
     OnboardingState::Ready
 }
 
@@ -354,6 +364,7 @@ pub fn onboarding_state_label(state: OnboardingState) -> String {
     match state {
         OnboardingState::NoMyna => gettextrs::gettext("Dictation is not installed"),
         OnboardingState::NoBackend => gettextrs::gettext("No model installed"),
+        OnboardingState::NoModelConnected => gettextrs::gettext("No model connected"),
         OnboardingState::Ready => gettextrs::gettext("Ready"),
         OnboardingState::Unavailable => gettextrs::gettext("Installation status unavailable"),
     }
@@ -552,9 +563,12 @@ fn render_body(
     out.push('\n');
     out.push_str(&gettextrs::gettext("Problems"));
     out.push_str(":\n");
+    let not_connected = (onboarding == OnboardingState::NoModelConnected)
+        .then(|| gettextrs::gettext("No model is connected. Choose one to use for dictation."));
     let problems: Vec<&String> = input
         .problems
         .iter()
+        .chain(not_connected.as_ref())
         .chain(input.backends.iter().flat_map(|backend| &backend.problems))
         .collect();
     if problems.is_empty() {
@@ -895,6 +909,37 @@ mod tests {
         assert!(!text.contains("snap install"));
         assert!(text.contains("Models:\n  (none discovered)"));
         assert!(text.contains("Problems:\n  (none)"));
+    }
+
+    /// Installed is not usable: with every model disconnected, dictation
+    /// fails, so the report must not read Ready with no problems.
+    #[test]
+    fn a_disconnected_model_is_not_ready() {
+        let input = |connection| DiagnosticInput {
+            inventory_complete: true,
+            installed_snaps: vec![InstalledSnap {
+                name: "myna".into(),
+                version: "0.1.0".into(),
+            }],
+            backends: vec![BackendDiagnostic {
+                snap_name: "myna-parakeet".into(),
+                connection,
+                ..BackendDiagnostic::default()
+            }],
+            ..DiagnosticInput::default()
+        };
+        let report = present_diagnostics(input(DiagnosticConnection::NotConnected));
+        assert_eq!(report.onboarding(), OnboardingState::NoModelConnected);
+        let text = report.copy_text();
+        assert!(text.contains("Onboarding: No model connected"), "{text}");
+        assert!(
+            text.contains("Problems:\n  No model is connected. Choose one to use for dictation."),
+            "{text}"
+        );
+
+        let report = present_diagnostics(input(DiagnosticConnection::Connected));
+        assert_eq!(report.onboarding(), OnboardingState::Ready);
+        assert!(report.copy_text().contains("Problems:\n  (none)"));
     }
 
     #[test]
