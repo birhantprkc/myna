@@ -73,6 +73,12 @@ pub enum Unavailable {
     ShadowedByUserCopy,
     /// The user turned all extensions off (the Extensions app's switch).
     ExtensionsOff,
+    /// gnome-shell tried to run it and it failed.
+    ExtensionFailed,
+    /// Its `shell-version` does not list the running gnome-shell.
+    ExtensionOutOfDate,
+    /// The administrator locked the enabled extensions list.
+    ExtensionLocked,
 }
 
 /// One assessed component.
@@ -101,8 +107,13 @@ pub enum ExtensionState {
     ShadowedByUserCopy,
     /// A system copy gnome-shell will not run while extensions are off.
     TurnedOff,
-    /// No system copy, or one gnome-shell cannot run or the user may not
-    /// change.
+    /// A system copy that failed when gnome-shell ran it.
+    Failed,
+    /// A system copy whose `shell-version` lacks the running gnome-shell.
+    OutOfDate,
+    /// A system copy the administrator does not let the user enable.
+    Locked,
+    /// No system copy, or no gnome-shell to ask.
     #[default]
     Unavailable,
 }
@@ -115,9 +126,13 @@ pub enum ExtensionRun {
     Disabled,
     /// Not running because the user turned all extensions off.
     TurnedOff,
-    /// Errored, out of date, uninstalled or locked down: enabling it would
-    /// not run it.
-    Broken,
+    /// Errored, uninstalled, or a state this code does not know: enabling
+    /// it would not run it.
+    Failed,
+    /// Out of date: its `shell-version` lacks the running gnome-shell.
+    OutOfDate,
+    /// Not running, and the administrator locked `enabled-extensions`.
+    Locked,
 }
 
 /// What gnome-shell reports for an extension it knows.
@@ -159,8 +174,16 @@ pub fn extension_state(
         }) => ExtensionState::TurnedOff,
         Some(ExtensionInfo {
             system: true,
-            run: ExtensionRun::Broken,
-        }) => ExtensionState::Unavailable,
+            run: ExtensionRun::Failed,
+        }) => ExtensionState::Failed,
+        Some(ExtensionInfo {
+            system: true,
+            run: ExtensionRun::OutOfDate,
+        }) => ExtensionState::OutOfDate,
+        Some(ExtensionInfo {
+            system: true,
+            run: ExtensionRun::Locked,
+        }) => ExtensionState::Locked,
         _ if on_disk.system && on_disk.user => ExtensionState::ShadowedByUserCopy,
         _ if on_disk.system => ExtensionState::NeedsRelogin,
         _ => ExtensionState::Unavailable,
@@ -299,6 +322,15 @@ pub fn assess(machine: Machine) -> Vec<Component> {
                     }
                     ExtensionState::TurnedOff => {
                         ComponentState::Unavailable(Unavailable::ExtensionsOff)
+                    }
+                    ExtensionState::Failed => {
+                        ComponentState::Unavailable(Unavailable::ExtensionFailed)
+                    }
+                    ExtensionState::OutOfDate => {
+                        ComponentState::Unavailable(Unavailable::ExtensionOutOfDate)
+                    }
+                    ExtensionState::Locked => {
+                        ComponentState::Unavailable(Unavailable::ExtensionLocked)
                     }
                     ExtensionState::Unavailable => {
                         ComponentState::Unavailable(Unavailable::NotInstalled)
@@ -506,6 +538,9 @@ mod tests {
             ExtensionState::Disabled,
             ExtensionState::NeedsRelogin,
             ExtensionState::ShadowedByUserCopy,
+            ExtensionState::Failed,
+            ExtensionState::OutOfDate,
+            ExtensionState::Locked,
         ] {
             assert!(
                 !needs_onboarding(&with_extension(extension)),
@@ -558,6 +593,18 @@ mod tests {
             ComponentState::Unavailable(Unavailable::ExtensionsOff)
         );
         assert_eq!(
+            state(ExtensionState::Failed),
+            ComponentState::Unavailable(Unavailable::ExtensionFailed)
+        );
+        assert_eq!(
+            state(ExtensionState::OutOfDate),
+            ComponentState::Unavailable(Unavailable::ExtensionOutOfDate)
+        );
+        assert_eq!(
+            state(ExtensionState::Locked),
+            ComponentState::Unavailable(Unavailable::ExtensionLocked)
+        );
+        assert_eq!(
             state(ExtensionState::Unavailable),
             ComponentState::Unavailable(Unavailable::NotInstalled)
         );
@@ -579,10 +626,13 @@ mod tests {
             extension_state(info(true, ExtensionRun::Disabled), packaged),
             ExtensionState::Disabled
         );
-        assert_eq!(
-            extension_state(info(true, ExtensionRun::Broken), packaged),
-            ExtensionState::Unavailable
-        );
+        for (run, state) in [
+            (ExtensionRun::Failed, ExtensionState::Failed),
+            (ExtensionRun::OutOfDate, ExtensionState::OutOfDate),
+            (ExtensionRun::Locked, ExtensionState::Locked),
+        ] {
+            assert_eq!(extension_state(info(true, run), packaged), state);
+        }
         assert_eq!(
             extension_state(info(true, ExtensionRun::TurnedOff), packaged),
             ExtensionState::TurnedOff
@@ -663,6 +713,9 @@ mod tests {
                 Unavailable::ShadowedByUserCopy,
             ),
             (ExtensionState::TurnedOff, Unavailable::ExtensionsOff),
+            (ExtensionState::Failed, Unavailable::ExtensionFailed),
+            (ExtensionState::OutOfDate, Unavailable::ExtensionOutOfDate),
+            (ExtensionState::Locked, Unavailable::ExtensionLocked),
         ] {
             assert_eq!(
                 row_action(&with_extension(extension)[3]),

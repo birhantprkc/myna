@@ -32,6 +32,8 @@ const TYPE_SYSTEM: f64 = 1.0;
 /// `ExtensionState.ACTIVE` and `ACTIVATING`.
 const STATE_ENABLED: i64 = 1;
 const STATE_ACTIVATING: i64 = 8;
+/// `ExtensionState.OUT_OF_DATE`.
+const STATE_OUT_OF_DATE: i64 = 4;
 
 pub struct GnomeShellExtensions {
     connection: Option<gio::DBusConnection>,
@@ -186,7 +188,12 @@ impl ShellExtensions for GnomeShellExtensions {
             };
             match run {
                 Some(ExtensionRun::Enabled) => return Ok(()),
-                Some(ExtensionRun::Broken | ExtensionRun::TurnedOff) => {
+                Some(
+                    ExtensionRun::Failed
+                    | ExtensionRun::OutOfDate
+                    | ExtensionRun::Locked
+                    | ExtensionRun::TurnedOff,
+                ) => {
                     let error = reply
                         .as_ref()
                         .and_then(|info| {
@@ -229,7 +236,10 @@ pub fn parse_info(info: &Variant, user_extensions_enabled: bool) -> Option<Exten
         STATE_ENABLED | STATE_ACTIVATING => ExtensionRun::Enabled,
         2 | 6 | 7 if can_change => ExtensionRun::Disabled,
         2 | 6 | 7 if !user_extensions_enabled => ExtensionRun::TurnedOff,
-        _ => ExtensionRun::Broken,
+        2 | 6 | 7 => ExtensionRun::Locked,
+        STATE_OUT_OF_DATE => ExtensionRun::OutOfDate,
+        // ERROR, UNINSTALLED, and any state this code does not know.
+        _ => ExtensionRun::Failed,
     };
     Some(ExtensionInfo {
         system: kind == TYPE_SYSTEM,
@@ -273,7 +283,7 @@ mod tests {
         ]);
         assert_eq!(
             parse_info(&locked, true).map(|info| info.run),
-            Some(ExtensionRun::Broken)
+            Some(ExtensionRun::Locked)
         );
         // Extensions switched off by the user, not locked down.
         assert_eq!(
@@ -343,10 +353,14 @@ mod tests {
             info(1.0, 7.0).map(|info| info.run),
             Some(ExtensionRun::Disabled)
         );
-        for broken in [3.0, 4.0, 99.0] {
+        assert_eq!(
+            info(1.0, 4.0).map(|info| info.run),
+            Some(ExtensionRun::OutOfDate)
+        );
+        for failed in [3.0, 5.0, 99.0] {
             assert_eq!(
-                info(1.0, broken).map(|info| info.run),
-                Some(ExtensionRun::Broken)
+                info(1.0, failed).map(|info| info.run),
+                Some(ExtensionRun::Failed)
             );
         }
     }

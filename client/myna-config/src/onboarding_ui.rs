@@ -985,6 +985,15 @@ impl OnboardingUi {
             (_, RowAction::Unavailable(Unavailable::ExtensionsOff)) => gettextrs::gettext(
                 "Extensions are turned off. Turn them on in the Extensions app to use it. Until then, Dictation shows its status in notifications.",
             ),
+            (_, RowAction::Unavailable(Unavailable::ExtensionFailed)) => gettextrs::gettext(
+                "Failed to start. Dictation still works and shows its status in notifications.",
+            ),
+            (_, RowAction::Unavailable(Unavailable::ExtensionOutOfDate)) => gettextrs::gettext(
+                "Does not work with this version of GNOME. Dictation still works and shows its status in notifications.",
+            ),
+            (_, RowAction::Unavailable(Unavailable::ExtensionLocked)) => gettextrs::gettext(
+                "Turned off by your administrator. Dictation still works and shows its status in notifications.",
+            ),
             (_, RowAction::Unavailable(Unavailable::NotInstalled)) => gettextrs::gettext(
                 "Not available on this system. Dictation still works and shows its status in notifications.",
             ),

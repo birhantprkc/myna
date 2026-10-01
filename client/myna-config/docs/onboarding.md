@@ -68,11 +68,15 @@ Its state is one of:
   changeable whatever that switch says. It does on a series or session whose
   mode does not list it (measured on Noble's gnome-shell 46 with a system
   copy: `state` 6, `canChange` false, `UserExtensionsEnabled` false);
-- unavailable: no system copy, one gnome-shell cannot run (error, out of
-  date), one the administrator locked (`canChange` false with extensions on:
-  `enabled-extensions` is not writable), or no gnome-shell answering on the
-  session bus within 2 s. A shell that does not report
-  `UserExtensionsEnabled` is taken as having extensions on.
+- failed: gnome-shell ran the system copy and it errored (`state` 3), or
+  reports a state this code does not know. The row says it failed to start;
+- out of date: its `shell-version` lacks the running gnome-shell (`state` 4).
+  The row says it does not work with this version of GNOME;
+- locked: the administrator locked it (`canChange` false with extensions on:
+  `enabled-extensions` is not writable). The row says so;
+- unavailable: no system copy, or no gnome-shell answering on the session
+  bus within 2 s. A shell that does not report `UserExtensionsEnabled` is
+  taken as having extensions on.
 
 gnome-shell sends `type` and `state` as doubles; `type` 1 is a system copy,
 `state` 1 enabled, 2 and 6 disabled and never enabled. The transient 8

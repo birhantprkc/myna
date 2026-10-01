@@ -296,6 +296,18 @@ fn a_user_copy_on_disk_shadows_a_system_copy() {
 }
 
 #[test]
+fn a_system_copy_the_shell_cannot_run_says_why() {
+    assert_eq!(
+        state(&[("type", 1.0), ("state", 3.0)], true),
+        ExtensionState::Failed
+    );
+    assert_eq!(
+        state(&[("type", 1.0), ("state", 4.0)], true),
+        ExtensionState::OutOfDate
+    );
+}
+
+#[test]
 fn a_system_copy_the_shell_does_not_list_needs_a_relogin() {
     assert_eq!(state(&[], true), ExtensionState::NeedsRelogin);
 }
@@ -426,7 +438,7 @@ fn a_locked_extension_cannot_be_enabled() {
         );
         block_on(extensions.extension_state(SHELL_EXTENSION_UUID))
     });
-    assert_eq!(locked, ExtensionState::Unavailable);
+    assert_eq!(locked, ExtensionState::Locked);
 }
 
 #[test]
@@ -454,7 +466,7 @@ fn an_extension_held_off_by_the_extensions_switch_is_turned_off() {
     };
     assert_eq!(held(false), ExtensionState::TurnedOff);
     // With the switch on, only the administrator's lockdown is left.
-    assert_eq!(held(true), ExtensionState::Unavailable);
+    assert_eq!(held(true), ExtensionState::Locked);
 }
 
 #[test]

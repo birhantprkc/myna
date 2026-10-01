@@ -973,6 +973,24 @@ fn onboarding_probe() -> glib::ExitCode {
                 "Extensions are turned off. Turn them on in the Extensions app to use it. Until then, Dictation shows its status in notifications.",
             ),
         ),
+        (
+            crate::onboarding::ExtensionState::Failed,
+            gettextrs::gettext(
+                "Failed to start. Dictation still works and shows its status in notifications.",
+            ),
+        ),
+        (
+            crate::onboarding::ExtensionState::OutOfDate,
+            gettextrs::gettext(
+                "Does not work with this version of GNOME. Dictation still works and shows its status in notifications.",
+            ),
+        ),
+        (
+            crate::onboarding::ExtensionState::Locked,
+            gettextrs::gettext(
+                "Turned off by your administrator. Dictation still works and shows its status in notifications.",
+            ),
+        ),
     ] {
         extensions.state.set(state);
         let subtitle = || {
