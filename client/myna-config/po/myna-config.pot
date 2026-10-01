@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 02:21+0100\n"
+"POT-Creation-Date: 2026-10-01 03:47+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1154,7 +1154,7 @@ msgstr ""
 msgid "GPU"
 msgstr ""
 
-#: src/diagnostics.rs:397 src/diagnostics.rs:678
+#: src/diagnostics.rs:397 src/diagnostics.rs:702
 msgid "none"
 msgstr ""
 
@@ -1214,7 +1214,7 @@ msgstr ""
 msgid "not running"
 msgstr ""
 
-#: src/diagnostics.rs:496 src/diagnostics.rs:656
+#: src/diagnostics.rs:496 src/diagnostics.rs:680
 msgid "not installed"
 msgstr ""
 
@@ -1266,31 +1266,31 @@ msgstr ""
 msgid "battery"
 msgstr ""
 
-#: src/diagnostics.rs:647
+#: src/diagnostics.rs:671
 msgid "chunks dropped this session"
 msgstr ""
 
-#: src/diagnostics.rs:655
+#: src/diagnostics.rs:679
 msgid "gnome-shell did not answer"
 msgstr ""
 
-#: src/diagnostics.rs:659
+#: src/diagnostics.rs:683
 msgid "myna-config package"
 msgstr ""
 
-#: src/diagnostics.rs:660
+#: src/diagnostics.rs:684
 msgid "Ubuntu package"
 msgstr ""
 
-#: src/diagnostics.rs:661
+#: src/diagnostics.rs:685
 msgid "development override"
 msgstr ""
 
-#: src/diagnostics.rs:662
+#: src/diagnostics.rs:686
 msgid "user copy"
 msgstr ""
 
-#: src/diagnostics.rs:663
+#: src/diagnostics.rs:687
 msgid "other system copy"
 msgstr ""
 

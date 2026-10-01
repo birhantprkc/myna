@@ -215,7 +215,7 @@ pub fn present_diagnostics(input: DiagnosticInput) -> DiagnosticReport {
         .as_ref()
         .map(performance_warnings)
         .unwrap_or_default();
-    let body = render_body(&input, onboarding, &warnings);
+    let body = align_fields(&render_body(&input, onboarding, &warnings));
     DiagnosticReport {
         onboarding,
         warnings,
@@ -634,8 +634,32 @@ fn power_summary(power: &crate::performance::PowerFacts) -> Option<String> {
     })
 }
 
+/// Separates a field's label from its value until [`align_fields`] pads it.
+/// A control character, so no translated label can contain it.
+const FIELD_SEPARATOR: char = '\u{1f}';
+
 fn field(out: &mut String, label: &str, value: &str) {
-    out.push_str(&format!("    {label:<10} {value}\n"));
+    out.push_str(&format!("    {label}{FIELD_SEPARATOR}{value}\n"));
+}
+
+/// Pads every field label to the widest one, so the values form one column
+/// whatever the translation's label lengths.
+fn align_fields(body: &str) -> String {
+    let width = body
+        .lines()
+        .filter_map(|line| line.split_once(FIELD_SEPARATOR))
+        .map(|(label, _)| label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut out = String::with_capacity(body.len());
+    for line in body.lines() {
+        match line.split_once(FIELD_SEPARATOR) {
+            Some((label, value)) => out.push_str(&format!("{label:<width$} {value}")),
+            None => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// Always printed when the daemon is up: a confirmed zero is the fact worth
@@ -784,6 +808,41 @@ fn split_trailing_whitespace(token: &str) -> (&str, &str) {
 mod tests {
     use super::*;
 
+    /// The value of the field labelled `label`, or `None` when the report
+    /// has no such line.
+    fn field_value<'a>(text: &'a str, label: &str) -> Option<&'a str> {
+        text.lines().find_map(|line| {
+            line.trim_start()
+                .strip_prefix(label)
+                .filter(|rest| rest.starts_with(' '))
+                .map(str::trim_start)
+        })
+    }
+
+    /// Labels of every length line their values up in one column, so a long
+    /// label never runs into its value.
+    #[test]
+    fn field_values_share_one_column() {
+        let text = present_diagnostics(DiagnosticInput {
+            extension: Some(ExtensionReport::NotInstalled),
+            ..running_daemon(None)
+        })
+        .copy_text();
+        let columns: Vec<usize> = ["Version", "Last error", "Shell extension"]
+            .iter()
+            .map(|label| {
+                let line = text
+                    .lines()
+                    .find(|line| line.trim_start().starts_with(label))
+                    .unwrap_or_else(|| panic!("no {label} line in {text}"));
+                line.len() - field_value(line, label).expect("value").len()
+            })
+            .collect();
+        assert!(columns.windows(2).all(|w| w[0] == w[1]), "{text}");
+        assert!(text.contains("Shell extension not installed"), "{text}");
+        assert!(text.contains("Last error      none"), "{text}");
+    }
+
     #[test]
     fn a_path_ends_at_the_colon_before_its_error() {
         assert_eq!(
@@ -905,9 +964,10 @@ mod tests {
         );
         assert!(text.contains("parakeet-tdt-0.6b-v3"), "{text}");
         assert!(text.contains("3 chunks dropped this session"), "{text}");
-        assert!(text.contains("Last error none"), "{text}");
-        assert!(
-            text.contains("Shell extension active, myna-config package"),
+        assert_eq!(field_value(&text, "Last error"), Some("none"), "{text}");
+        assert_eq!(
+            field_value(&text, "Shell extension"),
+            Some("active, myna-config package"),
             "{text}"
         );
         assert!(text.contains("Problems:\n  (none)"), "{text}");
@@ -946,8 +1006,9 @@ mod tests {
             at: "2026-10-01 09:30:00".into(),
         })));
         let text = report.copy_text();
-        assert!(
-            text.contains("Last error Model not connected (<path>: no backend is connected; cannot reach backend: <path>), 2026-10-01 09:30:00"),
+        assert_eq!(
+            field_value(&text, "Last error"),
+            Some("Model not connected (<path>: no backend is connected; cannot reach backend: <path>), 2026-10-01 09:30:00"),
             "{text}"
         );
         assert!(text.contains("no backend is connected"), "{text}");
@@ -968,8 +1029,9 @@ mod tests {
             ..running_daemon(None)
         });
         let text = report.copy_text();
-        assert!(
-            text.contains("Shell extension error, user copy (SyntaxError at <path>: bad)"),
+        assert_eq!(
+            field_value(&text, "Shell extension"),
+            Some("error, user copy (SyntaxError at <path>: bad)"),
             "{text}"
         );
         assert!(!text.contains('/'), "{text}");
@@ -982,7 +1044,7 @@ mod tests {
                 ..running_daemon(None)
             })
             .copy_text();
-            assert!(text.contains(&format!("Shell extension {line}")), "{text}");
+            assert_eq!(field_value(&text, "Shell extension"), Some(line), "{text}");
         }
     }
 
@@ -991,12 +1053,12 @@ mod tests {
     #[test]
     fn no_last_error_reads_as_none() {
         let report = present_diagnostics(running_daemon(None));
-        assert!(report.copy_text().contains("Last error none"));
+        assert_eq!(field_value(&report.copy_text(), "Last error"), Some("none"));
         let report = present_diagnostics(DiagnosticInput {
             daemon_report: None,
             ..running_daemon(None)
         });
-        assert!(report.copy_text().contains("Last error none"));
+        assert_eq!(field_value(&report.copy_text(), "Last error"), Some("none"));
         assert!(report.copy_text().contains("Problems:\n  (none)"));
     }
 }

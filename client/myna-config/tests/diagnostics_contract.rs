@@ -3,6 +3,17 @@ use myna_config::diagnostics::{
     OnboardingState,
 };
 
+/// Whether a field line labelled `label` has a value starting with `value`,
+/// however wide the label column is.
+fn has_field(text: &str, label: &str, value: &str) -> bool {
+    text.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix(label)
+            .filter(|rest| rest.starts_with(' '))
+            .is_some_and(|rest| rest.trim_start().starts_with(value))
+    })
+}
+
 #[test]
 fn presenter_distinguishes_no_myna_and_no_backend_onboarding() {
     let no_myna = present_diagnostics(DiagnosticInput {
@@ -176,6 +187,7 @@ fn failed_backend_discovery_does_not_claim_onboarding_is_complete() {
 }
 
 mod performance_warnings {
+    use super::has_field;
     use myna_config::diagnostics::{present_diagnostics, DiagnosticInput, InstalledSnap};
     use myna_config::performance::{
         ClockClass, ClockFacts, PerformanceFacts, PowerFacts, Pressure,
@@ -243,15 +255,19 @@ mod performance_warnings {
         );
         assert!(text.contains("Warnings:\n  Firmware is holding"), "{text}");
         assert!(
-            text.contains("Clock      cpu0 reached 0.86 GHz of 5.09 GHz, 8 cores in this class"),
+            has_field(
+                &text,
+                "Clock",
+                "cpu0 reached 0.86 GHz of 5.09 GHz, 8 cores in this class"
+            ),
             "{text}"
         );
-        assert!(text.contains("Profile    balanced"), "{text}");
+        assert!(has_field(&text, "Profile", "balanced"), "{text}");
         assert!(
-            text.contains("Power      mains, battery not charging"),
+            has_field(&text, "Power", "mains, battery not charging"),
             "{text}"
         );
-        assert!(text.contains("Pressure   cpu 0.00%"), "{text}");
+        assert!(has_field(&text, "Pressure", "cpu 0.00%"), "{text}");
         // A warning is not a problem: the machine is set up.
         assert!(text.contains("Problems:\n  (none)"), "{text}");
         assert_ne!(
@@ -363,9 +379,7 @@ mod performance_warnings {
         let unknown = present_diagnostics(ready_input(Some(PerformanceFacts::default())));
         assert!(unknown.warnings().is_empty());
         assert!(
-            unknown
-                .copy_text()
-                .contains("Clock      (no cpufreq information)"),
+            has_field(&unknown.copy_text(), "Clock", "(no cpufreq information)"),
             "{}",
             unknown.copy_text()
         );
@@ -373,9 +387,7 @@ mod performance_warnings {
         let unmeasured = present_diagnostics(ready_input(None));
         assert!(unmeasured.warnings().is_empty());
         assert!(
-            unmeasured
-                .copy_text()
-                .contains("Clock      (not measured yet)"),
+            has_field(&unmeasured.copy_text(), "Clock", "(not measured yet)"),
             "{}",
             unmeasured.copy_text()
         );
