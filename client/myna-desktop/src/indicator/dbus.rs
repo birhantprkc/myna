@@ -564,7 +564,7 @@ mod tests {
         indicator
             .set_last_error(
                 "Model not running",
-                "myna-whisper is connected but its server is not running",
+                "myna-whisper is connected but not running",
             )
             .await;
         indicator
@@ -585,7 +585,7 @@ mod tests {
         assert_eq!(
             bus.property("LastErrorDetail"),
             Some(PropertyValue::Str(
-                "myna-whisper is connected but its server is not running".into()
+                "myna-whisper is connected but not running".into()
             ))
         );
         assert!(last_error_time(&bus) > 0);

@@ -60,8 +60,9 @@ impl Unusable {
 ///
 /// [`ResolveError::headline`] is what the user is told, translated through
 /// this crate's gettext domain; `Display` is the untranslated detail, which
-/// names the snaps involved. Diagnostics shows it, so it names no command:
-/// Myna Settings is where a model is installed and connected.
+/// names the models involved. Diagnostics shows it, so it speaks of models in
+/// plain words and names no command, plug or file: Myna Settings is where a
+/// model is installed and connected, and [`resolve`] logs the internals.
 #[derive(Debug)]
 pub enum ResolveError {
     /// No usable backend is connected; carries what was connected instead.
@@ -106,33 +107,29 @@ impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ResolveError::NotConnected(unusable) if unusable.is_empty() => {
-                write!(f, "no model snap is connected to the myna:backend plug")
+                write!(f, "no model is connected")
             }
             ResolveError::NotConnected(unusable) => {
                 let mut parts = Vec::new();
                 for name in &unusable.no_unix_socket {
-                    parts.push(format!("{name} is connected but offers no Unix socket"));
+                    parts.push(format!("{name} is connected but cannot serve dictation"));
                 }
                 for name in &unusable.not_serving {
-                    parts.push(format!("{name} is connected but its server is not running"));
+                    parts.push(format!("{name} is connected but not running"));
                 }
-                if unusable.malformed > 0 {
-                    parts.push(format!(
-                        "connected shares with an unreadable provider.env: {}",
-                        unusable.malformed
-                    ));
+                match unusable.malformed {
+                    0 => {}
+                    1 => parts.push("a connected model could not be identified".to_string()),
+                    n => parts.push(format!("{n} connected models could not be identified")),
                 }
                 if unusable.unmounted > 0 {
-                    parts.push(format!(
-                        "shares connected after this process started, not mounted in its namespace: {}",
-                        unusable.unmounted
-                    ));
+                    parts.push("a model was connected after Dictation started".to_string());
                 }
                 write!(f, "{}", parts.join("; "))
             }
             ResolveError::Ambiguous(names) => write!(
                 f,
-                "{} model snaps are connected ({}); only one may be",
+                "{} models are connected ({}); connect only one",
                 names.len(),
                 names.join(", ")
             ),
@@ -171,25 +168,31 @@ fn resolve_with(dir: &Path, mounted: impl Fn(&Path) -> bool) -> Result<Provider,
                 // outside this process's mounts is a connection it missed.
                 // Mounted and empty is a backend yet to start: not counted.
                 if is_empty_dir(&share) && !mounted(&share) {
+                    myna_core::info_log!(
+                        "backend",
+                        "{} is empty and not mounted in this namespace: connected after start",
+                        share.display()
+                    );
                     unusable.unmounted += 1;
                 }
                 continue;
             }
-            Err(_) => {
-                unusable.malformed += 1;
+            Err(e) => {
+                malformed(&mut unusable, &share, &format!("unreadable: {e}"));
                 continue;
             }
         };
         let Some(env) = parse_env(&text) else {
-            unusable.malformed += 1;
+            malformed(&mut unusable, &share, "not KEY=value lines");
             continue;
         };
         let Some(snap_name) = env.get("SNAP_NAME").filter(|name| !name.is_empty()) else {
-            unusable.malformed += 1;
+            malformed(&mut unusable, &share, "no SNAP_NAME");
             continue;
         };
         let snap_name = snap_name.clone();
         let Some(relative) = env.get("UNIX_SOCKET").filter(|s| !s.is_empty()) else {
+            myna_core::info_log!("backend", "{snap_name}: {PROVIDER_ENV} has no UNIX_SOCKET");
             unusable.no_unix_socket.push(snap_name);
             continue;
         };
@@ -198,7 +201,7 @@ fn resolve_with(dir: &Path, mounted: impl Fn(&Path) -> bool) -> Result<Provider,
             .components()
             .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
         {
-            unusable.malformed += 1;
+            malformed(&mut unusable, &share, "UNIX_SOCKET outside the share");
             continue;
         }
         let socket = share.join(relative);
@@ -208,6 +211,7 @@ fn resolve_with(dir: &Path, mounted: impl Fn(&Path) -> bool) -> Result<Provider,
                 snap_name: Some(snap_name),
             });
         } else {
+            myna_core::info_log!("backend", "{snap_name}: no socket at {}", socket.display());
             unusable.not_serving.push(snap_name);
         }
     }
@@ -219,6 +223,11 @@ fn resolve_with(dir: &Path, mounted: impl Fn(&Path) -> bool) -> Result<Provider,
             found.into_iter().filter_map(|p| p.snap_name).collect(),
         )),
     }
+}
+
+fn malformed(unusable: &mut Unusable, share: &Path, why: &str) {
+    myna_core::info_log!("backend", "{}/{PROVIDER_ENV}: {why}", share.display());
+    unusable.malformed += 1;
 }
 
 fn is_empty_dir(path: &Path) -> bool {
@@ -426,11 +435,9 @@ mod tests {
         );
         let error = resolve_with(&dir, |_| false).expect_err("still nothing");
         assert_eq!(error.headline(), "Model connected. Retry shortly");
-        assert!(
-            error
-                .to_string()
-                .contains("not mounted in its namespace: 1"),
-            "{error}"
+        assert_eq!(
+            error.to_string(),
+            "a model was connected after Dictation started"
         );
     }
 
@@ -486,7 +493,7 @@ mod tests {
         let err = resolve(&dir).expect_err("no unix socket");
         assert_eq!(
             err.to_string(),
-            "smollm2 is connected but offers no Unix socket; gemma is connected but offers no Unix socket"
+            "smollm2 is connected but cannot serve dictation; gemma is connected but cannot serve dictation"
         );
         assert_eq!(
             not_connected(Err(err)),
@@ -509,8 +516,7 @@ mod tests {
         let err = resolve(&dir).expect_err("not serving");
         assert_eq!(
             err.to_string(),
-            "myna-parakeet is connected but its server is not running; \
-             myna-whisper is connected but its server is not running"
+            "myna-parakeet is connected but not running; myna-whisper is connected but not running"
         );
         assert_eq!(
             not_connected(Err(err)).not_serving,
@@ -536,7 +542,7 @@ mod tests {
         let err = resolve(&dir).expect_err("all malformed");
         assert_eq!(
             err.to_string(),
-            "connected shares with an unreadable provider.env: 4"
+            "4 connected models could not be identified"
         );
         assert_eq!(not_connected(Err(err)).malformed, 4);
 
@@ -598,7 +604,7 @@ mod tests {
         let err = resolve(&dir).expect_err("ambiguous");
         assert_eq!(
             err.to_string(),
-            "2 model snaps are connected (myna-parakeet, myna-whisper); only one may be"
+            "2 models are connected (myna-parakeet, myna-whisper); connect only one"
         );
         assert!(matches!(err, ResolveError::Ambiguous(names) if names.len() == 2));
     }
@@ -635,13 +641,10 @@ mod tests {
     }
 
     #[test]
-    fn no_backend_detail_names_the_empty_plug() {
+    fn no_backend_detail_says_no_model_is_connected() {
         let err = ResolveError::NotConnected(Unusable::default());
         assert_eq!(err.headline(), "Model not connected");
-        assert_eq!(
-            err.to_string(),
-            "no model snap is connected to the myna:backend plug"
-        );
+        assert_eq!(err.to_string(), "no model is connected");
     }
 
     /// One headline for any mix of unusable shares: a model whose server is
@@ -670,7 +673,7 @@ mod tests {
             for name in no_unix_socket.iter().chain(&not_serving) {
                 assert!(detail.contains(name.as_str()), "{detail}");
             }
-            assert_eq!(detail.contains("provider.env"), malformed > 0, "{detail}");
+            assert_eq!(detail.contains("identified"), malformed > 0, "{detail}");
         }
     }
 
@@ -678,6 +681,45 @@ mod tests {
     fn several_models_are_headlined_as_such() {
         let err = ResolveError::Ambiguous(vec!["a".into(), "b".into()]);
         assert_eq!(err.headline(), "Several models connected");
+    }
+
+    /// Diagnostics shows the detail: plain words, no packaging internals.
+    #[test]
+    fn details_name_no_snapd_internals() {
+        let errors = [
+            ResolveError::NotConnected(Unusable::default()),
+            ResolveError::NotConnected(Unusable {
+                no_unix_socket: vec!["a".into()],
+                not_serving: vec!["b".into()],
+                malformed: 1,
+                unmounted: 1,
+            }),
+            ResolveError::NotConnected(Unusable {
+                malformed: 2,
+                ..Unusable::default()
+            }),
+            ResolveError::Ambiguous(vec!["a".into(), "b".into()]),
+        ];
+        for err in errors {
+            let detail = err.to_string();
+            for banned in [
+                "snap",
+                "plug",
+                "backend",
+                "socket",
+                "share",
+                "provider",
+                "namespace",
+                "mount",
+            ] {
+                assert!(!detail.contains(banned), "{detail:?} has {banned:?}");
+            }
+        }
+        let one = ResolveError::NotConnected(Unusable {
+            malformed: 1,
+            ..Unusable::default()
+        });
+        assert_eq!(one.to_string(), "a connected model could not be identified");
     }
 
     #[test]
