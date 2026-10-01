@@ -1266,7 +1266,7 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("the component step shows no component page");
         return glib::ExitCode::FAILURE;
     };
-    if rows_offer(&page) != ["Installed", "Installed", "Installed"] || !page.flag_switch().state() {
+    if rows_offer(&page) != ["Installed", "Installed", "Enabled"] || !page.flag_switch().state() {
         eprintln!("an installed machine's rows show {:?}", rows_offer(&page));
         return glib::ExitCode::FAILURE;
     }
@@ -4306,7 +4306,7 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     row(ComponentId::ShellExtension).button.emit_clicked();
     if !until(&|| {
         extensions.enables.get() == 1
-            && offers(&[&gettextrs::gettext("Installing…"), "Install", "Installed"])
+            && offers(&[&gettextrs::gettext("Installing…"), "Install", "Enabled"])
     }) {
         return Err(format!(
             "enabling beside an install left {:?} after {} calls",
@@ -4319,7 +4319,7 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     machine.download(Some(42));
     machine.hold_install(false);
     let percent = gettextrs::gettext("Installing {percent}%").replace("{percent}", "42");
-    if !until(&|| offers(&[&percent, "Install", "Installed"])) {
+    if !until(&|| offers(&[&percent, "Install", "Enabled"])) {
         return Err(format!(
             "a download under way shows {:?}",
             rows_offer(&page)
@@ -4328,7 +4328,7 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     println!("onboarding-install: the download's percentage shown");
 
     machine.download(None);
-    if !until(&|| offers(&["Installed", "Install", "Installed"]))
+    if !until(&|| offers(&["Installed", "Install", "Enabled"]))
         || !row(ComponentId::Model).button.is_sensitive()
     {
         return Err(format!(
@@ -4345,7 +4345,7 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     let heading = gettextrs::gettext("Installing the speech-to-text model failed");
     if !until(&|| {
         toast_texts() == [heading.clone(), gettextrs::gettext("Details")]
-            && offers(&["Installed", "Install", "Installed"])
+            && offers(&["Installed", "Install", "Enabled"])
     }) {
         return Err(format!(
             "a failed install left {:?} with toasts {:?}",
@@ -4395,13 +4395,13 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     machine.download(Some(10));
     row(ComponentId::Model).button.emit_clicked();
     let downloading = gettextrs::gettext("Installing {percent}%").replace("{percent}", "10");
-    if !until(&|| offers(&["Installed", &downloading, "Installed"])) {
+    if !until(&|| offers(&["Installed", &downloading, "Enabled"])) {
         return Err(format!("the model install shows {:?}", rows_offer(&page)));
     }
     machine.installed(crate::onboarding::RECOMMENDED_BACKEND_SNAP);
     let reads = machine.reads();
     if !until(&|| machine.reads() > reads + 4)
-        || !offers(&["Installed", &downloading, "Installed"])
+        || !offers(&["Installed", &downloading, "Enabled"])
         || window.forward_button().is_sensitive()
     {
         return Err(format!(
@@ -4412,7 +4412,7 @@ fn probe_installs(application: &adw::Application) -> Result<(), String> {
     }
     println!("onboarding-install: the model waits for its change");
     machine.download(None);
-    if !until(&|| offers(&["Installed", "Installed", "Installed"])) {
+    if !until(&|| offers(&["Installed", "Installed", "Enabled"])) {
         return Err(format!(
             "the model install ended as {:?}",
             rows_offer(&page)
@@ -4689,7 +4689,7 @@ fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
                     .as_str(),
                 )
     };
-    if !until(&on) || rows_offer(&page) != ["Install", "Install", "Installed"] {
+    if !until(&on) || rows_offer(&page) != ["Install", "Install", "Enabled"] {
         return Err(format!(
             "turning the flag on left the switch state {}, the list sensitive {}, rows {:?}",
             flag.state(),
@@ -4789,10 +4789,18 @@ fn rows_offer(page: &ui::OnboardingComponents) -> Vec<String> {
             .is_some();
         let installing = Some(&row.installing)
             .filter(|progress| progress.container.is_mapped() && progress.spinner.is_spinning());
+        let done = || {
+            find_descendant(row.installed.upcast_ref(), &|widget| {
+                widget.is::<gtk::Label>()
+            })
+            .and_then(|label| label.downcast::<gtk::Label>().ok())
+            .map(|label| label.label().to_string())
+            .unwrap_or_default()
+        };
         match (row.button.is_mapped(), installed, installing) {
             (false, false, Some(progress)) => progress.label.label().to_string(),
             (true, false, None) => row.button.label().unwrap_or_default().to_string(),
-            (false, true, None) => "Installed".to_owned(),
+            (false, true, None) => done(),
             (false, false, None) => "-".to_owned(),
             _ => "both".to_owned(),
         }

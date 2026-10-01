@@ -21,6 +21,8 @@ mod imp {
         pub progress: gtk::TemplateChild<gtk::Label>,
         #[template_child]
         pub installed: gtk::TemplateChild<gtk::Box>,
+        #[template_child]
+        pub done: gtk::TemplateChild<gtk::Label>,
     }
 
     #[glib::object_subclass]
@@ -46,7 +48,7 @@ mod imp {
 glib::wrapper! {
     /// A row's install suffix, alike wherever Myna Settings installs: an
     /// Install button, then a spinner with how far snapd has come, then an
-    /// "Installed" check.
+    /// "Installed" (or "Enabled") check.
     pub struct InstallControl(ObjectSubclass<imp::InstallControl>)
         @extends gtk::Widget, gtk::Box,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Orientable;
@@ -104,6 +106,16 @@ impl InstallControl {
     }
 
     pub fn show_installed(&self) {
+        self.show_done(&gettextrs::gettext("Installed"));
+    }
+
+    /// The check, worded for something that was there and is now on.
+    pub fn show_enabled(&self) {
+        self.show_done(&gettextrs::gettext("Enabled"));
+    }
+
+    fn show_done(&self, text: &str) {
+        self.imp().done.set_label(text);
         self.show(None, None, true);
     }
 

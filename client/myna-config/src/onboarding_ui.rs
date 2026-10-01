@@ -959,6 +959,9 @@ impl OnboardingUi {
                     &gettextrs::gettext("Enable"),
                     &gettextrs::gettext("Enable the shell extension"),
                 ),
+                RowAction::Installed if component.id == ComponentId::ShellExtension => {
+                    row.control.show_enabled()
+                }
                 RowAction::Installed => row.control.show_installed(),
                 RowAction::Unavailable(_) => row.control.show_nothing(),
             }
@@ -1009,6 +1012,9 @@ impl OnboardingUi {
             (_, RowAction::Unavailable(Unavailable::NotInstalled)) => gettextrs::gettext(
                 "Not available on this system. Dictation still works and shows its status in notifications.",
             ),
+            (_, RowAction::Installed) => {
+                gettextrs::gettext("Shows Dictation's status while you dictate.")
+            }
             _ => gettextrs::gettext("Recommended"),
         }
     }
