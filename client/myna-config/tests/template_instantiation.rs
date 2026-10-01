@@ -208,7 +208,7 @@ fn the_onboarding_wizard_walks_when_its_buttons_are_activated() {
         "onboarding-install: an install started elsewhere is followed",
         "onboarding-extension: a failure reverts with a toast and its report",
         "onboarding-extension: enabling shown in the row",
-        "onboarding-extension: enabled, and the wizard moved on",
+        "onboarding-extension: enabled in the row, and Next moved on",
         "onboarding-rows: unlocked by the flag",
         "onboarding-poll: found without focus",
         "onboarding-status: the download shown",

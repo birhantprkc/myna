@@ -4189,14 +4189,30 @@ fn probe_extension_enable(application: &adw::Application) -> Result<(), String> 
     println!("onboarding-extension: enabling shown in the row");
 
     extensions.holding.set(false);
+    let enabled = gettextrs::gettext("Enabled");
+    if !until(&|| offers(&["Installed", "Installed", &enabled])) {
+        return Err(format!(
+            "an enabled extension shows {:?}",
+            rows_offer(&page)
+        ));
+    }
+    // An instant click is not a download to wait out: the row confirms it,
+    // and moving on is Next's.
+    for _ in 0..8 {
+        settle_gtk();
+    }
+    if step() != "components" {
+        return Err(format!("enabling the extension moved on to {}", step()));
+    }
+    window.forward_button().emit_clicked();
     if !until(&|| step() == "shortcut") {
         return Err(format!(
-            "enabling the last missing piece stayed on {} showing {:?}",
+            "Next after enabling stayed on {} showing {:?}",
             step(),
             rows_offer(&page)
         ));
     }
-    println!("onboarding-extension: enabled, and the wizard moved on");
+    println!("onboarding-extension: enabled in the row, and Next moved on");
     window.close();
     settle_gtk();
     Ok(())

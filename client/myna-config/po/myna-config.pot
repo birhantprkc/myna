@@ -145,7 +145,7 @@ msgstr ""
 msgid "Let Myna run in the background"
 msgstr ""
 
-#: data/onboarding-components.blp:41 src/app.rs:511 src/app.rs:4687
+#: data/onboarding-components.blp:41 src/app.rs:511 src/app.rs:4703
 #: src/onboarding_ui.rs:925
 msgid "Dictation needs it. Sets experimental.user-daemons in snapd."
 msgstr ""
@@ -166,7 +166,7 @@ msgstr ""
 msgid "Shell extension"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:18 src/app.rs:4875 src/onboarding_ui.rs:1300
+#: data/onboarding-shortcut.blp:18 src/app.rs:4891 src/onboarding_ui.rs:1300
 msgid "How to dictate"
 msgstr ""
 
@@ -182,11 +182,11 @@ msgstr ""
 msgid "Setting up Dictation"
 msgstr ""
 
-#: data/onboarding-window.blp:63 src/app.rs:5025
+#: data/onboarding-window.blp:63 src/app.rs:5041
 msgid "All required components installed"
 msgstr ""
 
-#: data/onboarding-window.blp:81 src/app.rs:5010
+#: data/onboarding-window.blp:81 src/app.rs:5026
 msgid "Dictation is not set up yet. Select Next to try again."
 msgstr ""
 
@@ -206,7 +206,7 @@ msgstr ""
 msgid "Close"
 msgstr ""
 
-#: data/operation-error-dialog.blp:34 src/app.rs:4599
+#: data/operation-error-dialog.blp:34 src/app.rs:4615
 msgid "Copy Details"
 msgstr ""
 
@@ -226,11 +226,11 @@ msgstr ""
 msgid "Press Escape to cancel."
 msgstr ""
 
-#: data/status-page.blp:8 src/app.rs:1659 src/app.rs:5100
+#: data/status-page.blp:8 src/app.rs:1659 src/app.rs:5116
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:9 src/app.rs:1660 src/app.rs:5101
+#: data/status-page.blp:9 src/app.rs:1660 src/app.rs:5117
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -310,9 +310,9 @@ msgstr ""
 msgid "Changing to {model} failed"
 msgstr ""
 
-#: src/app.rs:3678 src/app.rs:4128 src/app.rs:4139 src/app.rs:4347
-#: src/app.rs:4356 src/app.rs:4547 src/app.rs:4560 src/app.rs:4971
-#: src/app.rs:4977 src/backend_ui.rs:1236 src/onboarding_ui.rs:649
+#: src/app.rs:3678 src/app.rs:4128 src/app.rs:4139 src/app.rs:4363
+#: src/app.rs:4372 src/app.rs:4563 src/app.rs:4576 src/app.rs:4987
+#: src/app.rs:4993 src/backend_ui.rs:1236 src/onboarding_ui.rs:649
 #: src/ui/status_page.rs:70
 msgid "Details"
 msgstr ""
@@ -326,7 +326,7 @@ msgstr ""
 msgid "Unload when idle"
 msgstr ""
 
-#: src/app.rs:4110 src/app.rs:4262 src/onboarding_ui.rs:959
+#: src/app.rs:4110 src/app.rs:4278 src/onboarding_ui.rs:959
 msgid "Enable"
 msgstr ""
 
@@ -338,67 +338,71 @@ msgstr ""
 msgid "D-Bus call:"
 msgstr ""
 
-#: src/app.rs:4160 src/app.rs:4378 src/app.rs:4586 src/backend_ui.rs:2336
+#: src/app.rs:4160 src/app.rs:4394 src/app.rs:4602 src/backend_ui.rs:2336
 msgid "Message:"
 msgstr ""
 
-#: src/app.rs:4177 src/app.rs:4657 src/onboarding_ui.rs:923
+#: src/app.rs:4177 src/app.rs:4673 src/onboarding_ui.rs:923
 #: src/onboarding_ui.rs:1129
 msgid "Enabling…"
 msgstr ""
 
-#: src/app.rs:4283 src/app.rs:4309 src/ui/install_control.rs:158
+#: src/app.rs:4192 src/ui/install_control.rs:114
+msgid "Enabled"
+msgstr ""
+
+#: src/app.rs:4299 src/app.rs:4325 src/ui/install_control.rs:158
 msgid "Installing…"
 msgstr ""
 
 #. TRANSLATORS: {percent} is how much of the download has arrived, a number from 0 to 100.
-#: src/app.rs:4321 src/app.rs:4397 src/app.rs:4451
+#: src/app.rs:4337 src/app.rs:4413 src/app.rs:4467
 #: src/ui/install_control.rs:155
 msgid "Installing {percent}%"
 msgstr ""
 
-#: src/app.rs:4345 src/onboarding_ui.rs:1138
+#: src/app.rs:4361 src/onboarding_ui.rs:1138
 msgid "Installing the speech-to-text model failed"
 msgstr ""
 
-#: src/app.rs:4376 src/app.rs:4584 src/backend_ui.rs:2314
+#: src/app.rs:4392 src/app.rs:4600 src/backend_ui.rs:2314
 msgid "Request:"
 msgstr ""
 
-#: src/app.rs:4377 src/app.rs:4585 src/backend_ui.rs:2321
+#: src/app.rs:4393 src/app.rs:4601 src/backend_ui.rs:2321
 msgid "HTTP status:"
 msgstr ""
 
-#: src/app.rs:4546 src/onboarding_ui.rs:632
+#: src/app.rs:4562 src/onboarding_ui.rs:632
 msgid "Could not let Myna run in the background"
 msgstr ""
 
-#: src/app.rs:4890 src/shortcut_ui.rs:445
+#: src/app.rs:4906 src/shortcut_ui.rs:445
 msgid "You can trigger Dictation anytime by using the keyboard shortcut:"
 msgstr ""
 
-#: src/app.rs:4970 src/onboarding_ui.rs:768 src/onboarding_ui.rs:775
+#: src/app.rs:4986 src/onboarding_ui.rs:768 src/onboarding_ui.rs:775
 #: src/onboarding_ui.rs:1057
 msgid "Could not set up Dictation"
 msgstr ""
 
-#: src/app.rs:5105
+#: src/app.rs:5121
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:5106
+#: src/app.rs:5122
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:5126
+#: src/app.rs:5142
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:5127
+#: src/app.rs:5143
 msgid "Myna Settings could not start."
 msgstr ""
 
-#: src/app.rs:5546
+#: src/app.rs:5562
 msgid "Could not save the setting"
 msgstr ""
 
@@ -1491,10 +1495,6 @@ msgstr ""
 
 #: src/presentation.rs:328
 msgid "This model provides no description for this setting."
-msgstr ""
-
-#: src/ui/install_control.rs:114
-msgid "Enabled"
 msgstr ""
 
 #: ../data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml:30

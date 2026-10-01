@@ -510,9 +510,14 @@ pub fn polls(step: Step, components: &[Component]) -> bool {
 /// included, the moment the component step moves on by itself. Arriving
 /// with everything installed is not one, so a re-run of the wizard does not
 /// rush past it, and an extension the wizard cannot install leaves the move
-/// to Next.
+/// to Next. Nor is enabling the extension when only it was missing: that is
+/// a click with an instant answer, which the row confirms and Next follows,
+/// not a download the user may have looked away from.
 pub fn completes(before: &[Component], after: &[Component]) -> bool {
-    !fully_installed(before) && fully_installed(after)
+    let other_missing = before
+        .iter()
+        .any(|component| component.id != ComponentId::ShellExtension && !component.satisfied());
+    other_missing && fully_installed(after)
 }
 
 #[cfg(test)]
@@ -840,7 +845,8 @@ mod tests {
         let required_only = with_extension(ExtensionState::Unavailable);
         let disabled = with_extension(ExtensionState::Disabled);
         assert!(completes(&bare, &complete));
-        assert!(completes(&disabled, &complete));
+        // Enabling the extension is a click the row confirms, not a wait.
+        assert!(!completes(&disabled, &complete));
         assert!(!completes(&bare, &required_only));
         assert!(!completes(&disabled, &required_only));
         assert!(!completes(&complete, &complete));

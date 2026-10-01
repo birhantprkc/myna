@@ -66,7 +66,7 @@ fn the_wizard_assesses_the_flag_both_snaps_and_the_extension() {
 
 /// Dictation works without the extension, falling back to notifications, so
 /// a machine without it neither opens the wizard nor holds Next; only
-/// installing it too moves the step on by itself.
+/// installing it with a missing snap moves the step on by itself.
 #[test]
 fn the_extension_is_optional_but_completes_the_step() {
     let ready = |extension| {
@@ -82,6 +82,11 @@ fn the_extension_is_optional_but_completes_the_step() {
     assert!(!completes(&assess(Machine::default()), &without));
     assert!(completes(
         &assess(Machine::default()),
+        &ready(ExtensionState::Enabled)
+    ));
+    // Enabling it when only it was missing leaves the move to Next.
+    assert!(!completes(
+        &ready(ExtensionState::Disabled),
         &ready(ExtensionState::Enabled)
     ));
 }
