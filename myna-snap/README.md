@@ -303,13 +303,14 @@ gdbus introspect --session --dest com.canonical.Myna.Dictation \
 
 ## Troubleshooting
 
-- **A press reports "no backend is connected"** - connect the backend plug
+- **A press reports "Model not connected"** - connect the backend plug
   (step 2) and make sure the backend daemon has run (`snap logs
   myna-whisper.server`). The daemon does not need restarting afterwards: the
   socket is re-resolved at every press.
 - **The hotkey does nothing right after login** - read `StatusMessage` (below),
-  or `journalctl --user -u snap.myna.myna`. `dictation hotkey unavailable: …`
-  means activation is not bound; it clears itself once it is. Two retry
+  or `journalctl --user -u snap.myna.myna`. "Shortcut unavailable" means
+  activation is not bound; it clears itself once it is. The cause is in
+  Myna Settings > Diagnostics ("Last error") and in the journal. Two retry
   speeds, by cause: the portal not being up yet is retried at 1s doubling to
   30s, while a refused or unanswered shortcut sheet waits 5 minutes - retrying
   that one fast would just re-raise the dialog. Dismissed the sheet by

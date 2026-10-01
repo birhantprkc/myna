@@ -1,9 +1,11 @@
 # myna-orchestrator translations
 
 User-visible strings owned by this crate live in this `po/` directory, in the
-gettext domain **`myna-orchestrator`**. Today that is the `BackendError`
-templates rendered by `Display` (`src/backend/mod.rs`) and the backend-socket
-resolution errors (`src/backend/share.rs`).
+gettext domain **`myna-orchestrator`**. Today that is the failure headlines:
+`BackendError::headline` (`src/backend/mod.rs`), `ResolveError::headline`
+(`src/backend/share.rs`) and the capture and session headlines in
+`src/failure.rs`. `Display` on those errors is the untranslated detail, for
+logs and Settings Diagnostics, and is not extracted.
 
 The desktop package (and any embedding application) initializes this domain at
 startup via `myna_orchestrator::i18n::bind`, binding it to the same locale

@@ -94,7 +94,8 @@ not cover it. Closing the wizard rediscovers, since it may have changed both.
 
 The component step titles itself "Install components" and lists every
 component in its own row; nothing is left for a terminal. The flag gets a boxed
-row of its own with a switch, "Enable user daemons experimental support",
+row of its own with a switch, "Let Myna run in the background" (its subtitle
+names the snapd flag, `experimental.user-daemons`),
 because it is a system setting rather than something to install. The other
 three share one boxed list below it: Dictation app, Speech-to-text model and
 Shell extension. The whole list is insensitive until the flag is on, since

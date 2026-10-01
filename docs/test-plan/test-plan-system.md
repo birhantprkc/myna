@@ -420,9 +420,8 @@ search box).
 6. Repeat steps 1-3 in the normal text field of the browser private window.
 
 **Expected Result**:
-- Password and PIN fields: pressing the hotkey shows the notice "Refusing to
-  type into a password field", no recording starts, and the field receives
-  no text.
+- Password and PIN fields: pressing the hotkey shows the notice "Password
+  field skipped", no recording starts, and the field receives no text.
 - Normal field and private-window normal field: the dictated text is
   inserted as usual.
 
@@ -515,8 +514,8 @@ For each test run, note (rough categories are fine — "instant" /
 
 **Background**: myna must never type dictated text into a password or PIN
 field. When the focused field is marked as a password or PIN field, myna
-refuses at the start of dictation: it shows the notice "Refusing to type
-into a password field" and does not start recording. Ordinary fields,
+refuses at the start of dictation: it shows the notice "Password field
+skipped" and does not start recording. Ordinary fields,
 including those in a browser private window, are not refused.
 
 **Test case** (pass/fail; execute as TC-08):
@@ -525,7 +524,7 @@ including those in a browser private window, are not refused.
    GNOME Settings password change dialog).
 2. Trigger the hotkey and dictate a short phrase (do **not** use a real
    password; use e.g. "test password one two three").
-3. Pass if the notice "Refusing to type into a password field" appears and
+3. Pass if the notice "Password field skipped" appears and
    the field receives no text.
 4. Repeat steps 1-3 in a PIN field, if one is available.
 5. Repeat steps 1-2 in a normal text field, then in a normal text field of a

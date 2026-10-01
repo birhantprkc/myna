@@ -9,13 +9,14 @@ gettext domain **`myna-desktop`** (R25).
   (`src/indicator/mod.rs`) — translated before publication
   in the D-Bus `StatusMessage` property, so every consumer sees the same
   final label.
-- The user-facing error templates this crate owns: the injection errors
-  (`src/inject/mod.rs`), translated at the point their `Display` is rendered.
+- The headlines of the failures this crate owns, such as the injection
+  errors' (`InjectError::headline` in `src/inject/mod.rs`, e.g. "Password
+  field skipped"). Their `Display` is the untranslated detail, for logs and
+  Settings Diagnostics only.
 
-Backend errors (transport, e.g. "cannot reach backend", and socket
-resolution, e.g. "no backend is connected") are owned by the
-`myna-orchestrator` crate and live in its own `po/` (see
-`client/myna-orchestrator/po/README.md`).
+Model and capture failure headlines (e.g. "Model not connected", "Microphone
+unavailable") are owned by the `myna-orchestrator` crate and live in its own
+`po/` (see `client/myna-orchestrator/po/README.md`).
 
 ## Re-extracting the template
 
