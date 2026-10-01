@@ -398,7 +398,11 @@ fn snapd_timeout_message(
     elapsed: Duration,
     context: crate::adapters::snapd_client::SnapdTimeoutContext,
 ) -> String {
-    format!("{} timed out after {elapsed:?}", context.description())
+    format!(
+        "{} timed out after {}",
+        context.description(),
+        crate::command::duration_text(elapsed)
+    )
 }
 
 pub(crate) fn snapd_error_to_system_error(
@@ -609,7 +613,7 @@ fn map_command_error(
             arguments.to_vec(),
             None,
             String::new(),
-            format!("timed out after {timeout:?}"),
+            format!("timed out after {}", crate::command::duration_text(timeout)),
         ),
         CommandError::NotFound {
             executable: missing,

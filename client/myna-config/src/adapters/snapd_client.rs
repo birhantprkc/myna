@@ -130,12 +130,32 @@ pub enum SnapdError {
     },
 }
 
+/// A blocking snapd worker that panicked, with the panic's message when it
+/// has one.
+fn worker_panicked(payload: Box<dyn std::any::Any + Send>) -> SnapdError {
+    let message = payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned());
+    SnapdError::Transport {
+        message: match message {
+            Some(message) => format!("snapd worker panicked: {message}"),
+            None => "snapd worker panicked".to_owned(),
+        },
+    }
+}
+
 impl std::fmt::Display for SnapdError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Cancelled => f.write_str("snapd request cancelled"),
             Self::Timeout { elapsed, context } => {
-                write!(f, "{} timed out after {elapsed:?}", context.description())
+                write!(
+                    f,
+                    "{} timed out after {}",
+                    context.description(),
+                    crate::command::duration_text(*elapsed)
+                )
             }
             Self::Transport { message } => write!(f, "snapd transport error: {message}"),
             Self::Protocol { message, .. } => write!(f, "snapd protocol error: {message}"),
@@ -428,9 +448,7 @@ impl SnapdClient for UnixSocketSnapdClient {
         let handle = gio::spawn_blocking(move || {
             blocking_apply_interface_action(&socket_path, timeouts, action, cancellation)
         });
-        handle.await.map_err(|error| SnapdError::Transport {
-            message: format!("snapd worker join failed: {error:?}"),
-        })?
+        handle.await.map_err(worker_panicked)?
     }
 
     async fn changes_in_progress(
@@ -442,9 +460,7 @@ impl SnapdClient for UnixSocketSnapdClient {
         let handle = gio::spawn_blocking(move || {
             blocking_changes_in_progress(&socket_path, timeouts, cancellation)
         });
-        handle.await.map_err(|error| SnapdError::Transport {
-            message: format!("snapd worker join failed: {error:?}"),
-        })?
+        handle.await.map_err(worker_panicked)?
     }
 
     async fn user_daemons_enabled(
@@ -456,9 +472,7 @@ impl SnapdClient for UnixSocketSnapdClient {
         let handle = gio::spawn_blocking(move || {
             blocking_user_daemons_enabled(&socket_path, timeouts, cancellation)
         });
-        handle.await.map_err(|error| SnapdError::Transport {
-            message: format!("snapd worker join failed: {error:?}"),
-        })?
+        handle.await.map_err(worker_panicked)?
     }
 
     async fn enable_user_daemons(&self, cancellation: CancellationToken) -> Result<(), SnapdError> {
@@ -475,9 +489,7 @@ impl SnapdClient for UnixSocketSnapdClient {
             )
             .map(|_| ())
         });
-        handle.await.map_err(|error| SnapdError::Transport {
-            message: format!("snapd worker join failed: {error:?}"),
-        })?
+        handle.await.map_err(worker_panicked)?
     }
 
     async fn install_snap(
@@ -503,9 +515,7 @@ impl SnapdClient for UnixSocketSnapdClient {
                 &cancellation,
             )
         });
-        let started = handle.await.map_err(|error| SnapdError::Transport {
-            message: format!("snapd worker join failed: {error:?}"),
-        })?;
+        let started = handle.await.map_err(worker_panicked)?;
         match started {
             Ok(Started::Change(change_id)) => Ok(Some(change_id)),
             Ok(Started::Sync) => Err(SnapdError::Protocol {
@@ -536,9 +546,7 @@ impl SnapdClient for UnixSocketSnapdClient {
         let handle = gio::spawn_blocking(move || {
             blocking_change(&socket_path, timeouts, &path, cancellation)
         });
-        handle.await.map_err(|error| SnapdError::Transport {
-            message: format!("snapd worker join failed: {error:?}"),
-        })?
+        handle.await.map_err(worker_panicked)?
     }
 }
 

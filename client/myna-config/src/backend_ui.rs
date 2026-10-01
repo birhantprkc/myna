@@ -2466,8 +2466,8 @@ fn backend_snapshot_reconciliation_summary(snapshot: &crate::domain::BackendSnap
         ));
         for (surface, error) in errors {
             out.push_str(&format!(
-                "    {:?}: {}\n",
-                surface,
+                "    {}: {}\n",
+                diagnostic_surface_label(*surface),
                 diagnostics::redact_text(error.message()),
             ));
         }
@@ -4338,10 +4338,31 @@ mod tests {
         ];
 
         let details = read_back_failure_details(&errors);
-        assert!(details.contains("command exited unsuccessfully with status Some(1)"));
+        assert!(details.contains("command exited with status 1: no such key"));
         assert!(details.contains("model list unavailable"));
         assert!(!details.contains("private config output"));
         assert!(!details.contains("snap run"));
+    }
+
+    #[test]
+    fn a_reconciliation_names_each_failed_surface_in_words() {
+        let mut snapshot = crate::domain::BackendSnapshot::empty(BackendIdentity::new(
+            "myna-parakeet",
+            "provider",
+        ));
+        snapshot.add_error(crate::domain::BackendSurfaceError::new(
+            crate::domain::BackendSurface::Engines,
+            "command exited with status 1: permission denied",
+            "",
+        ));
+
+        let summary = backend_snapshot_reconciliation_summary(&snapshot);
+        assert!(
+            summary
+                .contains("    Available engines: command exited with status 1: permission denied"),
+            "{summary}"
+        );
+        assert!(!summary.contains("Engines:"), "{summary}");
     }
 
     fn pending(operation_token: u64, cancellation: &CancellationToken) -> PendingChange {
