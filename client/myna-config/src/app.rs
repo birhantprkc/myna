@@ -508,7 +508,7 @@ fn onboarding_probe() -> glib::ExitCode {
         || page.flag_row().title() != gettextrs::gettext("Let Myna run in the background")
         || page.flag_row().subtitle().as_deref()
             != Some(
-                gettextrs::gettext("Dictation needs it. Sets experimental.user-daemons in snapd.")
+                gettextrs::gettext("Dictation needs it. You may be asked for your password.")
                     .as_str(),
             )
     {
@@ -4699,10 +4699,8 @@ fn probe_flag_switch(application: &adw::Application) -> Result<(), String> {
             && list.is_sensitive()
             && row.subtitle().as_deref()
                 == Some(
-                    gettextrs::gettext(
-                        "Dictation needs it. Sets experimental.user-daemons in snapd.",
-                    )
-                    .as_str(),
+                    gettextrs::gettext("Dictation needs it. You may be asked for your password.")
+                        .as_str(),
                 )
     };
     if !until(&on) || rows_offer(&page) != ["Install", "Install", "Enabled"] {

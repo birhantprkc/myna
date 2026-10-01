@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 06:05+0100\n"
+"POT-Creation-Date: 2026-10-01 06:13+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -147,7 +147,7 @@ msgstr ""
 
 #: data/onboarding-components.blp:41 src/app.rs:511 src/app.rs:4703
 #: src/onboarding_ui.rs:925
-msgid "Dictation needs it. Sets experimental.user-daemons in snapd."
+msgid "Dictation needs it. You may be asked for your password."
 msgstr ""
 
 #: data/onboarding-components.blp:50

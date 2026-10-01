@@ -922,7 +922,7 @@ impl OnboardingUi {
         let flag_subtitle = if pending {
             gettextrs::gettext("Enabling…")
         } else {
-            gettextrs::gettext("Dictation needs it. Sets experimental.user-daemons in snapd.")
+            gettextrs::gettext("Dictation needs it. You may be asked for your password.")
         };
         flag_row.set_subtitle(&flag_subtitle);
         flag_row.update_property(&[gtk::accessible::Property::Description(&flag_subtitle)]);
