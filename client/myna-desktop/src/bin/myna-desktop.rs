@@ -586,6 +586,25 @@ fn make_session(
     let forced_preedit = args.preedit;
     let live = live.clone();
     move |events: mpsc::Sender<OrchestratorEvent>| {
+        let readiness = readiness.clone();
+        // Reset readiness synchronously, right here — when the session is
+        // created (i.e. when the controller calls `session.start()`), not
+        // lazily inside the `async move` block below. The controller
+        // publishes `IndicatorState::Recording` immediately after
+        // `session.start()` returns, before this future is ever polled; if
+        // `ready_seen` were still `true` from the *previous* utterance at
+        // that moment, `map_state` would publish `"recording"` first, only
+        // flipping to `"loading"` once this future is finally polled and the
+        // old `r.reset()` ran — a spurious recording→loading→recording
+        // triple-flip on the wire that the GNOME Shell HUD renders as a
+        // flicker on (re)start (no debounce there, by design elsewhere).
+        // Resetting here instead means `ready_seen` is already `false` before
+        // the controller ever reads it, so only one clean loading→recording
+        // transition is published. Before resolving the backend, too: a
+        // press with no model to reach is a session that never got Ready.
+        if let Some(r) = &readiness {
+            r.reset();
+        }
         // Re-resolved per Press, so a backend connected (or refreshed, or
         // swapped) after the daemon started is picked up without a restart.
         let socket = match backend_socket.resolve() {
@@ -618,24 +637,6 @@ fn make_session(
         // session's lifetime (the pump ends when the source drops its stats
         // sender at session end). Grab the receiver before the source moves.
         let pump = pump_bus.clone().map(|bus| (bus, source.stats()));
-        let readiness = readiness.clone();
-        // Reset readiness synchronously, right here — when the session is
-        // created (i.e. when the controller calls `session.start()`), not
-        // lazily inside the `async move` block below. The controller
-        // publishes `IndicatorState::Recording` immediately after
-        // `session.start()` returns, before this future is ever polled; if
-        // `ready_seen` were still `true` from the *previous* utterance at
-        // that moment, `map_state` would publish `"recording"` first, only
-        // flipping to `"loading"` once this future is finally polled and the
-        // old `r.reset()` ran — a spurious recording→loading→recording
-        // triple-flip on the wire that the GNOME Shell HUD renders as a
-        // flicker on (re)start (no debounce there, by design elsewhere).
-        // Resetting here instead means `ready_seen` is already `false` before
-        // the controller ever reads it, so only one clean loading→recording
-        // transition is published.
-        if let Some(r) = &readiness {
-            r.reset();
-        }
         // Beside the session rather than ahead of it: preedit is read per
         // transcript event, and the answer lands long before the first one.
         let learn = {
@@ -2309,12 +2310,22 @@ mod tests {
     // `make_session`'s returned factory must reset `readiness` synchronously,
     // the moment it's called — provably before the returned `run` future is
     // ever polled/awaited.
+    //
+    // A press with no model to resolve resets it too: a stale `ready_seen`
+    // there played the Start cue ahead of the error.
     #[test]
     fn make_session_resets_readiness_synchronously_before_run_is_polled() {
+        for backend in [
+            BackendSocket::Fixed(PathBuf::from("/tmp/myna-desktop-test-unused.sock")),
+            BackendSocket::Search(PathBuf::from("/nonexistent/share")),
+        ] {
+            resets_readiness_before_run_is_polled(backend);
+        }
+    }
+
+    fn resets_readiness_before_run_is_polled(backend: BackendSocket) {
         let args = Args {
-            backend: Some(BackendSocket::Fixed(PathBuf::from(
-                "/tmp/myna-desktop-test-unused.sock",
-            ))),
+            backend: Some(backend),
             ..Default::default()
         };
         let readiness = Readiness::new();
