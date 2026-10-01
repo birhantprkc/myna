@@ -522,7 +522,13 @@ async fn silent_daemon_faults_at_the_discovery_deadline() {
         took >= Duration::from_millis(2_500) && took < Duration::from_secs(5),
         "faulted after {took:?}"
     );
-    device_unavailable(states.last());
+    assert!(
+        matches!(
+            states.last(),
+            Some(CaptureHealth::Faulted(CaptureError::ServiceUnresponsive(_)))
+        ),
+        "a daemon that never answers is the audio service, not a device: {states:?}"
+    );
     assert!(!states.contains(&CaptureHealth::Capturing));
     let (chunks, fault) = drain_with_timeout(stream, Duration::from_secs(1)).await;
     assert!(chunks.is_empty());
