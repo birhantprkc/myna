@@ -263,16 +263,11 @@ EXTENSION_DIR := extensions/myna-shell
 
 .PHONY: build-extension
 build-extension: ## Pack extensions/myna-shell into target/myna-shell-<version>.tar.gz for hand-install
-	@uuid=$$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["uuid"])' \
-		$(EXTENSION_DIR)/metadata.json); \
-	version=$$(dev/version.sh $(EXTENSION_DIR)); \
+	@version=$$(dev/version.sh $(EXTENSION_DIR)); \
 	stage=target/extension-stage; \
 	tarball=target/myna-shell-$$version.tar.gz; \
-	rm -rf $$stage; mkdir -p $$stage/$$uuid target; \
-	cp $(EXTENSION_DIR)/*.js $(EXTENSION_DIR)/README.md $$stage/$$uuid/; \
-	python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); m["version-name"]=sys.argv[2]; \
-		json.dump(m, open(sys.argv[3], "w"), indent=2)' \
-		$(EXTENSION_DIR)/metadata.json $$version $$stage/$$uuid/metadata.json; \
+	rm -rf $$stage; \
+	uuid=$$(basename $$(dev/stage-extension.sh $(EXTENSION_DIR) $$stage $$version)); \
 	tar czf $$tarball -C $$stage \
 		--sort=name --owner=0 --group=0 --numeric-owner \
 		--mtime=@$$(git log -1 --format=%ct) $$uuid; \
