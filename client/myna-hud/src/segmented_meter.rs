@@ -56,8 +56,8 @@ mod imp {
 
     impl WidgetImpl for SegmentedMeterView {
         /// Paint the segmented meter via Gtk: one coloured rectangle per
-        /// segment. The state drives a fixed lit count (level), a moving lit
-        /// cluster (pulse), or a full warning fill, per
+        /// segment. The state drives a fixed lit count (level) or a moving
+        /// lit cluster (pulse), per
         /// [`crate::hud_logic::indicator_state`].
         #[allow(deprecated)]
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
@@ -70,14 +70,6 @@ mod imp {
 
             let frame = self.indicator.frame();
             let state = frame.state;
-            // The notice/warning colour comes from the widget's CSS-resolved
-            // `color` (the recoverable class); the classic gauge still uses
-            // its green/yellow/red scale. No hardcoded amber.
-            let warning_color = if state.warning {
-                Some(widget.color())
-            } else {
-                None
-            };
             // Which segments are lit: a pulse is a moving cluster around the
             // pong centre; a plain level lights from the left.
             let level_count = intensity_to_active_segments(state.fraction, BAR_COUNT);
@@ -106,10 +98,7 @@ mod imp {
             for (i, position) in bar_positions().enumerate() {
                 let is_lit = lit(i);
                 let alpha: f32 = if is_lit { 1.0 } else { 0.16 };
-                let color = match warning_color {
-                    Some(c) => c.with_alpha(alpha),
-                    None => zone_color(style.as_ref(), position, alpha),
-                };
+                let color = zone_color(style.as_ref(), position, alpha);
                 // Conventional VU: fixed-height segments light left-to-right;
                 // a slight taper (taller at the loud end) keeps the row vital.
                 let bar_h = h * (0.66 + 0.34 * position);
@@ -153,14 +142,14 @@ impl SegmentedMeterView {
         self.queue_draw();
     }
 
-    /// Set the current dictation state (drives the state animation and the
-    /// `notice` warning tint). The pill calls this on every state change.
+    /// Set the current dictation state (drives the state animation). The
+    /// pill calls this on every state change.
     pub fn set_state(
         &self,
         key: crate::states::DictationState,
         severity: Option<crate::states::Severity>,
     ) {
-        self.imp().indicator.set_state(self.widget(), key, severity);
+        self.imp().indicator.set_state(key, severity);
         self.queue_draw();
     }
 

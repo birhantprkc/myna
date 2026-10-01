@@ -5,8 +5,7 @@
 //! since 2026-09-03).
 //!
 //! Colours come from CSS, like the rest of the pill: the bar's `color` is
-//! resolved by the theme — `@accent_bg_color` normally, `var(--warning-bg-color)`
-//! under the recoverable (`notice`) class — and read back at snapshot time via
+//! resolved by the theme (`@accent_bg_color`) and read back at snapshot time via
 //! [`Widget::color`](gtk4::Widget::color). No hardcoded RGB and no colour
 //! probing in the view.
 //!
@@ -59,8 +58,7 @@ mod imp {
     impl WidgetImpl for BarView {
         /// Paint the bar via Gsk: a rounded clip over the bar's bounds, then a
         /// dim track and the fill up to the state-driven fraction. The colour
-        /// is the widget's CSS-resolved `color` (accent, or warning under the
-        /// recoverable class).
+        /// is the widget's CSS-resolved `color` (the accent).
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let widget = self.obj();
             let w = widget.width() as f64;
@@ -71,7 +69,7 @@ mod imp {
 
             let frame = self.indicator.frame();
 
-            // The theme-resolved colour: accent, or warning when a notice.
+            // The theme-resolved accent.
             let color = widget.color();
 
             let bar_h = h.min(BAR_THICKNESS);
@@ -112,7 +110,7 @@ mod imp {
                     snapshot.append_color(&color.with_alpha(pulse.alpha as f32), &block);
                     snapshot.pop();
                 }
-                // A plain level (or a full warning fill): fraction of the bar.
+                // A plain level: fraction of the bar.
                 None => {
                     let fraction = frame.state.fraction.clamp(0.0, 1.0);
                     if fraction > 0.0 {
@@ -164,15 +162,14 @@ impl BarView {
         self.queue_draw();
     }
 
-    /// Set the current dictation state (drives the state animation and the
-    /// `notice` warning colour via the CSS class). The pill calls this on
-    /// every state change.
+    /// Set the current dictation state (drives the state animation). The
+    /// pill calls this on every state change.
     pub fn set_state(
         &self,
         key: crate::states::DictationState,
         severity: Option<crate::states::Severity>,
     ) {
-        self.imp().indicator.set_state(self.widget(), key, severity);
+        self.imp().indicator.set_state(key, severity);
         self.queue_draw();
     }
 

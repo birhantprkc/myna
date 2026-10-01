@@ -7,16 +7,9 @@
 use std::cell::Cell;
 use std::time::Instant;
 
-use gtk::prelude::*;
-use gtk4 as gtk;
-
 use crate::hud_logic::IndicatorState;
 use crate::states::{DictationState, Severity};
 use crate::vumeter;
-
-/// The CSS class that switches a view to the warning (recoverable) colour.
-/// Mirrors the pill's own `.myna-hud-severity-recoverable`.
-const WARNING_CLASS: &str = "myna-hud-severity-recoverable";
 
 /// A level push and when it arrived — the VU decays by *arrival age* (R16a).
 #[derive(Clone, Copy)]
@@ -65,20 +58,15 @@ impl Indicator {
         self.last_frame.set(None);
     }
 
-    /// Record the dictation state, restarting the state clock and mirroring
-    /// the recoverable CSS class onto `widget` when it changed.
-    pub fn set_state(&self, widget: &gtk::Widget, key: DictationState, severity: Option<Severity>) {
+    /// Record the dictation state, restarting the state clock when it
+    /// changed.
+    pub fn set_state(&self, key: DictationState, severity: Option<Severity>) {
         if self.key.get() == Some(key) && self.severity.get() == severity {
             return;
         }
         self.key.set(Some(key));
         self.severity.set(severity);
         self.state_since.set(Some(Instant::now()));
-        if severity == Some(Severity::Recoverable) {
-            widget.add_css_class(WARNING_CLASS);
-        } else {
-            widget.remove_css_class(WARNING_CLASS);
-        }
     }
 
     /// Record the reduce-animation preference; `false` when unchanged.

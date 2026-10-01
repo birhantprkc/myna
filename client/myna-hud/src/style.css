@@ -76,20 +76,14 @@ window.myna-hud-window {
  * box squeezing it to near-zero. The gauge's zone colours are the conventional
  * VU green/yellow/red, defined here (the exact values the old hardcoded
  * RGB carried) so the widget resolves them via lookup_color rather than
- * hardcoding them in Rust. `color` carries the accent (warning under the
- * recoverable class) for the recoverable fill. */
+ * hardcoding them in Rust. */
 @define-color myna-vu-green #33d16b;
 @define-color myna-vu-yellow #fab82e;
 @define-color myna-vu-red #f23d33;
 
 .myna-hud-vumeter {
-    color: var(--accent-bg-color);
     min-height: 32px;
     min-width: 160px;
-}
-
-.myna-hud-vumeter.myna-hud-severity-recoverable {
-    color: var(--warning-bg-color);
 }
 
 /* The accent level bar (the `hud-style: bar` alternative). A thin rule
@@ -98,10 +92,6 @@ window.myna-hud-window {
     color: var(--accent-bg-color);
     min-height: 6px;
     min-width: 160px;
-}
-
-.myna-hud-bar.myna-hud-severity-recoverable {
-    color: var(--warning-bg-color);
 }
 
 .myna-hud-dismiss {

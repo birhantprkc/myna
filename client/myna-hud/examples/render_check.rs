@@ -13,7 +13,9 @@
 //   3. the colour is not the theme's (a grey accent bar, an uncoloured meter);
 //   4. the style switch leaves the other indicator painting too;
 //   5. a headline that fits within the label's character bound wraps
-//      instead of widening the overlay, or the overlay stays wide after it.
+//      instead of widening the overlay, or the overlay stays wide after it;
+//   6. a notice or error keeps the recording look (a mic glyph, a level
+//      indicator) or leaves its text off the pill's vertical centre.
 //
 // Run with:  xvfb-run -a -s "-screen 0 640x480x24" \
 //                cargo run -p myna-hud --example render_check
@@ -191,17 +193,100 @@ fn check(pill: &Pill, style: HudStyle, problems: &mut Vec<String>) {
 
 /// Lines in the first label under `widget`.
 fn label_lines(widget: &gtk::Widget) -> Option<i32> {
-    if let Some(label) = widget.downcast_ref::<gtk::Label>() {
-        return Some(label.layout().line_count());
+    first_label(widget).map(|label| label.layout().line_count())
+}
+
+/// The first image under `widget`.
+fn first_image(widget: &gtk::Widget) -> Option<gtk::Image> {
+    if let Some(image) = widget.downcast_ref::<gtk::Image>() {
+        return Some(image.clone());
     }
     let mut child = widget.first_child();
     while let Some(current) = child {
-        if let Some(lines) = label_lines(&current) {
-            return Some(lines);
+        if let Some(image) = first_image(&current) {
+            return Some(image);
         }
         child = current.next_sibling();
     }
     None
+}
+
+/// The first label under `widget`.
+fn first_label(widget: &gtk::Widget) -> Option<gtk::Label> {
+    if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+        return Some(label.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(label) = first_label(&current) {
+            return Some(label);
+        }
+        child = current.next_sibling();
+    }
+    None
+}
+
+/// What is wrong with the pill as a non-recording state: a mic glyph, a
+/// level indicator, or text off the vertical centre. Empty when right.
+fn problem_state_faults(pill: &Pill) -> Vec<String> {
+    let root: &gtk::Widget = pill.widget().upcast_ref();
+    let mut faults = Vec::new();
+    if pill.bar().is_visible() || pill.meter().is_visible() {
+        faults.push("a level indicator is shown".into());
+    }
+    let icon = first_image(root).and_then(|image| image.icon_name());
+    if icon
+        .as_deref()
+        .is_none_or(|name| name == "audio-input-microphone-symbolic")
+    {
+        faults.push(format!("the glyph is {icon:?}, a live mic"));
+    }
+    let centre = first_label(root)
+        .and_then(|label| label.compute_bounds(root))
+        .map(|b| (b.y() + b.height() / 2.0) as f64);
+    let middle = root.height() as f64 / 2.0;
+    match centre {
+        Some(y) if (y - middle).abs() <= 2.0 => {}
+        _ => faults.push(format!(
+            "the text centre is {centre:?}, the pill's middle {middle}"
+        )),
+    }
+    faults
+}
+
+/// A notice and an error drop the recording look: no level indicator, no
+/// live-mic glyph, and the text on the pill's vertical centre.
+fn check_problem_states(pill: Rc<Pill>, then: impl FnOnce(Vec<String>) + 'static) {
+    let cases = [
+        (wire::NOTICE, "Model connected. Retry shortly"),
+        (wire::ERROR, "Error: Model not connected"),
+    ];
+    let problems: Rc<RefCell<Vec<String>>> = Rc::default();
+    let mut then = Some(then);
+    let mut index = 0;
+    let mut started: Option<std::time::Instant> = None;
+    glib::timeout_add_local(Duration::from_millis(20), move || {
+        let (state, text) = cases[index];
+        let since = *started.get_or_insert_with(|| {
+            pill.apply_descriptor(state_to_descriptor(Some(state), text));
+            std::time::Instant::now()
+        });
+        let faults = problem_state_faults(&pill);
+        if !faults.is_empty() && since.elapsed() < MAP_DEADLINE {
+            return glib::ControlFlow::Continue;
+        }
+        println!("render-check: {state} {text:?} faults {faults:?}");
+        problems
+            .borrow_mut()
+            .extend(faults.into_iter().map(|f| format!("{state}: {f}")));
+        index += 1;
+        started = None;
+        if index < cases.len() {
+            return glib::ControlFlow::Continue;
+        }
+        then.take().expect("runs once")(problems.take());
+        glib::ControlFlow::Break
+    });
 }
 
 /// Run `then` once `done` holds for the overlay, or with false at the
@@ -334,17 +419,20 @@ fn main() {
                 }
                 check(&pill, HudStyle::Vumeter, &mut problems.borrow_mut());
                 let app = app.clone();
-                check_fit(&app.clone(), move |fit| {
-                    let mut problems = problems.borrow_mut();
-                    problems.extend(fit);
-                    for p in problems.iter() {
-                        eprintln!("render-check: FAIL — {p}");
-                    }
-                    if problems.is_empty() {
-                        println!("render-check: OK — every style rendered");
-                    }
-                    app.quit();
-                    std::process::exit(i32::from(!problems.is_empty()));
+                check_problem_states(pill.clone(), move |states| {
+                    problems.borrow_mut().extend(states);
+                    check_fit(&app.clone(), move |fit| {
+                        let mut problems = problems.borrow_mut();
+                        problems.extend(fit);
+                        for p in problems.iter() {
+                            eprintln!("render-check: FAIL — {p}");
+                        }
+                        if problems.is_empty() {
+                            println!("render-check: OK — every style rendered");
+                        }
+                        app.quit();
+                        std::process::exit(i32::from(!problems.is_empty()));
+                    });
                 });
             });
         });

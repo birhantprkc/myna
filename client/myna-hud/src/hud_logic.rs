@@ -47,15 +47,15 @@ impl HudStyle {
     }
 }
 
-/// Icon choice for a descriptor's severity (RC19): a mic-with-slash icon only
-/// for a critical error (the microphone genuinely may be at fault); every
-/// other treatment — including a recoverable notice, where the microphone
-/// itself isn't the problem — keeps the plain filled mic.
-///
+/// Icon choice for a descriptor's severity (RC19). Only a live session shows
+/// a microphone: a critical error gets the mic-with-slash (the microphone
+/// genuinely may be at fault), and a recoverable notice an information glyph,
+/// since nothing is recording while it shows.
 pub fn icon_for_severity(severity: Option<Severity>) -> &'static str {
     match severity {
         Some(Severity::Critical) => "microphone-disabled-symbolic",
-        _ => "audio-input-microphone-symbolic",
+        Some(Severity::Recoverable) => "dialog-information-symbolic",
+        None => "audio-input-microphone-symbolic",
     }
 }
 
@@ -86,12 +86,11 @@ pub const PILL_COLOR_CLASSES: [&str; 3] = [
     "myna-hud-phase-loading",
 ];
 
-/// Whether the level indicator stays visible for this severity. Only a
-/// **critical** error hides it (the pill's icon/border/message carry that
-/// state instead); a **recoverable** notice keeps it visible in the warning
-/// colour.
+/// Whether the level indicator is shown for this severity: only outside a
+/// notice or error. Both are shown with nothing recording, and an empty
+/// meter next to them reads as "recording, but no sound".
 pub fn indicator_visible_for_severity(severity: Option<Severity>) -> bool {
-    severity != Some(Severity::Critical)
+    severity.is_none()
 }
 
 // ── Indicator animation (bar / vumeter) ─────────────────────────────────────
@@ -117,11 +116,9 @@ pub struct Pulse {
 ///   while partial results are being committed.
 /// - `finalizing` → a quick [`Pulse`] — the "done" tail before the pill
 ///   clears.
-/// - `notice` (recoverable) → the bar reads **full and warning-coloured**,
-///   gently breathing so it is alive but never looks like a level.
 /// - anything else live (`recording`/`active`/`idle`) → the plain level.
 ///
-/// A `critical` error hides the indicator, so it reports a closed (0) fill.
+/// A notice or error hides the indicator, so it reports a closed (0) fill.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IndicatorState {
     /// Filled fraction for plain-level states (`[0,1]`).
@@ -129,8 +126,6 @@ pub struct IndicatorState {
     /// `Some` when the view should show an indeterminate activity pulse
     /// instead of a level (loading / transcribing / finalizing).
     pub pulse: Option<Pulse>,
-    /// Warning (recoverable notice): use the warning colour and read full.
-    pub warning: bool,
 }
 
 /// The animation state for the simple indicators.
@@ -149,14 +144,7 @@ pub fn indicator_state(
     // by this.
     let speed = if reduced_motion { 3.5 } else { 1.0 };
     match (key, severity) {
-        (_, Some(Severity::Critical)) => IndicatorState::default(),
-        // Notice: warning colour, and an **empty** bar — the recoverable
-        // treatment reads as "attention, warning tint, nothing recorded".
-        (_, Some(Severity::Recoverable)) => IndicatorState {
-            fraction: 0.0,
-            warning: true,
-            ..Default::default()
-        },
+        (_, Some(_)) => IndicatorState::default(),
         (DictationState::Loading, _) => IndicatorState {
             pulse: Some(Pulse {
                 width: 0.20,

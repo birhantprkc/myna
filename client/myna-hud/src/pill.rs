@@ -129,7 +129,7 @@ impl Pill {
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
         content.set_hexpand(true);
-        // A critical error hides the indicator, leaving the label alone in a
+        // A notice or error hides the indicator, leaving the label alone in a
         // box that would otherwise pack it against the top edge.
         content.set_valign(gtk::Align::Center);
         content.append(&label);
@@ -300,8 +300,8 @@ impl Pill {
             state.descriptor = descriptor.clone();
         }
 
-        // Drive the views' state animations (loading pulse, notice warning
-        // colour, finalize settle) from the same descriptor.
+        // Drive the views' state animations (loading pulse, finalize
+        // settle) from the same descriptor.
         self.bar.set_state(descriptor.key, descriptor.severity);
         self.meter.set_state(descriptor.key, descriptor.severity);
 
@@ -316,7 +316,7 @@ impl Pill {
             self.pill.add_css_class(class);
         }
 
-        // The indicator is hidden when a critical error collapses it OR when
+        // The indicator is hidden for a notice or error OR when
         // the whole pill is hidden at idle — the latter matters because the
         // frame clock only queues a redraw while the indicator is visible, so
         // hiding it here is what makes idle cost nothing. Which indicator is

@@ -29,7 +29,7 @@ fn a_retired_or_unknown_nick_draws_the_default_bar() {
     }
 }
 
-// --- RC19: mic vs. mic-slash icon, contextual on severity -------------------
+// --- RC19: icon by severity; only a live session shows a mic -------------
 
 #[test]
 fn x19_icon_by_severity() {
@@ -40,8 +40,8 @@ fn x19_icon_by_severity() {
     );
     assert_eq!(
         icon_for_severity(Some(Severity::Recoverable)),
-        "audio-input-microphone-symbolic",
-        "recoverable → plain mic (the mic itself is not at fault)"
+        "dialog-information-symbolic",
+        "recoverable → information, not a live mic (nothing is recording)"
     );
     assert_eq!(
         icon_for_severity(None),
@@ -88,13 +88,13 @@ fn color_classes() {
     );
 }
 
-// --- R17a: indicator visibility by severity (only critical hides) ----------
+// --- R17a: indicator visibility by severity (only a live session) -------
 
 #[test]
 fn indicator_visibility_by_severity() {
     assert!(
-        indicator_visible_for_severity(Some(Severity::Recoverable)),
-        "stays visible for a recoverable notice (warning colour instead of hidden)"
+        !indicator_visible_for_severity(Some(Severity::Recoverable)),
+        "hides for a notice: nothing is recording"
     );
     assert!(
         !indicator_visible_for_severity(Some(Severity::Critical)),
@@ -113,7 +113,6 @@ fn plain_level_states_report_the_raw_level() {
     let s = indicator_state(DictationState::Recording, None, 0.42, false);
     assert_eq!(s.fraction, 0.42);
     assert!(s.pulse.is_none());
-    assert!(!s.warning);
 }
 
 #[test]
@@ -129,7 +128,6 @@ fn loading_transcribing_finalizing_report_a_pulse() {
         };
         assert!(pulse.width > 0.0 && pulse.width <= 1.0);
         assert_eq!(pulse.period_ms, period);
-        assert!(!s.warning);
     }
 }
 
@@ -170,23 +168,15 @@ fn loading_pulse_is_semi_transparent() {
 }
 
 #[test]
-fn notice_reports_warning_empty() {
-    let s = indicator_state(
-        DictationState::Notice,
-        Some(Severity::Recoverable),
-        0.0,
-        false,
-    );
-    assert!(s.warning);
-    assert_eq!(s.fraction, 0.0, "a notice bar is empty, not full");
-}
-
-#[test]
-fn critical_is_closed_and_not_warning() {
-    let s = indicator_state(DictationState::Error, Some(Severity::Critical), 0.5, false);
-    assert_eq!(s.fraction, 0.0);
-    assert!(s.pulse.is_none());
-    assert!(!s.warning);
+fn problems_report_a_closed_indicator() {
+    for (key, severity) in [
+        (DictationState::Notice, Severity::Recoverable),
+        (DictationState::Error, Severity::Critical),
+    ] {
+        let s = indicator_state(key, Some(severity), 0.5, false);
+        assert_eq!(s.fraction, 0.0);
+        assert!(s.pulse.is_none());
+    }
 }
 
 #[test]
