@@ -87,6 +87,12 @@ impl BackendError {
         }
     }
 
+    /// Whether this is a model connected after the process started, which a
+    /// restart picks up (see [`share::ResolveError::needs_restart`]).
+    pub fn needs_restart(&self) -> bool {
+        matches!(self, BackendError::Resolve(e) if e.needs_restart())
+    }
+
     /// The headline and the detail, as one [`Failure`](crate::failure::Failure).
     pub fn failure(&self) -> crate::failure::Failure {
         crate::failure::Failure::new(self.headline(), self.to_string())

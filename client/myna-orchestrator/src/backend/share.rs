@@ -82,7 +82,7 @@ impl ResolveError {
                 tr("Model not connected")
             }
             ResolveError::NotConnected(unusable) if unusable.unmounted > 0 => {
-                tr("Model connected. Try again in a moment")
+                tr("Model connected. Retry shortly")
             }
             ResolveError::NotConnected(unusable) if !unusable.not_serving.is_empty() => {
                 tr("Model not running")
@@ -95,7 +95,8 @@ impl ResolveError {
 
 impl ResolveError {
     /// Whether only a fresh process can see the backend: one was connected
-    /// after this one started (see [`Unusable::unmounted`]).
+    /// after this one started (see [`Unusable::unmounted`]). Nothing failed,
+    /// so the headline is a notice, not an error.
     pub fn needs_restart(&self) -> bool {
         matches!(self, ResolveError::NotConnected(unusable) if unusable.unmounted > 0)
     }
@@ -424,7 +425,7 @@ mod tests {
             }
         );
         let error = resolve_with(&dir, |_| false).expect_err("still nothing");
-        assert_eq!(error.headline(), "Model connected. Try again in a moment");
+        assert_eq!(error.headline(), "Model connected. Retry shortly");
         assert!(
             error
                 .to_string()

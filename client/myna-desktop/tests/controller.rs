@@ -1891,3 +1891,42 @@ async fn a_salvage_that_transcribed_nothing_still_reports_the_device() {
         "{states:?}",
     );
 }
+
+// ── A model connected after login is a notice, not an error ─────────────────
+
+#[tokio::test]
+async fn a_model_connected_after_login_is_a_notice_not_an_error() {
+    use myna_orchestrator::backend::share::{ResolveError, Unusable};
+    use myna_orchestrator::BackendError;
+
+    let indicator = MockIndicator::new();
+    let indicate_log = indicator.log();
+    let last_errors = indicator.last_errors();
+    let session = |_events: mpsc::Sender<OrchestratorEvent>| -> (SessionRun, StopHandle) {
+        let run: SessionRun = Box::pin(async {
+            Err(BackendError::Resolve(ResolveError::NotConnected(
+                Unusable {
+                    unmounted: 1,
+                    ..Unusable::default()
+                },
+            )))
+        });
+        (run, StopHandle::default())
+    };
+    let mut controller = build(
+        [TriggerEdge::Press, TriggerEdge::Release],
+        MockInjector::new(),
+        indicator,
+        session,
+    );
+    controller.run().await;
+
+    assert_eq!(
+        indicate_log.lock().unwrap().last(),
+        Some(&IndicatorState::recoverable(
+            "Model connected. Retry shortly"
+        ))
+    );
+    assert!(last_errors.lock().unwrap().is_empty(), "nothing failed");
+    assert_eq!(controller.state(), DictationState::Idle);
+}

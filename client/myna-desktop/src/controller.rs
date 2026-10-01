@@ -808,6 +808,16 @@ impl DesktopController {
                     // resync below (manual test report, 2026-07-31).
                     self.trigger.resync().await;
                 }
+                Err(err) if err.needs_restart() => {
+                    // A model connected after login: the daemon restarts to
+                    // see it. Nothing failed, so this is a notice.
+                    myna_core::info_log!("ctrl", "utterance needs a restart: {err}");
+                    self.indicator
+                        .set_state(IndicatorState::recoverable(err.headline()))
+                        .await;
+                    finalize_state(&mut self.state, DictationState::Cancelled);
+                    self.trigger.resync().await;
+                }
                 Err(err) => {
                     myna_core::info_log!("ctrl", "utterance backend ERROR: {err}");
                     report_failure(self.indicator.as_mut(), err.headline(), &err.to_string()).await;

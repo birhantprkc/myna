@@ -942,7 +942,7 @@ async fn run_controller(
         }
         // A model connected after this process started is mounted only in
         // the namespace a fresh process joins (`Unusable::unmounted`). The
-        // press that found it shows its error for a moment first.
+        // press that found it shows its notice for a moment first.
         () = async {
             restart.notified().await;
             tokio::time::sleep(RESTART_GRACE).await;
@@ -955,7 +955,7 @@ async fn run_controller(
     }
 }
 
-/// How long the error of a press that needs a restart shows before it.
+/// How long the notice of a press that needs a restart shows before it.
 const RESTART_GRACE: Duration = Duration::from_secs(3);
 
 /// Publish the "hotkey not bound yet" reason on `com.canonical.Myna.Dictation` where
