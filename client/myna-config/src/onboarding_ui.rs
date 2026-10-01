@@ -1015,7 +1015,7 @@ impl OnboardingUi {
             (_, RowAction::Installed) => {
                 gettextrs::gettext("Shows Dictation's status while you dictate.")
             }
-            _ => gettextrs::gettext("Recommended"),
+            _ => gettextrs::gettext("Recommended. Shows Dictation's status while you dictate."),
         }
     }
 
