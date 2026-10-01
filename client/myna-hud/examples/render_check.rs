@@ -261,22 +261,36 @@ fn check_fit(app: &adw::Application, then: impl FnOnce(Vec<String>) + 'static) {
     });
 }
 
-/// Run `then` `SETTLE` after `widget`, mapped and allocated, has painted: a
-/// widget's paintable replays its last painted frame, so until one is painted
-/// it renders nothing. Neither a fixed delay nor a later frame of the clock
-/// proves that (a frame can pass before the widget draws), so this waits
-/// until it renders. `then` gets false if the deadline passed first.
-fn when_on_screen(widget: gtk::Widget, then: impl FnOnce(bool) + 'static) {
+/// Run `f` once `widget` is mapped and renders, or with false at the
+/// deadline. `f` runs in the same main-loop turn as the render that passed,
+/// so no redraw can empty the paintable in between.
+fn when_renders(widget: gtk::Widget, f: impl FnOnce(bool) + 'static) {
     let started = std::time::Instant::now();
-    let mut then = Some(then);
+    let mut f = Some(f);
     glib::timeout_add_local(Duration::from_millis(20), move || {
         let ready = widget.is_mapped() && render(&widget).is_some();
         if !ready && started.elapsed() < MAP_DEADLINE {
             return glib::ControlFlow::Continue;
         }
-        let then = then.take().expect("runs once");
-        glib::timeout_add_local_once(SETTLE, move || then(ready));
+        f.take().expect("runs once")(ready);
         glib::ControlFlow::Break
+    });
+}
+
+/// Run `then` `SETTLE` after `widget`, mapped and allocated, has painted: a
+/// widget's paintable replays its last painted frame, so until one is painted
+/// it renders nothing. Neither a fixed delay nor a later frame of the clock
+/// proves that (a frame can pass before the widget draws), so this waits
+/// until it renders. The level feed keeps queueing redraws, and between one
+/// and the frame that serves it the paintable is empty again, so after the
+/// settle it waits for a render once more (4/30 failures under CPU load
+/// without). `then` gets false if a deadline passed first.
+fn when_on_screen(widget: gtk::Widget, then: impl FnOnce(bool) + 'static) {
+    let again = widget.clone();
+    when_renders(widget, move |mapped| {
+        glib::timeout_add_local_once(SETTLE, move || {
+            when_renders(again, move |settled| then(mapped && settled));
+        });
     });
 }
 
