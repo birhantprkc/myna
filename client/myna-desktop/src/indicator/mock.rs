@@ -16,6 +16,7 @@ use super::{Indicator, IndicatorState};
 #[derive(Default)]
 pub struct MockIndicator {
     log: Arc<Mutex<Vec<IndicatorState>>>,
+    last_errors: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl MockIndicator {
@@ -27,11 +28,24 @@ impl MockIndicator {
     pub fn log(&self) -> Arc<Mutex<Vec<IndicatorState>>> {
         self.log.clone()
     }
+
+    /// A shared handle to every `(headline, detail)` recorded as the last
+    /// error, in order.
+    pub fn last_errors(&self) -> Arc<Mutex<Vec<(String, String)>>> {
+        self.last_errors.clone()
+    }
 }
 
 #[async_trait]
 impl Indicator for MockIndicator {
     async fn set_state(&mut self, state: IndicatorState) {
         self.log.lock().unwrap().push(state);
+    }
+
+    async fn set_last_error(&mut self, headline: &str, detail: &str) {
+        self.last_errors
+            .lock()
+            .unwrap()
+            .push((headline.to_string(), detail.to_string()));
     }
 }

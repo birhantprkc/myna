@@ -44,6 +44,10 @@ impl Indicator for DynamicIndicator {
         self.dbus.set_audio_drops(not_active).await;
     }
 
+    async fn set_last_error(&mut self, headline: &str, detail: &str) {
+        self.dbus.set_last_error(headline, detail).await;
+    }
+
     async fn set_state(&mut self, state: IndicatorState) {
         // Always publish via D-Bus for the HUD(s).
         self.dbus.set_state(state.clone()).await;

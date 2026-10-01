@@ -103,6 +103,10 @@ impl<I: Indicator> Indicator for Chiming<I> {
     async fn set_audio_drops(&mut self, not_active: u64) {
         self.inner.set_audio_drops(not_active).await;
     }
+
+    async fn set_last_error(&mut self, headline: &str, detail: &str) {
+        self.inner.set_last_error(headline, detail).await;
+    }
 }
 
 #[cfg(test)]

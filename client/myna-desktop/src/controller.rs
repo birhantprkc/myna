@@ -133,7 +133,8 @@ fn advance(state: &mut DictationState, to: DictationState) {
 /// `delivery` is what became of this utterance's text (see [`Delivery`]): it
 /// chooses the message [`completion_indicator_state`] shows.
 ///
-/// `capture_fault` is the device failure this utterance was salvaged from, if
+/// `capture_fault` is the headline of the device failure this utterance was
+/// salvaged from, if
 /// any (an [`OrchestratorEvent::CaptureLost`] arrived): its `Done` carries the
 /// transcript of the audio captured before the fault, but the utterance still
 /// ended with a dead microphone, so the completion notice is that failure
@@ -164,7 +165,7 @@ pub fn event_to_indicator(
             None => completion_indicator_state(text, delivery, quality),
         }),
         OrchestratorEvent::Error { failure, .. } => {
-            Some(IndicatorState::critical(failure.detail.clone()))
+            Some(IndicatorState::critical(failure.headline.clone()))
         }
         OrchestratorEvent::Snippet(_)
         | OrchestratorEvent::Final(_)
@@ -754,7 +755,12 @@ impl DesktopController {
         // Terminal disposition.
         if ending == Ending::TargetGone {
             myna_core::info_log!("ctrl", "utterance cancelled: dictation target closed");
-            report_critical(self.indicator.as_mut(), gettext("Dictation target closed")).await;
+            report_failure(
+                self.indicator.as_mut(),
+                gettext("Text field closed"),
+                "dictation target closed",
+            )
+            .await;
             finalize_state(&mut self.state, DictationState::Cancelled);
         } else {
             match outcome {
@@ -786,9 +792,14 @@ impl DesktopController {
                     self.trigger.resync().await;
                 }
                 Ok(SessionOutcome::Failed { failure, .. }) => {
-                    let message = failure.detail;
-                    myna_core::info_log!("ctrl", "utterance FAILED: {message}");
-                    report_critical(self.indicator.as_mut(), message).await;
+                    myna_core::info_log!(
+                        "ctrl",
+                        "utterance FAILED: {} ({})",
+                        failure.headline,
+                        failure.detail
+                    );
+                    report_failure(self.indicator.as_mut(), failure.headline, &failure.detail)
+                        .await;
                     finalize_state(&mut self.state, DictationState::Error);
                     // A hard failure is not a Release edge: the toggle's Press
                     // was consumed with no matching Release, so resync or the
@@ -799,7 +810,7 @@ impl DesktopController {
                 }
                 Err(err) => {
                     myna_core::info_log!("ctrl", "utterance backend ERROR: {err}");
-                    report_critical(self.indicator.as_mut(), err.to_string()).await;
+                    report_failure(self.indicator.as_mut(), err.headline(), &err.to_string()).await;
                     finalize_state(&mut self.state, DictationState::Error);
                     // Same toggle-parity fix as the Failed branch above.
                     self.trigger.resync().await;
@@ -826,7 +837,7 @@ impl DesktopController {
             "ctrl",
             "acquire failed, aborting before capture: {message} ({err})"
         );
-        report_critical(self.indicator.as_mut(), message).await;
+        report_failure(self.indicator.as_mut(), message, &err.to_string()).await;
         advance(&mut self.state, DictationState::Error);
         // A pre-capture abort is not a Release edge — the toggle's Press was
         // consumed and never matched, so resync or the next toggle reads as a
@@ -843,10 +854,16 @@ impl DesktopController {
 /// happened" (the 2026-08-18 silent-death debug session). stderr always
 /// reaches the terminal/journal the daemon was started from. Recoverable
 /// notices ("No speech detected") are NOT printed - they are normal outcomes.
-async fn report_critical(indicator: &mut dyn Indicator, message: impl Into<String>) {
-    let message = message.into();
-    eprintln!("myna-desktop: {message}");
-    indicator.set_state(IndicatorState::critical(message)).await;
+///
+/// The indicator shows `headline`; `detail`, the untranslated cause, goes to
+/// stderr with it and is kept as the last error for Settings Diagnostics.
+async fn report_failure(indicator: &mut dyn Indicator, headline: impl Into<String>, detail: &str) {
+    let headline = headline.into();
+    eprintln!("myna-desktop: {headline} ({detail})");
+    indicator.set_last_error(&headline, detail).await;
+    indicator
+        .set_state(IndicatorState::critical(headline))
+        .await;
 }
 
 /// Enter `Finalizing` from an active state (idempotent — a no-op if already
@@ -936,6 +953,8 @@ async fn route_event(
     }
     if let OrchestratorEvent::CaptureLost { fault: lost } = &event {
         let message = &lost.detail;
+        // The pill shows the headline; the detail lands with the terminal
+        // failure, which carries it too.
         // Capture is over, however badly. The utterance is not: it is being
         // finished with the audio captured before the fault, so the indicator
         // shows finishing rather than listening, and the failure is held for
@@ -945,7 +964,7 @@ async fn route_event(
             "capture lost, finishing with what it has: {message}"
         );
         if fault.is_none() {
-            *fault = Some(message.clone());
+            *fault = Some(lost.headline.clone());
         }
         enter_finalizing(state, indicator).await;
     }
@@ -1012,7 +1031,8 @@ struct Utterance {
     buffer: CommitBuffer,
     /// Chunks the accept-gate dropped.
     drops: AudioDrops,
-    /// The device failure this utterance is being salvaged from, once one has
+    /// The headline of the device failure this utterance is being salvaged
+    /// from, once one has
     /// been reported (see [`OrchestratorEvent::CaptureLost`]): capture ended
     /// badly, the transcript that follows covers only the audio taken before
     /// it, and the terminal reports the failure once that text is in.
@@ -1490,7 +1510,7 @@ mod tests {
     }
 
     #[test]
-    fn error_maps_to_error_with_message() {
+    fn error_maps_to_error_with_its_headline() {
         assert_eq!(
             event_to_indicator(
                 &OrchestratorEvent::Error {
@@ -1502,7 +1522,7 @@ mod tests {
                 InputQuality::Ok,
                 None
             ),
-            Some(IndicatorState::critical("boom"))
+            Some(IndicatorState::critical("Model error"))
         );
     }
 

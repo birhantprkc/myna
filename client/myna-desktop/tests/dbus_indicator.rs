@@ -146,7 +146,10 @@ async fn payloads_are_content_free() {
 
     indicator.set_state(IndicatorState::Recording).await;
     indicator
-        .set_state(IndicatorState::critical("inference backend unavailable"))
+        .set_last_error("Model not reachable", "cannot reach backend: x")
+        .await;
+    indicator
+        .set_state(IndicatorState::critical("Model not reachable"))
         .await;
     indicator.set_state(IndicatorState::Hidden).await;
 
@@ -156,4 +159,11 @@ async fn payloads_are_content_free() {
             "unknown wire state: {state}"
         );
     }
+    // The last error is the failure's own text, set by the publisher: the
+    // headline the pill showed and the cause behind it, never a transcript.
+    assert_eq!(fake.property("LastError"), str_prop("Model not reachable"));
+    assert_eq!(
+        fake.property("LastErrorDetail"),
+        str_prop("cannot reach backend: x")
+    );
 }

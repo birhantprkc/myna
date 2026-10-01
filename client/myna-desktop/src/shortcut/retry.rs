@@ -192,6 +192,16 @@ impl RetryingTrigger {
         self
     }
 
+    /// Show `headline`, and keep `detail` behind it as the last error for
+    /// Settings Diagnostics.
+    async fn publish_failure(&mut self, headline: &str, detail: &str) {
+        if let Some(bus) = &self.status {
+            let mut bus = bus.lock().await;
+            crate::dbus::publish_last_error(&mut *bus, headline, detail).await;
+        }
+        self.publish(headline).await;
+    }
+
     async fn publish(&mut self, message: &str) {
         if let Some(bus) = &self.status {
             bus.lock()
@@ -278,9 +288,8 @@ impl RetryingTrigger {
                         );
                         self.last_reason = Some(reason);
                     }
-                    // The reason is in the log line above; the user gets the
-                    // headline.
-                    self.publish(&gettext("Shortcut unavailable")).await;
+                    self.publish_failure(&gettext("Shortcut unavailable"), failure.reason())
+                        .await;
                     // Under the tests' `start_paused` clock tokio auto-advances
                     // whenever every task is parked on a timer, so the real
                     // backoff sequence runs in no wall-clock time.
@@ -442,6 +451,16 @@ mod tests {
             bus.property("StatusMessage"),
             Some(PropertyValue::Str("Shortcut unavailable".into()))
         );
+        assert_eq!(
+            bus.property("LastErrorDetail"),
+            Some(PropertyValue::Str(
+                "global-shortcuts portal unavailable".into()
+            ))
+        );
+        assert_eq!(
+            bus.property("LastError"),
+            Some(PropertyValue::Str("Shortcut unavailable".into()))
+        );
     }
 
     /// Never finds the service running, and is told when one appears - the
@@ -597,6 +616,14 @@ mod tests {
             bus.property("StatusMessage"),
             Some(PropertyValue::Str("Shortcut unavailable".into()))
         );
+        assert_eq!(
+            bus.property("LastErrorDetail"),
+            Some(PropertyValue::Str("no dictation shortcut bound".into()))
+        );
+        assert_eq!(
+            bus.property("LastError"),
+            Some(PropertyValue::Str("Shortcut unavailable".into()))
+        );
     }
 
     /// A refused bind is a dialog the user just said no to. Retrying it on the
@@ -660,6 +687,14 @@ mod tests {
 
         assert_eq!(
             bus.property("StatusMessage"),
+            Some(PropertyValue::Str("Shortcut unavailable".into()))
+        );
+        assert_eq!(
+            bus.property("LastErrorDetail"),
+            Some(PropertyValue::Str("no answer within 120s".into()))
+        );
+        assert_eq!(
+            bus.property("LastError"),
             Some(PropertyValue::Str("Shortcut unavailable".into()))
         );
     }

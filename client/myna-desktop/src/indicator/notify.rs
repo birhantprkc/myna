@@ -40,7 +40,7 @@ fn toast_text(state: &IndicatorState) -> Option<(String, String)> {
         IndicatorState::Hidden => None,
         IndicatorState::Recording => Some((
             gettext("🎤 Dictation: listening"),
-            gettext("Speak now — tap your shortcut again to stop."),
+            gettext("Speak now. Press your shortcut again to stop."),
         )),
         IndicatorState::Transcribing => Some((
             gettext("💬 Dictation: transcribing"),
@@ -199,7 +199,7 @@ mod tests {
             toast_text(&IndicatorState::Recording),
             Some((
                 "🎤 Dictation: listening".into(),
-                "Speak now — tap your shortcut again to stop.".into(),
+                "Speak now. Press your shortcut again to stop.".into(),
             ))
         );
         assert_eq!(

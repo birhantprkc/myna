@@ -607,6 +607,7 @@ async fn late_transcribing_event_after_release_does_not_reopen_recording() {
 async fn indicator_shows_error_state_on_failure() {
     let indicator = MockIndicator::new();
     let log = indicator.log();
+    let last_errors = indicator.last_errors();
     let mut controller = build(
         [TriggerEdge::Press, TriggerEdge::Release],
         MockInjector::new(),
@@ -619,8 +620,19 @@ async fn indicator_shows_error_state_on_failure() {
     assert!(
         states
             .iter()
-            .any(|s| matches!(s, IndicatorState::Error { message, .. } if message == "boom")),
-        "expected Error(\"boom\"): {states:?}"
+            .any(|s| matches!(s, IndicatorState::Error { message, .. } if message == "Transcription failed")),
+        "the pill shows the headline, not the server's text: {states:?}"
+    );
+    assert!(
+        !states.iter().any(
+            |s| matches!(s, IndicatorState::Error { message, .. } if message.contains("boom"))
+        ),
+        "{states:?}"
+    );
+    assert_eq!(
+        last_errors.lock().unwrap().last(),
+        Some(&("Transcription failed".to_string(), "boom".to_string())),
+        "the detail is kept for Diagnostics"
     );
 }
 
@@ -1852,9 +1864,7 @@ async fn a_salvaged_capture_fault_inserts_the_text_then_reports_the_device() {
         vec![
             IndicatorState::Recording,
             IndicatorState::Finalizing,
-            IndicatorState::critical(
-                "some audio was lost: audio device unavailable: mic unplugged"
-            ),
+            IndicatorState::critical("Some audio lost"),
         ],
     );
     assert_eq!(state, DictationState::Idle);
@@ -1868,9 +1878,7 @@ async fn a_salvage_that_transcribed_nothing_still_reports_the_device() {
     assert!(inject_log.lock().unwrap().commits.is_empty());
     assert_eq!(
         states.last(),
-        Some(&IndicatorState::critical(
-            "some audio was lost: audio device unavailable: mic unplugged"
-        )),
+        Some(&IndicatorState::critical("Some audio lost")),
     );
     assert!(
         !states.iter().any(|s| matches!(

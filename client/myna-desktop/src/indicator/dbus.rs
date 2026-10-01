@@ -281,6 +281,14 @@ impl Indicator for DbusIndicator {
         bus.set_property("AudioDroppedNotActive", PropertyValue::U64(not_active))
             .await;
     }
+
+    /// Outside [`Self::publish`]'s dedup and untouched by the auto-hide: a
+    /// second failure with the same headline still updates the detail and
+    /// time, and Diagnostics opened after the pill is gone still reads it.
+    async fn set_last_error(&mut self, headline: &str, detail: &str) {
+        let mut bus = self.bus.lock().await;
+        crate::dbus::publish_last_error(&mut *bus, headline, detail).await;
+    }
 }
 
 #[cfg(test)]
@@ -535,6 +543,82 @@ mod tests {
             bus.property("State"),
             Some(PropertyValue::Str(wire_state::TRANSCRIBING.into())),
             "a stale auto-hide must not fire after the state moved on"
+        );
+    }
+
+    fn last_error_time(bus: &FakeBus) -> i64 {
+        match bus.property("LastErrorTime") {
+            Some(PropertyValue::I64(t)) => t,
+            other => panic!("LastErrorTime: {other:?}"),
+        }
+    }
+
+    /// The last error outlives the pill: Diagnostics is opened long after the
+    /// auto-hide, and a later success does not erase it either.
+    #[tokio::test]
+    async fn the_last_error_survives_the_auto_hide_and_later_success() {
+        let bus = FakeBus::new();
+        let shared: SharedBus = Arc::new(tokio::sync::Mutex::new(bus.clone()));
+        let mut indicator = DbusIndicator::with_hold(shared, Readiness::new(), |_| 5);
+
+        indicator
+            .set_last_error(
+                "Model not running",
+                "myna-whisper is connected but its server is not running",
+            )
+            .await;
+        indicator
+            .set_state(IndicatorState::critical("Model not running"))
+            .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        indicator.set_state(IndicatorState::Recording).await;
+        indicator.set_state(IndicatorState::Hidden).await;
+
+        assert_eq!(
+            bus.property("State"),
+            Some(PropertyValue::Str(wire_state::IDLE.into()))
+        );
+        assert_eq!(
+            bus.property("LastError"),
+            Some(PropertyValue::Str("Model not running".into()))
+        );
+        assert_eq!(
+            bus.property("LastErrorDetail"),
+            Some(PropertyValue::Str(
+                "myna-whisper is connected but its server is not running".into()
+            ))
+        );
+        assert!(last_error_time(&bus) > 0);
+    }
+
+    /// The pill dedups on what it shows; the last error must not, or a second
+    /// failure that reads the same would keep the first one's cause.
+    #[tokio::test]
+    async fn the_same_headline_twice_updates_the_detail_and_time() {
+        let bus = FakeBus::new();
+        let shared: SharedBus = Arc::new(tokio::sync::Mutex::new(bus.clone()));
+        let mut indicator = DbusIndicator::with_hold(shared, Readiness::new(), |_| 100);
+
+        indicator.set_last_error("Model error", "first").await;
+        indicator
+            .set_state(IndicatorState::critical("Model error"))
+            .await;
+        let first = last_error_time(&bus);
+        std::thread::sleep(Duration::from_millis(2));
+        indicator.set_last_error("Model error", "second").await;
+        indicator
+            .set_state(IndicatorState::critical("Model error"))
+            .await;
+
+        assert_eq!(
+            bus.property("LastErrorDetail"),
+            Some(PropertyValue::Str("second".into()))
+        );
+        assert!(last_error_time(&bus) > first);
+        assert_eq!(
+            bus.state_history().iter().filter(|s| *s == "error").count(),
+            1,
+            "the pill itself still dedups"
         );
     }
 }

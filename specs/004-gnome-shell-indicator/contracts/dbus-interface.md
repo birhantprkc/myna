@@ -40,10 +40,20 @@ this interface.
 | `StatusMessage` | `s` | content-free publisher-owned label; `""` while `State==idle` | user-facing status label (E3): every visible state has one, including `loading`, `recording`, `transcribing`, and `finalizing`. |
 | `HudStyle` | `s` | a `hud-style` settings nick (`bar`\|`ribbon`\|`vumeter`\|`progress`, additive); `""` from a publisher predating the property | **(2026-09-09)** which audio-level presentation the renderer should draw. The publisher is the only settings reader; the renderer is told, and resolves an unknown or empty nick to its default (C8). |
 | `AudioDroppedNotActive` | `t` | count, cumulative per session | chunks refused because the session was already over. Only ever a bug. |
+| `LastError` | `s` | content-free publisher-owned headline; `""` until the first failure | **(2026-10-01)** the headline of the latest failure, exactly as `StatusMessage` showed it (without the `Error: ` prefix). Sticky: set on every failure report, outside the `State`/`StatusMessage` dedup, and never cleared by the auto-hide or by a later success. |
+| `LastErrorDetail` | `s` | untranslated error text; `""` until the first failure | **(2026-10-01)** the cause behind `LastError` (e.g. `cannot reach backend: ...`). May name filesystem paths, commands or server-supplied text: consumers redact it before showing or exporting it. |
+| `LastErrorTime` | `x` | microseconds since the Unix epoch; `0` for never | **(2026-10-01)** when `LastError` was set. Updated even when the headline repeats. |
 
 The drop counter is a count, never samples or content, and exists because the
 daemon is the only process that sees a chunk refused - the Settings app reads
 it for its diagnostics page.
+
+The three `LastError*` properties exist for the same reader: the pill is gone
+by the time someone opens Settings Diagnostics, so the failure is kept beside
+it. They are additive; a consumer talking to an older publisher that lacks
+them reads "no last error", never a failure. Each is set with its own
+`PropertiesChanged`, `LastErrorDetail` and `LastErrorTime` before
+`LastError`, so a client reacting to `LastError` reads a consistent triple.
 
 ### Signals
 
@@ -69,7 +79,7 @@ change already reads the consistent label.
 |---|---|---|
 | C1 | Owning `com.canonical.Myna.Dictation` on the session bus makes `State`/levels observable (read + `PropertiesChanged`) by a standard D-Bus client. | env-gated `dbus_hw.rs` round-trip |
 | C2 | Every controller state transition publishes exactly one `State` property update with the mapped `State` string (E1 table), pushed via `PropertiesChanged`. | hermetic `dbus_indicator.rs` (fake bus) |
-| C3 | `State`/`StatusMessage` never carry transcript text; `StatusMessage` is the content-free publisher-owned label for every visible state. | hermetic assertion on published payloads |
+| C3 | `State`/`StatusMessage` never carry transcript text; `StatusMessage` is the content-free publisher-owned label for every visible state. **(2026-10-01)** Likewise `LastError`/`LastErrorDetail`: `LastError` is a fixed publisher-owned headline like `StatusMessage`; `LastErrorDetail` is error text that may carry paths, which consumers must redact before showing or exporting it. | hermetic assertion on published payloads |
 | C4 | `AudioRms`/`AudioPeak` reflect the latest `AudioStats` while recording and are `0.0` at idle; updates are throttled to ~15–20 Hz. | hermetic (fake bus, fed AudioStats) + gated cadence check |
 | C5 | The cold-load window publishes `loading` (not `recording`) until `Ready`; then `recording` (FR-006, R4). | hermetic mapping test |
 | C6 | `Toggle` produces a Press edge when idle and a Stop when active; repeated/duplicate calls do not start two sessions (dedup, mirrors `ControlTrigger`). | hermetic `DbusTrigger` test |
@@ -80,6 +90,7 @@ change already reads the consistent label.
 | C11 | **(2026-07-30)** The live per-event path (`event_to_indicator`'s `Done(_)` arm) and the finalize-block safety net (`SessionOutcome::Completed`) always agree on `notice` vs. `idle` for the same transcript — both route through one shared `completion_indicator_state()` helper, so they can never publish conflicting states, and a redundant second call is a no-op under C2's per-wire-state dedup. | hermetic `controller.rs` (asserts both call sites produce identical `IndicatorState` for the same transcript) |
 | C14 | **(2026-08-28)** A `RegisterClient` call adds the sender's unique name to the client set (idempotent) and `UnregisterClient` removes it; the server also prunes vanished names via `NameOwnerChanged`. Return value is the current client count. | hermetic `serve.rs` client registry + gated round-trip |
 | C15 | **(2026-08-28)** While at least one client is registered, the notification fallback is suppressed and the D-Bus HUD is the indicator; when the last client leaves (explicit `UnregisterClient` or vanished), the fallback is restored. The D-Bus `State` publishing is unaffected. | hermetic `dynamic.rs` + gated |
+| C16 | **(2026-10-01)** Every failure report sets `LastError`/`LastErrorDetail`/`LastErrorTime`, including one whose headline repeats the previous one; the auto-hide back to `idle` and later sessions leave them untouched. | hermetic `indicator/dbus.rs` + gated `dbus_hw.rs` round-trip |
 
 ## HUD identity: `com.canonical.Myna.Hud` (2026-08-28)
 

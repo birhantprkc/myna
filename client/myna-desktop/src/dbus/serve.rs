@@ -65,6 +65,12 @@ struct ServedState {
     /// empty while undecided.
     activation: String,
     audio_dropped_not_active: u64,
+    /// The latest failure's headline, empty until one happens. Sticky: see
+    /// [`crate::dbus::publish_last_error`].
+    last_error: String,
+    last_error_detail: String,
+    /// When it happened, in microseconds since the epoch; 0 for never.
+    last_error_time: i64,
 }
 
 impl ServedState {
@@ -304,6 +310,38 @@ impl DictationObject {
             .expect("served state poisoned")
             .activation
             .clone()
+    }
+
+    /// `LastError`: the latest failure's headline, as `StatusMessage` showed
+    /// it; empty until one happens, and never cleared.
+    #[zbus(property)]
+    async fn last_error(&self) -> String {
+        self.served
+            .lock()
+            .expect("served state poisoned")
+            .last_error
+            .clone()
+    }
+
+    /// `LastErrorDetail`: the untranslated cause behind `LastError`. May name
+    /// paths; consumers redact before showing or exporting it.
+    #[zbus(property)]
+    async fn last_error_detail(&self) -> String {
+        self.served
+            .lock()
+            .expect("served state poisoned")
+            .last_error_detail
+            .clone()
+    }
+
+    /// `LastErrorTime`: when `LastError` was set, in microseconds since the
+    /// epoch; 0 for never.
+    #[zbus(property)]
+    async fn last_error_time(&self) -> i64 {
+        self.served
+            .lock()
+            .expect("served state poisoned")
+            .last_error_time
     }
 
     #[zbus(property)]
@@ -561,6 +599,11 @@ impl Bus for ZbusBus {
                     ("AudioDroppedNotActive", PropertyValue::U64(v)) => {
                         served.audio_dropped_not_active = *v
                     }
+                    ("LastError", PropertyValue::Str(s)) => served.last_error = s.clone(),
+                    ("LastErrorDetail", PropertyValue::Str(s)) => {
+                        served.last_error_detail = s.clone()
+                    }
+                    ("LastErrorTime", PropertyValue::I64(v)) => served.last_error_time = *v,
                     _ => {
                         myna_core::dbg_log!("dbus", "ignoring unknown property set: {name}");
                         return Ok(());
@@ -583,6 +626,9 @@ impl Bus for ZbusBus {
                 "Shortcut" => iface.shortcut_changed(emitter).await,
                 "Activation" => iface.activation_changed(emitter).await,
                 "AudioDroppedNotActive" => iface.audio_dropped_not_active_changed(emitter).await,
+                "LastError" => iface.last_error_changed(emitter).await,
+                "LastErrorDetail" => iface.last_error_detail_changed(emitter).await,
+                "LastErrorTime" => iface.last_error_time_changed(emitter).await,
                 _ => Ok(()),
             }
         }

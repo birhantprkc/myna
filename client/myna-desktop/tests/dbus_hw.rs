@@ -283,3 +283,43 @@ async fn the_published_activation_is_readable_on_the_bus() {
         .expect("Activation after publish");
     assert_eq!(read(published), "control");
 }
+
+/// The last error is what Settings Diagnostics reads: a publish reaches a
+/// reader, all three properties together, and none before the first failure.
+#[tokio::test]
+async fn the_published_last_error_is_readable_on_the_bus() {
+    use myna_desktop::dbus::{publish_last_error, OBJECT_PATH};
+
+    skip_unless_dbus!();
+    let _serial = exclusive().await;
+    name_is_free().await;
+    let mut owner = ZbusBus::serve().await.expect("serve owns the name");
+    let conn = zbus::Connection::session().await.expect("session bus");
+    let properties = zbus::fdo::PropertiesProxy::builder(&conn)
+        .destination(BUS_NAME)
+        .unwrap()
+        .path(OBJECT_PATH)
+        .unwrap()
+        .build()
+        .await
+        .expect("properties proxy");
+    let interface = zbus::names::InterfaceName::try_from(BUS_NAME).unwrap();
+    let text = |value: zbus::zvariant::OwnedValue| String::try_from(value).unwrap();
+    let time = |value: zbus::zvariant::OwnedValue| i64::try_from(value).unwrap();
+
+    let get = |name: &'static str| {
+        let (properties, interface) = (&properties, interface.clone());
+        async move { properties.get(interface, name).await.expect(name) }
+    };
+    assert_eq!(text(get("LastError").await), "");
+    assert_eq!(text(get("LastErrorDetail").await), "");
+    assert_eq!(time(get("LastErrorTime").await), 0);
+
+    publish_last_error(&mut owner, "Model not reachable", "cannot reach backend: x").await;
+    assert_eq!(text(get("LastError").await), "Model not reachable");
+    assert_eq!(
+        text(get("LastErrorDetail").await),
+        "cannot reach backend: x"
+    );
+    assert!(time(get("LastErrorTime").await) > 0);
+}

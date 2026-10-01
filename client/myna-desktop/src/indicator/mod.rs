@@ -102,6 +102,11 @@ pub trait Indicator: Send {
     /// content - and the one capture-health fact no reader outside the daemon
     /// can obtain for itself.
     async fn set_audio_drops(&mut self, _not_active: u64) {}
+
+    /// Record a failure for later diagnosis: the headline the user was shown
+    /// and the untranslated detail behind it. Kept after the state moves on;
+    /// indicators with nowhere to keep it ignore it.
+    async fn set_last_error(&mut self, _headline: &str, _detail: &str) {}
 }
 
 #[async_trait]
@@ -112,5 +117,9 @@ impl Indicator for Box<dyn Indicator> {
 
     async fn set_audio_drops(&mut self, not_active: u64) {
         (**self).set_audio_drops(not_active).await;
+    }
+
+    async fn set_last_error(&mut self, headline: &str, detail: &str) {
+        (**self).set_last_error(headline, detail).await;
     }
 }

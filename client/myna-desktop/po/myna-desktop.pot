@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 02:06+0100\n"
+"POT-Creation-Date: 2026-10-01 02:09+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -43,7 +43,7 @@ msgid "🎤 Dictation: listening"
 msgstr ""
 
 #: src/indicator/notify.rs:43
-msgid "Speak now — tap your shortcut again to stop."
+msgid "Speak now. Press your shortcut again to stop."
 msgstr ""
 
 #: src/indicator/notify.rs:46
@@ -66,20 +66,20 @@ msgstr ""
 msgid "⚠️ Dictation error"
 msgstr ""
 
-#: src/controller.rs:217 src/inject/mod.rs:53
+#: src/controller.rs:218 src/inject/mod.rs:53
 msgid "Focus lost"
 msgstr ""
 
-#: src/controller.rs:219
+#: src/controller.rs:220
 msgid "No speech detected"
 msgstr ""
 
-#: src/controller.rs:221
+#: src/controller.rs:222
 msgid "Background noise is high"
 msgstr ""
 
-#: src/controller.rs:757
-msgid "Dictation target closed"
+#: src/controller.rs:760
+msgid "Text field closed"
 msgstr ""
 
 #. TRANSLATORS: the keyboard shortcut's name in the desktop's dialog and settings.
@@ -92,7 +92,7 @@ msgstr ""
 msgid "Dictation (hold to talk)"
 msgstr ""
 
-#: src/shortcut/retry.rs:283
+#: src/shortcut/retry.rs:291
 msgid "Shortcut unavailable"
 msgstr ""
 

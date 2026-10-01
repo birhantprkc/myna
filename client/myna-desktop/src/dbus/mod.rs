@@ -38,6 +38,26 @@ pub enum PropertyValue {
     F64(f64),
     /// A D-Bus unsigned 64-bit (`t`) property.
     U64(u64),
+    /// A D-Bus signed 64-bit (`x`) property.
+    I64(i64),
+}
+
+/// Record the latest failure in the sticky `LastError` / `LastErrorDetail` /
+/// `LastErrorTime` properties, for Settings Diagnostics to read after the HUD
+/// has moved on. Never cleared, neither by the auto-hide nor by a later
+/// success; each set is its own `PropertiesChanged`, and the detail and time
+/// go first so a client reacting to `LastError` reads a consistent triple.
+pub async fn publish_last_error(bus: &mut dyn Bus, headline: &str, detail: &str) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_micros()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    bus.set_property("LastErrorDetail", PropertyValue::Str(detail.to_string()))
+        .await;
+    bus.set_property("LastErrorTime", PropertyValue::I64(now))
+        .await;
+    bus.set_property("LastError", PropertyValue::Str(headline.to_string()))
+        .await;
 }
 
 /// The bus boundary all publisher logic is written against (research R11):
@@ -52,7 +72,8 @@ pub enum PropertyValue {
 #[async_trait]
 pub trait Bus: Send {
     /// Set a property (`State` / `StatusMessage` / `AudioRms` / `AudioPeak` /
-    /// `HudStyle` / `Shortcut` / `AudioDroppedNotActive`), emitting
+    /// `HudStyle` / `Shortcut` / `AudioDroppedNotActive` / `LastError` /
+    /// `LastErrorDetail` / `LastErrorTime`), emitting
     /// `PropertiesChanged`
     /// on the real bus.
     async fn set_property(&mut self, name: &str, value: PropertyValue);
