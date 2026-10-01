@@ -6,7 +6,7 @@
 //! error detail, gnome-shell's extension error and each backend surface's
 //! failure. None of those sources carries audio or dictated text, so the
 //! privacy contract holds by construction; error text only goes through
-//! [`redact_text`] for secrets and paths.
+//! [`redact_text`] for secrets and the user's home directory.
 
 use std::time::Duration;
 
@@ -22,7 +22,6 @@ use crate::performance::{
 /// list-engines).
 pub const BACKEND_REFRESH_PROCESS_BUDGET: usize = 9;
 
-const PLACEHOLDER_PATH: &str = "<path>";
 const PLACEHOLDER_REDACTED: &str = "[redacted]";
 
 /// Substrings that mark a `--flag=value` (or `flag=value`) pair as carrying a
@@ -693,7 +692,7 @@ fn drops_summary(drops: AudioDrops) -> String {
 }
 
 /// `<state>, <copy>`, plus gnome-shell's error when it has one. The copy is
-/// a classification, never the path: this page promises no paths.
+/// a classification, never the path.
 fn extension_summary(report: &ExtensionReport) -> String {
     match report {
         ExtensionReport::NoShell => gettextrs::gettext("gnome-shell did not answer"),
@@ -740,8 +739,9 @@ fn memory_summary(memory: ProcessMemory) -> String {
     )
 }
 
-/// Redact a value from outside this crate: strip filesystem paths and any
-/// embedded `key=value` pairs whose key looks sensitive. Everything else
+/// Redact a value from outside this crate: write the user's home as `~`
+/// and scrub `key=value` pairs whose key looks
+/// sensitive. Everything else
 /// stays, since an error is useless without its words; no source that
 /// reaches here carries dictated text.
 pub fn redact_text(value: &str) -> String {
@@ -749,36 +749,44 @@ pub fn redact_text(value: &str) -> String {
     scrub_paths(&scrubbed)
 }
 
+/// Keep every path, since `/sys/bus/usb/devices` is the diagnosis, but write
+/// the user's home directory as `~`.
 fn scrub_paths(value: &str) -> String {
+    static HOME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    scrub_home(
+        value,
+        HOME.get_or_init(|| gio::glib::home_dir().to_string_lossy().into_owned()),
+    )
+}
+
+fn scrub_home(value: &str, home: &str) -> String {
+    let home = home.trim_end_matches('/');
+    if home.is_empty() {
+        return value.to_owned();
+    }
     let mut out = String::with_capacity(value.len());
     let mut cursor = 0;
-    while let Some(relative_start) = value[cursor..].find('/') {
-        let start = cursor + relative_start;
+    while let Some(relative) = value[cursor..].find(home) {
+        let start = cursor + relative;
+        let end = start + home.len();
+        let before = value[..start].chars().next_back();
+        let after = value[end..].chars().next();
         out.push_str(&value[cursor..start]);
-        let after_slash = &value[start + 1..];
-        if after_slash.chars().next().is_none_or(char::is_whitespace) {
-            out.push('/');
-            cursor = start + 1;
-            continue;
+        let inside_a_longer_path =
+            before.is_some_and(|character| is_name_char(character) || character == '/');
+        if inside_a_longer_path || after.is_some_and(is_name_char) {
+            out.push_str(home);
+        } else {
+            out.push('~');
         }
-        // A path may hold spaces, so it runs to a separator - including the
-        // `: ` of `<path>: <error>`, so the error after it survives.
-        let end = after_slash
-            .char_indices()
-            .find(|&(offset, character)| {
-                matches!(character, '\n' | '\r' | ',' | ';' | '"' | '\'')
-                    || (character == ':'
-                        && after_slash[offset + 1..]
-                            .chars()
-                            .next()
-                            .is_some_and(char::is_whitespace))
-            })
-            .map_or(value.len(), |(offset, _)| start + 1 + offset);
-        out.push_str(PLACEHOLDER_PATH);
         cursor = end;
     }
     out.push_str(&value[cursor..]);
     out
+}
+
+fn is_name_char(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '_' | '-' | '.')
 }
 
 fn scrub_secret_assignments(value: &str) -> String {
@@ -874,21 +882,36 @@ mod tests {
         assert!(text.contains("Last error      none"), "{text}");
     }
 
+    /// The path is the diagnosis: a permission denied on sysfs means a plug
+    /// is not connected.
     #[test]
-    fn a_path_ends_at_the_colon_before_its_error() {
+    fn system_paths_are_kept_and_the_home_becomes_a_tilde() {
+        let scrub = |value| scrub_home(value, "/home/alice/");
         assert_eq!(
-            redact_text("/run/a b/x.sock: connection refused"),
-            "<path>: connection refused"
+            scrub("open /sys/bus/usb/devices: permission denied"),
+            "open /sys/bus/usb/devices: permission denied"
         );
-        assert_eq!(redact_text("at /srv/x:8080 now"), "at <path>");
+        assert_eq!(
+            scrub("failed at /home/alice/Private Recording.wav"),
+            "failed at ~/Private Recording.wav"
+        );
+        assert_eq!(scrub("cd /home/alice"), "cd ~");
+        assert_eq!(
+            scrub("/media/alice/usb, /home/alicex, /srv/home/alice/x"),
+            "/media/alice/usb, /home/alicex, /srv/home/alice/x"
+        );
+        assert_eq!(scrub("échec sans chemin"), "échec sans chemin");
     }
 
     #[test]
-    fn sanitize_replaces_paths_and_secrets() {
-        let text = redact_text("failed at /home/alice/private --token=abc123 rest");
-        assert!(text.contains("<path>"));
-        assert!(!text.contains("abc123"));
-        assert!(!text.contains("/home/alice"));
+    fn a_root_home_changes_nothing() {
+        assert_eq!(scrub_home("/etc/hosts", "/"), "/etc/hosts");
+    }
+
+    #[test]
+    fn sanitize_scrubs_secrets_and_keeps_system_paths() {
+        let text = redact_text("failed at /run/myna.sock --token=abc123 rest");
+        assert_eq!(text, "failed at /run/myna.sock --token=[redacted] rest");
     }
 
     #[test]
@@ -921,17 +944,6 @@ mod tests {
         assert_eq!(snaps.len(), 1);
         assert_eq!(snaps[0].name, "myna");
         assert_eq!(snaps[0].version, "1.2.3");
-    }
-
-    #[test]
-    fn scrub_paths_leaves_stand_alone_slash() {
-        assert_eq!(scrub_paths("a / b"), "a / b");
-        assert_eq!(scrub_paths("/etc/hosts"), "<path>");
-        assert_eq!(
-            scrub_paths("failed at /home/alice/Private Recording.wav"),
-            "failed at <path>"
-        );
-        assert_eq!(scrub_paths("échec sans chemin"), "échec sans chemin");
     }
 
     #[test]
@@ -1077,9 +1089,9 @@ mod tests {
     }
 
     /// The page and the exported report are the same text, and the detail is
-    /// the one value in it that came from outside: its paths are scrubbed.
+    /// the one value in it that came from outside: it is shown whole.
     #[test]
-    fn the_last_error_is_shown_with_its_detail_redacted() {
+    fn the_last_error_is_shown_with_its_detail() {
         let report = present_diagnostics(running_daemon(Some(LastError {
             headline: "Model not connected".into(),
             detail: "/nonexistent/share: no model snap is connected; \
@@ -1090,33 +1102,30 @@ mod tests {
         let text = report.copy_text();
         assert_eq!(
             field_value(&text, "Last error"),
-            Some("Model not connected (<path>: no model snap is connected; cannot reach the model: <path>), 2026-10-01 09:30:00"),
+            Some("Model not connected (/nonexistent/share: no model snap is connected; cannot reach the model: /run/user/1000/snap.myna/backend/provider/myna.sock), 2026-10-01 09:30:00"),
             "{text}"
         );
-        assert!(text.contains("no model snap is connected"), "{text}");
-        assert!(text.contains(", 2026-10-01 09:30:00"), "{text}");
-        assert!(!text.contains("/nonexistent"), "{text}");
-        assert!(!text.contains("myna.sock"), "{text}");
-        assert!(!text.contains('/'), "{text}");
     }
 
     #[test]
-    fn a_failed_extension_shows_gnome_shells_error_without_paths() {
+    fn a_failed_extension_shows_gnome_shells_error_without_the_home() {
         let report = present_diagnostics(DiagnosticInput {
             extension: Some(ExtensionReport::Known {
                 state: "error".into(),
                 copy: ExtensionCopy::UserCopy,
-                error: Some("SyntaxError at /home/alice/x/extension.js: bad".into()),
+                error: Some(format!(
+                    "SyntaxError at {}/x/extension.js: bad",
+                    gio::glib::home_dir().display()
+                )),
             }),
             ..running_daemon(None)
         });
         let text = report.copy_text();
         assert_eq!(
             field_value(&text, "Shell extension"),
-            Some("error, user copy (SyntaxError at <path>: bad)"),
+            Some("error, user copy (SyntaxError at ~/x/extension.js: bad)"),
             "{text}"
         );
-        assert!(!text.contains('/'), "{text}");
         for (extension, line) in [
             (ExtensionReport::NoShell, "gnome-shell did not answer"),
             (ExtensionReport::NotInstalled, "not installed"),

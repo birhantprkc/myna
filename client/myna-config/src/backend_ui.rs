@@ -2350,8 +2350,7 @@ fn failure_details(step: Option<&crate::ports::FailedStep>, message: &str) -> St
         }) => {
             out.push_str(&gettextrs::gettext("Request:"));
             out.push(' ');
-            // Built from API paths and snap names, which the redactor would
-            // mistake for private file paths.
+            // Built from API paths and snap names: nothing private.
             out.push_str(request);
             out.push('\n');
             if let Some(status) = http_status {
@@ -3047,8 +3046,8 @@ fn mismatch_summary(mismatches: &[crate::backend_apply::ReadBackMismatch]) -> St
 }
 
 /// A one-line reason and the copyable report for a switch that did not take.
-/// Everything goes through [`diagnostics::redact_text`], so no absolute path
-/// or secret-looking value reaches the dialog.
+/// Everything goes through [`diagnostics::redact_text`], so neither the home
+/// directory nor a secret-looking value reaches the dialog.
 fn switch_report(outcome: &SwitchOutcome) -> (String, String) {
     let mut details = String::new();
     let summary = match outcome {
