@@ -905,6 +905,12 @@ impl OnboardingUi {
     /// its check, as the last assessment found them.
     fn render_components(&self, components: &[Component]) {
         let page = &self.components_page;
+        page.description()
+            .set_label(&if needs_onboarding(components) {
+                gettextrs::gettext("You need to install some components for Dictation to work.")
+            } else {
+                gettextrs::gettext("Everything Dictation needs is installed.")
+            });
         let flag = flag_enabled(components);
         let pending = self.flag_write.get() != FlagWrite::Idle;
         let switch = page.flag_switch();

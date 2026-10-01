@@ -13,6 +13,8 @@ mod imp {
     #[template(resource = "/com/canonical/Myna/Config/ui/onboarding-components.ui")]
     pub struct OnboardingComponents {
         #[template_child]
+        pub description: gtk::TemplateChild<crate::ui::BalancedLabel>,
+        #[template_child]
         pub flag_row: gtk::TemplateChild<adw::ActionRow>,
         #[template_child]
         pub flag_spinner: gtk::TemplateChild<gtk::Spinner>,
@@ -78,6 +80,11 @@ impl OnboardingComponents {
     pub fn new() -> Self {
         super::register_resources();
         glib::Object::builder().build()
+    }
+
+    /// The line under the title.
+    pub fn description(&self) -> gtk::Label {
+        self.imp().description.text_label()
     }
 
     pub fn flag_row(&self) -> adw::ActionRow {

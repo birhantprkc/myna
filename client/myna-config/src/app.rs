@@ -477,7 +477,7 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("the footer claims everything is installed on a bare machine");
         return glib::ExitCode::FAILURE;
     }
-    if !components_headed(&window) {
+    if !components_headed(&window, false) {
         eprintln!("the component step is not headed as the design");
         return glib::ExitCode::FAILURE;
     }
@@ -1257,8 +1257,8 @@ fn onboarding_probe() -> glib::ExitCode {
         eprintln!("the footer does not say every component is installed, left of Next");
         return glib::ExitCode::FAILURE;
     }
-    if !components_headed(&window) {
-        eprintln!("the component step changed its heading once everything was installed");
+    if !components_headed(&window, true) {
+        eprintln!("the component step still asks for components once everything is installed");
         return glib::ExitCode::FAILURE;
     }
     println!("onboarding-installed: shown in the footer");
@@ -4023,7 +4023,9 @@ fn menu_actions(menu: &gio::MenuModel) -> Vec<String> {
 
 /// Whether the component step heads itself as the design: a regular 24 px
 /// title over the one paragraph, whatever is installed.
-fn components_headed(window: &ui::OnboardingWindow) -> bool {
+/// The component step's title, and the line under it saying whether anything
+/// is still to install.
+fn components_headed(window: &ui::OnboardingWindow, installed: bool) -> bool {
     let shown = |text: String, class: Option<&str>| {
         find_descendant(window.upcast_ref(), &|widget| {
             widget.downcast_ref::<gtk::Label>().is_some_and(|label| {
@@ -4038,7 +4040,11 @@ fn components_headed(window: &ui::OnboardingWindow) -> bool {
         gettextrs::gettext("Install components"),
         Some("onboarding-title"),
     ) && shown(
-        gettextrs::gettext("You need to install some components for Dictation to work."),
+        if installed {
+            gettextrs::gettext("Everything Dictation needs is installed.")
+        } else {
+            gettextrs::gettext("You need to install some components for Dictation to work.")
+        },
         None,
     )
 }
