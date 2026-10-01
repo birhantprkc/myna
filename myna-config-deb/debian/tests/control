@@ -1,2 +1,5 @@
 Tests: cli
 Depends: myna-config, libglib2.0-bin
+
+Tests: extension
+Depends: myna-config, python3

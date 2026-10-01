@@ -1,0 +1,20 @@
+#!/bin/sh
+# The GNOME Shell extension as installed: a directory named after its uuid,
+# the package's own upstream version stamped in, extension.js present, and a
+# shell-version that covers this series' gnome-shell. gnome-shell itself is
+# not installed; its version comes from the archive index.
+set -eu
+uuid=myna-shell@canonical.com
+dir=/usr/share/gnome/gnome-shell/extensions/$uuid
+upstream=$(dpkg-query -W -f '${Version}' myna-config | sed 's/-[^-]*$//')
+major=$(apt-cache show gnome-shell | sed -n 's/^Version: \([0-9]*:\)\{0,1\}\([0-9]*\).*/\2/p' | sort -n | tail -n 1)
+test -n "$major"
+test -f "$dir/extension.js"
+python3 - "$dir/metadata.json" "$uuid" "$upstream" "$major" <<'PY'
+import json, sys
+path, uuid, upstream, major = sys.argv[1:]
+m = json.load(open(path))
+assert m["uuid"] == uuid, m["uuid"]
+assert m["version-name"] == upstream, (m["version-name"], upstream)
+assert major in m["shell-version"], (major, m["shell-version"])
+PY
