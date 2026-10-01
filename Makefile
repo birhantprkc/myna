@@ -254,15 +254,15 @@ venv-server: ## Sync the host Python venv for the server (editor tooling, bench 
 	cd server && uv sync
 
 # The extension is not in the snap: gnome-shell only loads extensions from the
-# host's own search path, so until it ships as a deb (T74) the delivery is a
-# tarball the user unpacks into their extensions dir. The archive's single top
-# level directory is the UUID gnome-shell keys the extension on - read out of
-# metadata.json rather than repeated here, so a UUID change cannot produce a
-# tarball that silently fails to load.
+# host's own search path, so the myna-config deb delivers it. This tarball is
+# the development sideload. Its single top level directory is the UUID
+# gnome-shell keys the extension on, read out of metadata.json by
+# dev/stage-extension.sh, so a UUID change cannot produce a tarball that
+# silently fails to load.
 EXTENSION_DIR := extensions/myna-shell
 
 .PHONY: build-extension
-build-extension: ## Pack extensions/myna-shell into target/myna-shell-<version>.tar.gz for hand-install
+build-extension: ## Pack extensions/myna-shell into target/myna-shell-<version>.tar.gz for a dev sideload
 	@version=$$(dev/version.sh $(EXTENSION_DIR)); \
 	stage=target/extension-stage; \
 	tarball=target/myna-shell-$$version.tar.gz; \
@@ -275,21 +275,24 @@ build-extension: ## Pack extensions/myna-shell into target/myna-shell-<version>.
 	echo; \
 	echo "  $$tarball"; \
 	echo; \
-	echo "  install/upgrade on the target machine (the rm is what makes it an"; \
-	echo "  upgrade rather than an overlay - unpacking alone leaves files that"; \
-	echo "  a newer revision has deleted):"; \
+	echo "  sideload on the target machine over the deb's copy (the rm is what"; \
+	echo "  makes it an upgrade rather than an overlay - unpacking alone leaves"; \
+	echo "  files that a newer revision has deleted):"; \
 	echo; \
 	echo "    ext=~/.local/share/gnome-shell/extensions"; \
 	echo "    rm -rf \$$ext/$$uuid"; \
 	echo "    mkdir -p \$$ext && tar -xzf $$(basename $$tarball) -C \$$ext"; \
 	echo "    gnome-extensions enable $$uuid"; \
 	echo; \
-	echo "  then log out and back in - gnome-shell does not hot-reload extension JS."
+	echo "  On Ubuntu 26.10 the Ubuntu session ignores a ~/.local copy of this"; \
+	echo "  extension: use ext=/usr/share/ubuntu/gnome-shell/extensions (sudo),"; \
+	echo "  and skip the enable. Then log out and back in - gnome-shell does not"; \
+	echo "  hot-reload extension JS."
 
 # The client settings store is GSettings (com.canonical.Myna.Dictation), so an
 # *unpackaged* build needs the schema on the host to read or write anything -
-# the snap carries its own copy, and the gnome-shell-extension deb will carry
-# the host's once it exists (T74). Until then this is that install.
+# the snap carries its own copy and the myna-config deb installs the host's.
+# Without the deb, this is that install.
 .PHONY: install-schema
 install-schema: ## Install the client GSettings schema on the host (needs sudo)
 	sudo install -Dm644 client/data/glib-2.0/schemas/com.canonical.Myna.Dictation.gschema.xml \

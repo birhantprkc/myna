@@ -41,9 +41,11 @@ of the socket interface they publish, not of their name. Every other row
 waits for the flag, since snapd refuses Myna without it.
 
 The extension is optional because dictation works without it: the daemon
-falls back to desktop notifications. It ships in the
-`gnome-shell-ubuntu-extensions` deb, not through snapd, so the wizard never
-installs it. Only a system copy counts, not a development copy in `~/.local`.
+falls back to desktop notifications. The myna-config deb, which this
+application ships in, installs it to `/usr/share/gnome/gnome-shell/extensions`,
+where it shadows Ubuntu's packaged copy on Stonking, so the wizard never
+installs it and unavailable means a copy gnome-shell cannot run, not a
+missing one. Only a system copy counts, not a development copy in `~/.local`.
 Its state is one of:
 
 - enabled: satisfied;

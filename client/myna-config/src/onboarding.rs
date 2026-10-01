@@ -16,7 +16,8 @@ pub const MYNA_SNAP: &str = "myna";
 /// the matching model component, so a plain install is a working backend.
 pub const RECOMMENDED_BACKEND_SNAP: &str = "myna-parakeet";
 
-/// The GNOME Shell extension, as `gnome-shell-ubuntu-extensions` ships it.
+/// The GNOME Shell extension, as the myna-config deb (and Ubuntu's
+/// `gnome-shell-ubuntu-extensions` on Stonking) ships it.
 pub const SHELL_EXTENSION_UUID: &str = "myna-shell@canonical.com";
 
 /// One thing onboarding checks for, in the order the component step lists
@@ -130,7 +131,8 @@ pub struct ExtensionInfo {
 /// Which copies of the extension are on disk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExtensionCopies {
-    /// Under a system data dir: what `gnome-shell-ubuntu-extensions` ships.
+    /// Under a system data dir: the myna-config deb's copy, or Ubuntu's on
+    /// Stonking.
     pub system: bool,
     /// Under the user's data dir, as the development tree installs it.
     pub user: bool,

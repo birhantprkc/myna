@@ -25,14 +25,29 @@ The HUD pill itself, its level indicator, reduced-motion and contrast
 handling, lab and simulator modes all live in `client/myna-hud`. Contract
 and design history: `specs/004-gnome-shell-indicator/`.
 
-## Install (development)
+## Install
+
+The myna-config deb installs it (see Distribution). For development,
+`make build-extension` packs a sideload tarball and prints how to install it;
+by hand:
 
 ```sh
 UUID=myna-shell@canonical.com
 mkdir -p ~/.local/share/gnome-shell/extensions/$UUID
-cp -r extensions/myna-shell/* ~/.local/share/gnome-shell/extensions/$UUID/
+cp extensions/myna-shell/*.js extensions/myna-shell/metadata.json \
+   ~/.local/share/gnome-shell/extensions/$UUID/
 gnome-extensions enable $UUID
 ```
+
+That `~/.local` copy shadows the deb's on Noble and Resolute. On Stonking the
+Ubuntu session enables this uuid through its session mode and skips a user
+copy of it, so a dev copy must go to
+`/usr/share/ubuntu/gnome-shell/extensions/$UUID` instead (first in
+`XDG_DATA_DIRS`, owned by no package). A copy or symlink at
+`/usr/share/gnome-shell/extensions/$UUID` stops winning once the deb is in.
+Check which copy runs with the journal's `already installed in` line or
+`GetExtensionInfo`'s `path`, not `gnome-extensions info`, whose State reads
+INACTIVE for a session-mode extension that is running.
 
 The renderer must be reachable as `snap run myna.hud` (the packaged snap
 app), or as `$MYNA_HUD_BINARY` (a locally built binary) for development. If
@@ -157,9 +172,11 @@ extension.
 
 ## Distribution
 
-Ubuntu ships the extension as a system copy in the
-`gnome-shell-ubuntu-extensions` deb, from 26.10 on (earlier series await a
-backport). Myna Settings enables that copy during onboarding; it never
-installs one. The in-tree copy above is for development only, and while it
-sits in `~/.local` it hides the packaged one. extensions.gnome.org is not a
-channel.
+The myna-config deb installs the extension as a system copy under
+`/usr/share/gnome/gnome-shell/extensions` on every series it builds for
+(Noble, Resolute, Stonking). gnome-shell takes the first copy of a uuid in
+`XDG_DATA_DIRS` order, and `/usr/share/gnome` precedes `/usr/share`, so on
+Stonking it shadows the copy in `gnome-shell-ubuntu-extensions` with no file
+overlap. Myna Settings enables it during onboarding where the session mode
+does not. The in-tree copy is for development only (see Install).
+extensions.gnome.org is not a channel.

@@ -15,7 +15,7 @@ Settings, the configuration app, ships as a deb
 ([`myna-config-deb/README.md`](myna-config-deb/README.md)); on a machine
 without Myna it opens a setup wizard that turns on snapd's user daemons
 support, installs the client and a model from the store, and enables the
-Shell extension where Ubuntu ships it, asking for authorization rather than
+Shell extension the deb installs, asking for authorization rather than
 for commands in a terminal. [`myna-snap/README.md`](myna-snap/README.md) is
 the manual path for a snap built from the tree; pick a backend from the
 `*-snap/` directories, with whisper as the reference.

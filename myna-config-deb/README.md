@@ -4,6 +4,11 @@ The Debian source package for Myna Settings (`client/myna-config`). It ships
 separately from the `myna` snap because it drives snapd and runs `snap` as
 root through polkit, neither of which a confined snap can do.
 
+Besides the application it installs the GSettings schema the daemon reads,
+the desktop entry, icons and AppStream metainfo, the polkit action, and the
+myna-shell GNOME Shell extension
+(`/usr/share/gnome/gnome-shell/extensions/myna-shell@canonical.com`).
+
 ## Build
 
     make build-deb-source   # target/deb/: orig tarball + debianised source tree
