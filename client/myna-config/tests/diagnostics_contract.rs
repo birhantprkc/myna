@@ -363,6 +363,15 @@ mod performance_warnings {
             causes[1].starts_with("Disk activity is stalling the system (15.00%"),
             "{causes:?}"
         );
+        let text = report.copy_text();
+        assert!(
+            has_field(
+                &text,
+                "Pressure",
+                "cpu 0.00%, memory 42.10%, io 15.00% of the last 10 s stalled"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

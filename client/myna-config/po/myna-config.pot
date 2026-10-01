@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 06:13+0100\n"
+"POT-Creation-Date: 2026-10-01 06:14+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -88,7 +88,7 @@ msgstr ""
 msgid "Install more models"
 msgstr ""
 
-#: data/main-window.blp:9 src/app.rs:121 src/diagnostics.rs:396
+#: data/main-window.blp:9 src/app.rs:121 src/diagnostics.rs:400
 #: data/com.canonical.Myna.Config.metainfo.xml:8
 #: data/com.canonical.Myna.Config.desktop:3
 msgid "Myna Settings"
@@ -104,7 +104,7 @@ msgstr ""
 
 #: data/main-window.blp:39 data/myna-page.blp:38 src/app.rs:1664
 #: src/app.rs:3371 src/app.rs:3735 src/backend_apply.rs:415
-#: src/diagnostics.rs:553 src/presentation.rs:169
+#: src/diagnostics.rs:558 src/presentation.rs:169
 msgid "Model"
 msgstr ""
 
@@ -145,7 +145,7 @@ msgstr ""
 msgid "Let Myna run in the background"
 msgstr ""
 
-#: data/onboarding-components.blp:41 src/app.rs:511 src/app.rs:4703
+#: data/onboarding-components.blp:41 src/app.rs:511 src/app.rs:4702
 #: src/onboarding_ui.rs:925
 msgid "Dictation needs it. You may be asked for your password."
 msgstr ""
@@ -162,11 +162,11 @@ msgstr ""
 msgid "Speech-to-text model"
 msgstr ""
 
-#: data/onboarding-components.blp:84 src/diagnostics.rs:521
+#: data/onboarding-components.blp:84 src/diagnostics.rs:526
 msgid "Shell extension"
 msgstr ""
 
-#: data/onboarding-shortcut.blp:18 src/app.rs:4891 src/onboarding_ui.rs:1300
+#: data/onboarding-shortcut.blp:18 src/app.rs:4889 src/onboarding_ui.rs:1300
 msgid "How to dictate"
 msgstr ""
 
@@ -182,11 +182,11 @@ msgstr ""
 msgid "Setting up Dictation"
 msgstr ""
 
-#: data/onboarding-window.blp:63 src/app.rs:5041
+#: data/onboarding-window.blp:63 src/app.rs:5039
 msgid "All required components installed"
 msgstr ""
 
-#: data/onboarding-window.blp:81 src/app.rs:5026
+#: data/onboarding-window.blp:81 src/app.rs:5024
 msgid "Dictation is not set up yet. Select Next to try again."
 msgstr ""
 
@@ -226,11 +226,11 @@ msgstr ""
 msgid "Press Escape to cancel."
 msgstr ""
 
-#: data/status-page.blp:8 src/app.rs:1659 src/app.rs:5116
+#: data/status-page.blp:8 src/app.rs:1659 src/app.rs:5114
 msgid "Loading Myna Settings"
 msgstr ""
 
-#: data/status-page.blp:9 src/app.rs:1660 src/app.rs:5117
+#: data/status-page.blp:9 src/app.rs:1660 src/app.rs:5115
 msgid "Reading the installed settings schema…"
 msgstr ""
 
@@ -311,8 +311,8 @@ msgid "Changing to {model} failed"
 msgstr ""
 
 #: src/app.rs:3678 src/app.rs:4128 src/app.rs:4139 src/app.rs:4363
-#: src/app.rs:4372 src/app.rs:4563 src/app.rs:4576 src/app.rs:4987
-#: src/app.rs:4993 src/backend_ui.rs:1272 src/onboarding_ui.rs:649
+#: src/app.rs:4372 src/app.rs:4563 src/app.rs:4576 src/app.rs:4985
+#: src/app.rs:4991 src/backend_ui.rs:1272 src/onboarding_ui.rs:649
 #: src/ui/status_page.rs:70
 msgid "Details"
 msgstr ""
@@ -377,32 +377,32 @@ msgstr ""
 msgid "Could not let Myna run in the background"
 msgstr ""
 
-#: src/app.rs:4906 src/shortcut_ui.rs:445
+#: src/app.rs:4904 src/shortcut_ui.rs:445
 msgid "You can trigger Dictation anytime by using the keyboard shortcut:"
 msgstr ""
 
-#: src/app.rs:4986 src/onboarding_ui.rs:768 src/onboarding_ui.rs:775
+#: src/app.rs:4984 src/onboarding_ui.rs:768 src/onboarding_ui.rs:775
 #: src/onboarding_ui.rs:1057
 msgid "Could not set up Dictation"
 msgstr ""
 
-#: src/app.rs:5121
+#: src/app.rs:5119
 msgid "No Myna Settings"
 msgstr ""
 
-#: src/app.rs:5122
+#: src/app.rs:5120
 msgid "The installed schema does not declare any settings."
 msgstr ""
 
-#: src/app.rs:5142
+#: src/app.rs:5140
 msgid "Myna Settings Unavailable"
 msgstr ""
 
-#: src/app.rs:5143
+#: src/app.rs:5141
 msgid "Myna Settings could not start."
 msgstr ""
 
-#: src/app.rs:5562
+#: src/app.rs:5560
 msgid "Could not save the setting"
 msgstr ""
 
@@ -458,7 +458,7 @@ msgid ""
 "succeeds."
 msgstr ""
 
-#: src/backend_ui.rs:772 src/diagnostics.rs:575
+#: src/backend_ui.rs:772 src/diagnostics.rs:580
 msgid "No model is connected. Choose one to use for dictation."
 msgstr ""
 
@@ -520,11 +520,11 @@ msgstr ""
 msgid "Diagnostics copied to clipboard"
 msgstr ""
 
-#: src/backend_ui.rs:2034 src/diagnostics.rs:373
+#: src/backend_ui.rs:2034 src/diagnostics.rs:377
 msgid "Dictation is not installed"
 msgstr ""
 
-#: src/backend_ui.rs:2035 src/diagnostics.rs:374
+#: src/backend_ui.rs:2035 src/diagnostics.rs:378
 msgid "No model installed"
 msgstr ""
 
@@ -656,7 +656,7 @@ msgstr ""
 msgid "None selected. Choose one below."
 msgstr ""
 
-#: src/backend_ui.rs:2601 src/diagnostics.rs:558
+#: src/backend_ui.rs:2601 src/diagnostics.rs:563
 msgid "Services"
 msgstr ""
 
@@ -1065,7 +1065,7 @@ msgstr ""
 msgid "limited to"
 msgstr ""
 
-#: src/diagnostics.rs:252 src/diagnostics.rs:330 src/diagnostics.rs:625
+#: src/diagnostics.rs:252 src/diagnostics.rs:330 src/diagnostics.rs:630
 msgid "of"
 msgstr ""
 
@@ -1118,195 +1118,200 @@ msgstr ""
 msgid "Dictation will be slow. Pause the build or workload before dictating."
 msgstr ""
 
-#: src/diagnostics.rs:328 src/diagnostics.rs:623
+#: src/diagnostics.rs:328 src/diagnostics.rs:628
 msgid "reached"
 msgstr ""
 
-#: src/diagnostics.rs:341
+#: src/diagnostics.rs:340
 msgid "of the last 10 s stalled"
 msgstr ""
 
-#: src/diagnostics.rs:375
+#: src/diagnostics.rs:379
 msgid "No model connected"
 msgstr ""
 
-#: src/diagnostics.rs:376
+#: src/diagnostics.rs:380
 msgid "Ready"
 msgstr ""
 
-#: src/diagnostics.rs:377
+#: src/diagnostics.rs:381
 msgid "Installation status unavailable"
 msgstr ""
 
-#: src/diagnostics.rs:384
+#: src/diagnostics.rs:388
 msgid "Connected"
 msgstr ""
 
-#: src/diagnostics.rs:385
+#: src/diagnostics.rs:389
 msgid "Multiple connections"
 msgstr ""
 
-#: src/diagnostics.rs:386
+#: src/diagnostics.rs:390
 msgid "Not connected"
 msgstr ""
 
-#: src/diagnostics.rs:400
+#: src/diagnostics.rs:404
 msgid "Onboarding"
 msgstr ""
 
-#: src/diagnostics.rs:406
+#: src/diagnostics.rs:410
 msgid "Machine"
 msgstr ""
 
-#: src/diagnostics.rs:410 src/diagnostics.rs:425
+#: src/diagnostics.rs:414 src/diagnostics.rs:429
 msgid "CPU"
 msgstr ""
 
-#: src/diagnostics.rs:411 src/diagnostics.rs:487 src/diagnostics.rs:565
+#: src/diagnostics.rs:415 src/diagnostics.rs:492 src/diagnostics.rs:570
 msgid "Memory"
 msgstr ""
 
-#: src/diagnostics.rs:415 src/diagnostics.rs:420
+#: src/diagnostics.rs:419 src/diagnostics.rs:424
 msgid "GPU"
 msgstr ""
 
-#: src/diagnostics.rs:416 src/diagnostics.rs:732
+#: src/diagnostics.rs:420 src/diagnostics.rs:737
 msgid "none"
 msgstr ""
 
-#: src/diagnostics.rs:426
+#: src/diagnostics.rs:430
 msgid "(no model answered show-machine)"
 msgstr ""
 
-#: src/diagnostics.rs:431
+#: src/diagnostics.rs:435
 msgid "Performance"
 msgstr ""
 
-#: src/diagnostics.rs:438 src/diagnostics.rs:445 src/diagnostics.rs:470
+#: src/diagnostics.rs:442 src/diagnostics.rs:449 src/diagnostics.rs:475
 msgid "Clock"
 msgstr ""
 
-#: src/diagnostics.rs:439
+#: src/diagnostics.rs:443
 msgid "(no cpufreq information)"
 msgstr ""
 
-#: src/diagnostics.rs:450
+#: src/diagnostics.rs:454
 msgid "Profile"
 msgstr ""
 
-#: src/diagnostics.rs:453
+#: src/diagnostics.rs:457
 msgid "Power"
 msgstr ""
 
-#: src/diagnostics.rs:458
+#: src/diagnostics.rs:462
 msgid "Pressure"
 msgstr ""
 
-#: src/diagnostics.rs:471
-msgid "(not measured yet)"
+#. TRANSLATORS: {cpu}, {memory} and {io} are shares such as "0.03%"; cpu, memory and io are kernel resource names, keep them.
+#: src/diagnostics.rs:465
+msgid "cpu {cpu}, memory {memory}, io {io} of the last 10 s stalled"
 msgstr ""
 
 #: src/diagnostics.rs:476
+msgid "(not measured yet)"
+msgstr ""
+
+#: src/diagnostics.rs:481
 msgid "Daemon"
 msgstr ""
 
-#: src/diagnostics.rs:484 src/diagnostics.rs:505 src/diagnostics.rs:514
+#: src/diagnostics.rs:489 src/diagnostics.rs:510 src/diagnostics.rs:519
 msgid "Version"
 msgstr ""
 
-#: src/diagnostics.rs:494
+#: src/diagnostics.rs:499
 msgid "Audio"
 msgstr ""
 
-#: src/diagnostics.rs:500
+#: src/diagnostics.rs:505
 msgid "Last error"
 msgstr ""
 
-#: src/diagnostics.rs:508
+#: src/diagnostics.rs:513
 msgid "Process"
 msgstr ""
 
-#: src/diagnostics.rs:509
+#: src/diagnostics.rs:514
 msgid "not running"
 msgstr ""
 
-#: src/diagnostics.rs:515 src/diagnostics.rs:710
+#: src/diagnostics.rs:520 src/diagnostics.rs:715
 msgid "not installed"
 msgstr ""
 
-#: src/diagnostics.rs:527
+#: src/diagnostics.rs:532
 msgid "Models"
 msgstr ""
 
-#: src/diagnostics.rs:531
+#: src/diagnostics.rs:536
 msgid "(none discovered)"
 msgstr ""
 
-#: src/diagnostics.rs:546 src/presentation.rs:176
+#: src/diagnostics.rs:551 src/presentation.rs:176
 msgid "Engine"
 msgstr ""
 
-#: src/diagnostics.rs:550
+#: src/diagnostics.rs:555
 msgid "none selected"
 msgstr ""
 
-#: src/diagnostics.rs:572
+#: src/diagnostics.rs:577
 msgid "Problems"
 msgstr ""
 
-#: src/diagnostics.rs:584 src/diagnostics.rs:598
+#: src/diagnostics.rs:589 src/diagnostics.rs:603
 msgid "(none)"
 msgstr ""
 
-#: src/diagnostics.rs:594
+#: src/diagnostics.rs:599
 msgid "Warnings"
 msgstr ""
 
-#: src/diagnostics.rs:619
+#: src/diagnostics.rs:624
 msgid "not probed"
 msgstr ""
 
-#: src/diagnostics.rs:632
+#: src/diagnostics.rs:637
 msgid "policy allows"
 msgstr ""
 
-#: src/diagnostics.rs:639
+#: src/diagnostics.rs:644
 msgid "cores in this class"
 msgstr ""
 
-#: src/diagnostics.rs:646
+#: src/diagnostics.rs:651
 msgid "mains"
 msgstr ""
 
-#: src/diagnostics.rs:647 src/diagnostics.rs:652
+#: src/diagnostics.rs:652 src/diagnostics.rs:657
 msgid "battery"
 msgstr ""
 
-#: src/diagnostics.rs:701
+#: src/diagnostics.rs:706
 msgid "chunks dropped this session"
 msgstr ""
 
-#: src/diagnostics.rs:709
+#: src/diagnostics.rs:714
 msgid "gnome-shell did not answer"
 msgstr ""
 
-#: src/diagnostics.rs:713
+#: src/diagnostics.rs:718
 msgid "myna-config package"
 msgstr ""
 
-#: src/diagnostics.rs:714
+#: src/diagnostics.rs:719
 msgid "Ubuntu package"
 msgstr ""
 
-#: src/diagnostics.rs:715
+#: src/diagnostics.rs:720
 msgid "development override"
 msgstr ""
 
-#: src/diagnostics.rs:716
+#: src/diagnostics.rs:721
 msgid "user copy"
 msgstr ""
 
-#: src/diagnostics.rs:717
+#: src/diagnostics.rs:722
 msgid "other system copy"
 msgstr ""
 

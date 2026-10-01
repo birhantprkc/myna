@@ -335,11 +335,15 @@ fn reached(cpu: u32, achieved_khz: u64, hardware_max_khz: u64) -> String {
 /// A pressure-stall share, from hundredths of a percent.
 fn stalled(hundredths: u32) -> String {
     format!(
-        "{}.{:02}% {}",
-        hundredths / 100,
-        hundredths % 100,
+        "{} {}",
+        percent(hundredths),
         gettextrs::gettext("of the last 10 s stalled")
     )
+}
+
+/// A share in hundredths of a percent, as "1.05%".
+fn percent(hundredths: u32) -> String {
+    format!("{}.{:02}%", hundredths / 100, hundredths % 100)
 }
 
 fn ghz(khz: u64) -> String {
@@ -456,12 +460,13 @@ fn render_body(
                 field(
                     &mut out,
                     &gettextrs::gettext("Pressure"),
-                    &format!(
-                        "cpu {} memory {} io {}",
-                        stalled(pressure.cpu_some),
-                        stalled(pressure.memory_some),
-                        stalled(pressure.io_full)
-                    ),
+                    &gettextrs::gettext(
+                        // TRANSLATORS: {cpu}, {memory} and {io} are shares such as "0.03%"; cpu, memory and io are kernel resource names, keep them.
+                        "cpu {cpu}, memory {memory}, io {io} of the last 10 s stalled",
+                    )
+                    .replace("{cpu}", &percent(pressure.cpu_some))
+                    .replace("{memory}", &percent(pressure.memory_some))
+                    .replace("{io}", &percent(pressure.io_full)),
                 );
             }
         }
